@@ -60,21 +60,39 @@ export const YUNXIAO_ERROR_RULES: readonly ErrorRule[] = [
   },
   {
     kind: ERROR_KIND.AUTH as ErrorKind,
+    layer: 'errcode',
+    pattern: /\b(?:InvalidToken|ExpiredTokenError|UserNotInCurrentOrganization|InvalidOrganizationMember)\b/i,
+    example: {
+      text: '{"errorCode":"Forbidden.InvalidUser.UserNotInCurrentOrganization","errorMessage":"Current user is not in organization"}',
+    },
+    note: '云效 OpenAPI 专有的认证与组织成员错误码名（排在句式层之前，按 ADR §2 第 3 条归入 errcode 层）',
+  },
+  {
+    kind: ERROR_KIND.ENV as ErrorKind,
+    layer: 'errcode',
+    pattern: /\bUnsupportedInCurrentEnv\b/i,
+    example: {
+      text: '{"errorCode":"UnsupportedInCurrentEnv","errorMessage":"Current environment does not support this API"}',
+    },
+    note: '云效实例环境不支持指定 OpenAPI 时的结构化错误码名，按 ADR §2 第 3 条归入 errcode 层 env 档',
+  },
+  {
+    kind: ERROR_KIND.AUTH as ErrorKind,
     layer: 'phrase',
-    pattern: /(?:missing|invalid|empty)\s+x-yunxiao-token|YUNXIAO_TOKEN|ALIBABA_CLOUD_DEVOPS_TOKEN|InvalidToken|ExpiredTokenError|UserNotInCurrentOrganization|InvalidOrganizationMember|企业不存在/i,
+    pattern: /(?:missing|invalid|empty)\s+x-yunxiao-token|YUNXIAO_TOKEN|ALIBABA_CLOUD_DEVOPS_TOKEN|企业不存在/i,
     example: {
       text: 'Missing Yunxiao token: set YUNXIAO_TOKEN or ~/.config/yunxiao/token',
     },
-    note: '云效个人访问令牌缺失或失效、跨企业组织越权时的专有提示句式（不含通用表 auth/credential 词根），归入认证档',
+    note: '云效个人访问令牌缺失或企业不存在时的专有提示句式（不含通用表 auth/credential 词根），归入认证档',
   },
   {
     kind: ERROR_KIND.ENV as ErrorKind,
     layer: 'phrase',
-    pattern: /docs\/agents\/yunxiao\.yaml|YUNXIAO_ORGANIZATION_ID|YUNXIAO_PROJECT_ID|UnsupportedInCurrentEnv/i,
+    pattern: /docs\/agents\/yunxiao\.yaml|YUNXIAO_ORGANIZATION_ID|YUNXIAO_PROJECT_ID/i,
     example: {
       text: 'Invalid docs/agents/yunxiao.yaml: missing organizationId or projectId',
     },
-    note: '云效工作区配置文件 docs/agents/yunxiao.yaml 缺失或字段非法、实例版本不支持该接口时归入环境配置档 env',
+    note: '云效工作区配置文件 docs/agents/yunxiao.yaml 缺失或字段非法时归入环境配置档 env',
   },
 ]
 

@@ -24,7 +24,15 @@ export const DEFAULT_YUNXIAO_API_BASE_URL = 'https://openapi-rdc.aliyuncs.com'
 export const DEFAULT_YUNXIAO_WEB_BASE_URL = 'https://devops.aliyun.com'
 export const DEFAULT_CODEUP_HOST = 'codeup.aliyun.com'
 export const MAX_YUNXIAO_CONFIG_CHARS = 65536
-export const MAX_YUNXIAO_CONFIG_ALIASES = 0
+
+/** 剥离 Codeup 仓库路径或标识首尾的斜杠与末尾单个 .git 后缀（不区分大小写）。 */
+export function cleanCodeupRepoPath(raw: unknown): string {
+  return String(raw == null ? '' : raw)
+    .trim()
+    .replace(/^\/+|\/+$/g, '')
+    .replace(/\.git$/i, '')
+    .replace(/^\/+|\/+$/g, '')
+}
 
 export const YUNXIAO_KNOWN_KEYS: readonly string[] = [
   'version', 'organizationId', 'projectId', 'customCode', 'repositoryId', 'namespaceId', 'apiBaseUrl', 'webBaseUrl',
@@ -48,7 +56,7 @@ export interface YunxiaoWorkspaceConfig {
 
 export type YunxiaoConfigParseResult =
   | { ok: true; value: YunxiaoWorkspaceConfig; readonly: boolean; warnings: string[] }
-  | { ok: false; reason: 'yaml-error' | 'oversize' | 'aliases' | 'bad-shape' | 'unknown-keys' | 'inline-secret'; message: string; keys?: string[] }
+  | { ok: false; reason: 'yaml-error' | 'oversize' | 'aliases' | 'bad-shape' | 'unknown-keys' | 'inline-secret' | 'io-error'; message: string; keys?: string[] }
 
 export interface YunxiaoTokenResolution {
   token: string
@@ -229,7 +237,7 @@ export function parseYunxiaoConfig(doc: unknown): YunxiaoConfigParseResult {
     value.customCode = code
   }
   if (doc['repositoryId'] != null && String(doc['repositoryId']).trim() !== '') {
-    const repoId = String(doc['repositoryId']).trim().replace(/\.git$/i, '').replace(/^\/+|\/+$/g, '')
+    const repoId = cleanCodeupRepoPath(doc['repositoryId'])
     if (!repoId || /\s/.test(repoId)) return { ok: false, reason: 'bad-shape', message: 'docs/agents/yunxiao.yaml 的 repositoryId 不能为空或包含空白字符' }
     value.repositoryId = repoId
   }
@@ -291,8 +299,17 @@ export async function resolveYunxiaoCoordinates(input: {
         if (!pre.ok) return pre
         fileDoc = { ...pre.doc }
       }
-    } catch {
-      // 文件不存在时允许仅靠环境变量配置工作区坐标。
+    } catch (readErr: unknown) {
+      const errCode = String((readErr as { code?: unknown })?.code || '').toUpperCase()
+      const errMsg = String((readErr as Error)?.message || readErr || '')
+      const isMissing = errCode === 'ENOENT' || /\bENOENT\b|no such file|not found|不存在/i.test(errMsg)
+      if (!isMissing) {
+        return {
+          ok: false,
+          reason: 'io-error',
+          message: '读取 docs/agents/yunxiao.yaml 失败：' + errMsg.slice(0, 200),
+        }
+      }
     }
   }
 

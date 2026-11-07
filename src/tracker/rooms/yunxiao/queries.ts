@@ -146,12 +146,10 @@ export function projectLabelItemPath(organizationId: string, projectId: string, 
  *   GET /oapi/v1/codeup/organizations/{orgId}/repositories/{repositoryId}
  * 自动剥离末尾 .git 与首尾斜杠，并将路径中的 / 编码为 %2F。
  */
+import { cleanCodeupRepoPath } from './model/workspace-config.js'
+
 export function codeupRepositoryPath(organizationId: string, repoIdOrPath: string | number): string {
-  const cleaned = String(repoIdOrPath)
-    .trim()
-    .replace(/^\/+|\/+$/g, '')
-    .replace(/\.git$/i, '')
-    .replace(/^\/+|\/+$/g, '')
+  const cleaned = cleanCodeupRepoPath(repoIdOrPath)
   return (
     '/oapi/v1/codeup' +
     orgPrefix(organizationId) +

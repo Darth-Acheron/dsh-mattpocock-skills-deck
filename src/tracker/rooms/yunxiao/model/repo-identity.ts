@@ -13,7 +13,7 @@
  *      由用户在 yunxiao.yaml 或环境变量中通过 repositoryId 显式指定。
  */
 
-import { DEFAULT_CODEUP_HOST } from './workspace-config.js'
+import { DEFAULT_CODEUP_HOST, cleanCodeupRepoPath } from './workspace-config.js'
 
 /** Codeup 支持的最大嵌套子代码组层级（首段组织标识 + 最多 4 级子组 + 末段仓库名 = 最多 6 段路径）。 */
 export const MAX_CODEUP_SUBGROUP_LEVELS = 4
@@ -156,12 +156,7 @@ export function parseCodeupRepo(
   const allowedHosts = buildAllowedHosts(opts?.extraHosts)
   if (!allowedHosts.has(host)) return null
 
-  const cleanPath = rawPath
-    .split(/[?#]/)[0]
-    .trim()
-    .replace(/^\/+|\/+$/g, '')
-    .replace(/\.git$/i, '')
-    .replace(/^\/+|\/+$/g, '')
+  const cleanPath = cleanCodeupRepoPath(rawPath.split(/[?#]/)[0])
 
   if (!cleanPath || /\s/.test(cleanPath) || cleanPath.includes('//')) return null
 
@@ -207,8 +202,7 @@ export function normalizeCodeupRepositoryIdentity(raw: unknown): CodeupRepositor
   const id = typeof rawId === 'number' ? rawId : typeof rawId === 'string' && /^\d+$/.test(rawId.trim()) ? Number(rawId.trim()) : NaN
   if (!Number.isSafeInteger(id) || id <= 0) return null
 
-  const rawPathWithNs = typeof bag['pathWithNamespace'] === 'string' ? bag['pathWithNamespace'].trim() : ''
-  const pathWithNamespace = rawPathWithNs.replace(/\.git$/i, '').replace(/^\/+|\/+$/g, '')
+  const pathWithNamespace = cleanCodeupRepoPath(bag['pathWithNamespace'])
   if (!pathWithNamespace || /\s/.test(pathWithNamespace)) return null
 
   const webUrl = typeof bag['webUrl'] === 'string' ? bag['webUrl'].trim().replace(/\/+$/, '') : ''

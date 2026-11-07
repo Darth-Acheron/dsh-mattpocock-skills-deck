@@ -147,10 +147,10 @@ export function clearYunxiaoIssueKeyCache(): void {
 
 const ANCHOR_LINE_RE = /^\s*<!--\s*DSH-IDEMPOTENCY-KEY\s*:/
 const HIDDEN_PARENT_RE = /^<!--\s*DSH-PARENT\s*:\s*([A-Za-z0-9_-]+)\s*-->$/
-const LEGACY_PART_OF_RE = /^Part of #([A-Za-z0-9_-]+)\s*$/
 const HIDDEN_ASSIGNEES_RE = /^<!--\s*DSH-ASSIGNEES\s*:\s*(.*?)\s*-->$/
 const HIDDEN_BLOCKED_RE = /^<!--\s*DSH-BLOCKED-BY\s*:\s*(.*?)\s*-->$/
 const VISIBLE_BLOCKED_LINE_RE = /^Blocked by:\s*(.*)$/
+const VISIBLE_BLOCKED_ANY_RE = /^Blocked by:\s*.*$/m
 
 function splitHeaderAndRest(body: string): { headerLines: string[]; restLines: string[] } {
   const lines = String(body || '').split('\n')
@@ -254,9 +254,6 @@ function parseHeaderRef(body: unknown, re: RegExp): string | null {
 /** 读文件头中的隐藏父票标记（DSH-PARENT）。 */
 export function parseHiddenParent(body: unknown): string | null { return parseHeaderRef(body, HIDDEN_PARENT_RE) }
 
-/** 过渡期回退读：读取文件头中的 Part of #<key> 行。 */
-export function parseLegacyPartOf(body: unknown): string | null { return parseHeaderRef(body, LEGACY_PART_OF_RE) }
-
 /** 在描述文件头中写入或移除隐藏父票标记（<!-- DSH-PARENT: <key> -->）。 */
 export function rewriteDescriptionWithHiddenParent(oldBody: string | null | undefined, parentKey: string | null | undefined): string {
   let inserted: string[] = []
@@ -267,7 +264,7 @@ export function rewriteDescriptionWithHiddenParent(oldBody: string | null | unde
   }
   return rewriteHeaderLines(
     oldBody,
-    (line) => HIDDEN_PARENT_RE.test(line.trim()) || LEGACY_PART_OF_RE.test(line.trim()),
+    (line) => HIDDEN_PARENT_RE.test(line.trim()),
     (line) => ANCHOR_LINE_RE.test(line) || markerKindOnLine(line) !== null || HIDDEN_ASSIGNEES_RE.test(line.trim()),
     inserted,
   )
@@ -322,7 +319,11 @@ export function parseBlockedByFallback(body: unknown): string[] | null {
   return visible !== null ? visible.map((r) => r.key) : null
 }
 
-/** 成对写入或移除可见 Blocked by: #n 行与隐藏 <!-- DSH-BLOCKED-BY: n --> 机器表。 */
+/**
+ * 成对写入或移除可见 Blocked by: #n 行与隐藏 <!-- DSH-BLOCKED-BY: n --> 机器表。
+ * 与 parseVisibleBlockedBy 保持对称：不仅清理文件头中的隐藏机器表与可见行，若标题下方存在第一处旧可见
+ * Blocked by: 行，也会一并清理或替换，避免清空阻塞边后 parseBlockedByFallback 读到残留的旧可见行。
+ */
 export function rewriteDescriptionWithBlockedPair(oldBody: string | null | undefined, keys: readonly string[] | null | undefined): string {
   const normalizedKeys: string[] = []
   const seen = new Set<string>()
@@ -331,6 +332,7 @@ export function rewriteDescriptionWithBlockedPair(oldBody: string | null | undef
     const k = c && (c.kind === 'numeric' || c.kind === 'serial') ? c.key : String(rawKey || '').replace(/^#/, '').trim()
     if (k && !seen.has(k)) { seen.add(k); normalizedKeys.push(k) }
   }
+  const strippedFirstVisible = String(oldBody || '').replace(VISIBLE_BLOCKED_ANY_RE, '').replace(/^\n+/, '')
   const inserted =
     normalizedKeys.length > 0
       ? [
@@ -339,7 +341,7 @@ export function rewriteDescriptionWithBlockedPair(oldBody: string | null | undef
         ]
       : []
   return rewriteHeaderLines(
-    oldBody,
+    strippedFirstVisible,
     (line) => HIDDEN_BLOCKED_RE.test(line.trim()) || VISIBLE_BLOCKED_LINE_RE.test(line.trim()),
     (line) =>
       ANCHOR_LINE_RE.test(line) ||

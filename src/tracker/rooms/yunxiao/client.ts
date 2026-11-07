@@ -170,6 +170,9 @@ export function yunxiaoClient(ctx?: YunxiaoCtx | null): { request(pathOrUrl: str
     if (!apiBaseUrl && ctx) {
       const coords = await resolveYunxiaoCoordinates({ cwd: ctx.cwd, fs: ctx.platform?.fs || ctx.fs || null, env: ctx.platform?.env || null })
       if (coords.ok) apiBaseUrl = coords.value.apiBaseUrl
+      else if (coords.reason === 'io-error') {
+        return failEnvelope(0, 1, coords.message, emptyHeaders)
+      }
     }
     if (!apiBaseUrl) apiBaseUrl = DEFAULT_YUNXIAO_API_BASE_URL
 

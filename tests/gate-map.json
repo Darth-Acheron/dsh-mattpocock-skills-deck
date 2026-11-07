@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-07T08:25:26.246Z",
+  "generatedAt": "2026-11-07T14:37:39.306Z",
   "generatedBy": "node scripts/gate-map.mts",
   "chainLength": 596,
   "gateCount": 596,
@@ -10,7 +10,7 @@
   "completionRecordedGates": 139,
   "smokeLength": 8,
   "smokeCompletionRecordedGates": 5,
-  "graphFileCount": 959,
+  "graphFileCount": 960,
   "gates": [
     {
       "step": "node tests/verify-1207-splice-ts.ts",
@@ -13795,19 +13795,21 @@
         "src/tracker/rooms/yunxiao/model/repo-identity.ts",
         "src/tracker/rooms/yunxiao/model/workspace-config.ts",
         "src/tracker/rooms/yunxiao/queries.ts",
-        "src/tracker/rooms/yunxiao/requests.ts"
+        "src/tracker/rooms/yunxiao/requests.ts",
+        "src/tracker/rooms/yunxiao/support/read-log.ts"
       ],
       "dirs": [
         "src/refresh/rooms/host",
         "src/tracker/kernel",
         "src/tracker/rooms/yunxiao",
-        "src/tracker/rooms/yunxiao/model"
+        "src/tracker/rooms/yunxiao/model",
+        "src/tracker/rooms/yunxiao/support"
       ],
       "unattributed": false,
       "buildOutputOnly": false,
       "completionRecord": true,
-      "expectedAssertions": 29,
-      "reason": "归属来自 文件头 // 门禁归属: 注释（共 10 条）"
+      "expectedAssertions": 32,
+      "reason": "归属来自 文件头 // 门禁归属: 注释（共 11 条）"
     },
     {
       "step": "node tests/verify-1327-freshness-content.ts",
@@ -16116,6 +16118,9 @@
     "src/tracker/rooms/yunxiao/model": [
       "node tests/verify-yunxiao-config-and-remote.ts"
     ],
+    "src/tracker/rooms/yunxiao/support": [
+      "node tests/verify-yunxiao-config-and-remote.ts"
+    ],
     "src/tracker/session": [
       "node tests/verify-1443-github-readbudget.ts",
       "node tests/verify-1443-static-gate.ts",
@@ -16476,12 +16481,12 @@
   },
   "coverage": {
     "sourceRoot": "src",
-    "fileCount": 982,
-    "dirCount": 103,
-    "coveredFileCount": 982,
+    "fileCount": 983,
+    "dirCount": 104,
+    "coveredFileCount": 983,
     "ungatedFileCount": 0,
     "ungatedDirCount": 0,
-    "dedicatedDirCount": 82,
+    "dedicatedDirCount": 83,
     "guardedFiles": [
       "src/client/floating/Pop.ts",
       "src/client/floating/SkillFloatList.ts",
@@ -17415,6 +17420,7 @@
       "src/tracker/rooms/yunxiao/model/workspace-config.ts",
       "src/tracker/rooms/yunxiao/queries.ts",
       "src/tracker/rooms/yunxiao/requests.ts",
+      "src/tracker/rooms/yunxiao/support/read-log.ts",
       "src/tracker/session/budget-reading.ts",
       "src/tracker/session/budget.ts",
       "src/tracker/session/interceptors.ts",
@@ -17561,6 +17567,7 @@
       "src/tracker/rooms/markdown/format",
       "src/tracker/rooms/yunxiao",
       "src/tracker/rooms/yunxiao/model",
+      "src/tracker/rooms/yunxiao/support",
       "src/tracker/session",
       "src/workspace-snapshot",
       "src/workspace-snapshot/contract",
@@ -17646,6 +17653,7 @@
       "src/tracker/rooms/markdown/format",
       "src/tracker/rooms/yunxiao",
       "src/tracker/rooms/yunxiao/model",
+      "src/tracker/rooms/yunxiao/support",
       "src/tracker/session",
       "src/workspace-snapshot",
       "src/workspace-snapshot/contract",

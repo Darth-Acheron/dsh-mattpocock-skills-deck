@@ -10,6 +10,7 @@
  * 门禁归属: src/tracker/rooms/yunxiao/requests.ts
  * 门禁归属: src/tracker/rooms/yunxiao/errors.ts
  * 门禁归属: src/tracker/rooms/yunxiao/budget.ts
+ * 门禁归属: src/tracker/rooms/yunxiao/support/read-log.ts
  * 门禁归属: src/tracker/kernel/error-rules.ts
  * 门禁归属: src/refresh/rooms/host/outbound-admission.ts
  *
@@ -121,6 +122,33 @@ async function main(): Promise<void> {
       resolved.value.namespaceId === 999999,
     '1.4 YUNXIAO_* 环境变量覆盖优先级高于 docs/agents/yunxiao.yaml',
     resolved,
+  )
+
+  // 1.4b 区分文件不存在（ENOENT 正常回退环境变量）与权限/I/O 异常（io-error 明确报错不吞异常）
+  const ioErrResolved = await cfgMod.resolveYunxiaoCoordinates({
+    cwd: '/ws-yunxiao',
+    fs: {
+      resolve: async (p: string) => '/ws-yunxiao/' + p,
+      readText: async () => {
+        const err = new Error("EACCES: permission denied, open '/ws-yunxiao/docs/agents/yunxiao.yaml'") as Error & { code?: string }
+        err.code = 'EACCES'
+        throw err
+      },
+      writeText: async () => {},
+    },
+    env: {
+      get: (k: string) => {
+        if (k === 'YUNXIAO_ORGANIZATION_ID') return '673db5665c76405a332eebc4'
+        if (k === 'YUNXIAO_PROJECT_ID') return '8efcbccd3981cb23178fc66bd1'
+        return undefined
+      },
+      has: () => false,
+    },
+  })
+  check(
+    ioErrResolved.ok === false && ioErrResolved.reason === 'io-error',
+    '1.4b resolveYunxiaoCoordinates 在非 ENOENT 读取异常（如 EACCES）时返回 io-error 而不静默吞掉',
+    ioErrResolved,
   )
 
   // 1.5 三层只读凭证加载通道（取首行非空文本，不拼后续注释行）
@@ -377,6 +405,17 @@ async function main(): Promise<void> {
     releasedDoc,
   )
 
+  // 3.6 标题下方的旧可见 Blocked by: 行在 rewriteDescriptionWithBlockedPair 清空后一并清除，确保 parseBlockedByFallback 返回 null
+  const legacyBodyWithBlockedBelowHeading = '# 存量工单标题\n\nBlocked by: #7, #8\n\n正文说明段落。\n'
+  const clearedLegacyBlocked = markersMod.rewriteDescriptionWithBlockedPair(legacyBodyWithBlockedBelowHeading, [])
+  check(
+    markersMod.parseBlockedByFallback(legacyBodyWithBlockedBelowHeading)?.join(',') === '7,8' &&
+      markersMod.parseBlockedByFallback(clearedLegacyBlocked) === null &&
+      !clearedLegacyBlocked.includes('Blocked by:'),
+    '3.6 rewriteDescriptionWithBlockedPair 清空标题下方的旧可见 Blocked by: 行后，parseBlockedByFallback 不再残留旧阻塞边',
+    clearedLegacyBlocked,
+  )
+
   console.log('\n== Slice 4：可注入 HTTP 传输底座、分页头判定、错误分类、预算包装与独立出站冷却隔离 ==')
   const clientMod = await imp('src/tracker/rooms/yunxiao/client.ts')
   const queriesMod = await imp('src/tracker/rooms/yunxiao/queries.ts')
@@ -581,6 +620,38 @@ async function main(): Promise<void> {
         Boolean(tiersMod.outboundCooldownOf(blockedAfterTimeout)),
       '4.6 HTTP 请求超时自动向 outbound 上报 yunxiao 冷却、归入 network 档，且异常与失败信封全程遮蔽令牌',
       { rTimeout, fRes, blockedAfterTimeout: tiersMod.outboundCooldownOf(blockedAfterTimeout) },
+    )
+  }
+
+  // 4.7 读路径日志出口（support/read-log.ts）复用已登记事件且遵循字段白名单
+  {
+    const readLogMod = await imp('src/tracker/rooms/yunxiao/support/read-log.ts')
+    const logged: Array<{ level: string; event: string; fields: Record<string, unknown> }> = []
+    const logCtx = {
+      opId: 'yx-op-1',
+      logEvent: (level: string, event: string, fields: Record<string, unknown>) => {
+        logged.push({ level, event, fields })
+      },
+    }
+    readLogMod.emitReadDegraded(logCtx, 'preflight', 'preflight:config', 12.8, 'env')
+    readLogMod.emitPreflightGatePass(logCtx, 1, 5)
+    readLogMod.emitRepoTier(logCtx, 2, true, Date.now() - 10)
+    check(
+      logged.length === 3 &&
+        logged[0].event === 'read.degraded' &&
+        logged[0].fields.op === 'preflight' &&
+        logged[0].fields.reason === 'preflight:config' &&
+        logged[0].fields.latencyMs === 12 &&
+        logged[0].fields.opId === 'yx-op-1' &&
+        logged[0].fields.kind === 'env' &&
+        logged[1].event === 'preflight.gate' &&
+        logged[1].fields.gate === 1 &&
+        logged[1].fields.reason === 'ok' &&
+        logged[2].event === 'repo.resolve.tier' &&
+        logged[2].fields.tier === 2 &&
+        logged[2].fields.ok === true,
+      '4.7 support/read-log.ts 准确发送 read.degraded、preflight.gate 与 repo.resolve.tier 结构化诊断事件',
+      logged,
     )
   }
 
