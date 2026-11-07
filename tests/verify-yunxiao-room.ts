@@ -12,6 +12,9 @@
  * 门禁归属: src/tracker/rooms/yunxiao/room/fixes.ts
  * 门禁归属: src/tracker/rooms/yunxiao/support/capability-register.ts
  * 门禁归属: src/tracker/rooms/yunxiao/support/read-sources.ts
+ * 门禁归属: src/tracker/rooms/yunxiao/model/normalize.ts
+ * 门禁归属: src/tracker/rooms/yunxiao/issues/shared.ts
+ * 门禁归属: src/tracker/rooms/yunxiao/issues/idempotency.ts
  * 门禁归属: src/tracker/rooms/yunxiao/issues/read.ts
  * 门禁归属: src/tracker/rooms/yunxiao/issues/write.ts
  * 门禁归属: src/tracker/rooms/yunxiao/issues/counts.ts
@@ -831,6 +834,686 @@ async function main(): Promise<void> {
         permRepoless.usage?.requests === 1,
       '5.2 getRepoPermissions：由 Projex 可读性判 triage，由未归档且 Number(accessLevel) >= 30 判 push（不受只读 PAT 下 allowPush:false 误导），纯 Projex 工作区返回 {push:false, triage:true}',
       { permAdminReadonlyPat, permReporter, permArchived, permRepoless },
+    )
+  }
+
+  console.log('\n== Slice 6：Yunxiao Projex 工作项读路径（单票双标识桥接、列表摘要详情补齐、三级 Issue.type、分页、计数与探索地图） ==')
+  {
+    markersMod.clearYunxiaoIssueKeyCache()
+    repoIdModelMod.clearLearnedYunxiaoContexts()
+    const backend = roomMod.createYunxiaoBackend({} as any)
+    const repoRef = {
+      backend: 'yunxiao',
+      refId: REF_ID,
+      name: 'dci-agentic-forge-sandbox',
+      url: 'https://devops.aliyun.com/projex/project/' + PROJ_ID,
+    }
+
+    const workitem1 = {
+      id: 'f7d327d50b8fca57a146979938',
+      serialNumber: 'DCIAFS-1',
+      subject: '为 Deck 新增云效后端规格',
+      description: '<!-- DSH-ISSUE-KIND: spec -->\n# 规格正文\n\n## 进度\n',
+      formatType: 'MARKDOWN',
+      statusStageId: '1',
+      parentId: null,
+      gmtCreate: 1788775497000,
+      gmtModified: 1788775497000,
+      assignedTo: { id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao' },
+      labels: [{ id: 'lbl-ready', name: 'ready-for-agent', color: '#0E8A16' }],
+    }
+    const workitem2 = {
+      id: '25ac2befde335fcc2218d7c8bb',
+      serialNumber: 'DCIAFS-2',
+      subject: '让 Deck 支持云效探索地图',
+      description: '<!-- DSH-ASSIGNEES: lead -->\n# 探索地图\n\n## Goal\n',
+      formatType: 'MARKDOWN',
+      statusStageId: '2',
+      parentId: 'EMPTY_VALUE',
+      gmtCreate: 1788776000000,
+      gmtModified: 1788779000000,
+      assignedTo: { id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao' },
+      labels: [{ id: 'lbl-map', name: 'wayfinder:map', color: '#8B5CF6' }],
+    }
+    const workitem3 = {
+      id: '268aa8ac348507516359714df3',
+      serialNumber: 'DCIAFS-3',
+      subject: '已完成子票',
+      description: '<!-- DSH-PARENT: 2 -->\n# 子票 3\n',
+      formatType: 'MARKDOWN',
+      statusStageId: '4',
+      parentId: '25ac2befde335fcc2218d7c8bb',
+      gmtCreate: 1788777000000,
+      gmtModified: 1788778000000,
+      assignedTo: { id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao' },
+      labels: [{ id: 'lbl-task', name: 'wayfinder:task', color: '#10B981' }],
+    }
+    const workitem4 = {
+      id: '87db091efc8fa4189e507ea93b',
+      serialNumber: 'DCIAFS-4',
+      subject: '已取消工单',
+      description: '# 已取消\n',
+      formatType: 'MARKDOWN',
+      statusStageId: '5',
+      parentId: '',
+      gmtCreate: 1788777500000,
+      gmtModified: 1788778500000,
+      assignedTo: { id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao' },
+      labels: [],
+    }
+
+    const readCtx: any = {
+      cwd: '/ws-read',
+      platform: {
+        fs: makeFakeFs({ 'docs/agents/yunxiao.yaml': VALID_YUNXIAO_YAML }),
+        env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+      },
+      fetch: async (input: string | URL, init?: RequestInit) => {
+        const u = String(input)
+        if (u.endsWith('/workitems/DCIAFS-1') || u.endsWith('/workitems/' + workitem1.id)) {
+          return new Response(JSON.stringify(workitem1), { status: 200 })
+        }
+        if (u.endsWith('/workitems/DCIAFS-2') || u.endsWith('/workitems/' + workitem2.id)) {
+          return new Response(JSON.stringify(workitem2), { status: 200 })
+        }
+        if (u.endsWith('/workitems/DCIAFS-3') || u.endsWith('/workitems/' + workitem3.id)) {
+          return new Response(JSON.stringify(workitem3), { status: 200 })
+        }
+        if (u.endsWith('/workitems/DCIAFS-4') || u.endsWith('/workitems/' + workitem4.id)) {
+          return new Response(JSON.stringify(workitem4), { status: 200 })
+        }
+        if (u.includes('/comments')) {
+          return new Response(
+            JSON.stringify([
+              {
+                id: '24121019',
+                content: '第一条 Markdown 评论',
+                contentFormat: 'MARKDOWN',
+                user: { id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao' },
+                gmtCreate: 1788776500000,
+                gmtModified: 1788776500000,
+              },
+            ]),
+            { status: 200, headers: { 'x-total': '1' } },
+          )
+        }
+        if (u.endsWith('/labels')) {
+          return new Response(
+            JSON.stringify([
+              { id: 'lbl-ready', name: 'ready-for-agent', color: '#0E8A16' },
+              { id: 'lbl-map', name: 'wayfinder:map', color: '#8B5CF6' },
+              { id: 'lbl-task', name: 'wayfinder:task', color: '#10B981' },
+            ]),
+            { status: 200 },
+          )
+        }
+        if (u.endsWith('/workitems:search')) {
+          const reqBody = init?.body ? JSON.parse(String(init.body)) : {}
+          const condStr = String(reqBody.conditions || '')
+          let items = [
+            // 故意省略 description 以验证 SearchWorkitems 摘要缺失正文时自动调 GetWorkitem 补齐详情
+            { ...workitem1, description: undefined, formatType: null },
+            { ...workitem2, description: undefined, formatType: null },
+            workitem3,
+            workitem4,
+          ]
+          if (condStr.includes('lbl-map')) {
+            items = [{ ...workitem2, description: undefined, formatType: null }]
+          }
+          return new Response(JSON.stringify(items), {
+            status: 200,
+            headers: {
+              'x-page': String(reqBody.page || 1),
+              'x-per-page': String(reqBody.perPage || 100),
+              'x-total': String(items.length),
+              'x-total-pages': '1',
+              'x-next-page': '2', // 真机实测陷阱：单页时 x-next-page 仍返回 "2"
+            },
+          })
+        }
+        return new Response('unexpected: ' + u, { status: 500 })
+      },
+    }
+
+    // 6.1 getIssue 兼容纯数字 "1"、带前缀 "DCIAFS-2" 与 26 位内部 ID 三种入参，对外统一暴露纯数字 key
+    const getByNum = await backend.get(repoRef, '1', { comments: { first: 10 } }, readCtx)
+    const getBySerial = await backend.get(repoRef, 'DCIAFS-2', { comments: { first: 0 } }, readCtx)
+    const getByInternalId = await backend.get(repoRef, workitem3.id, {}, readCtx)
+    check(
+      getByNum.ok === true &&
+        getByNum.data.key === '1' &&
+        getByNum.data.type === 'spec' &&
+        getByNum.data.assignees.length === 0 &&
+        getByNum.data.comments.length === 1 &&
+        getByNum.data.labels[0]?.color === '0e8a16' &&
+        getBySerial.ok === true &&
+        getBySerial.data.key === '2' &&
+        getBySerial.data.type === 'map' &&
+        getBySerial.data.assignees[0]?.login === 'lead' &&
+        getByInternalId.ok === true &&
+        getByInternalId.data.key === '3' &&
+        getByInternalId.data.type === 'issue' &&
+        getByInternalId.data.state === 'closed' &&
+        getByInternalId.data.reason === 'completed' &&
+        getByInternalId.data.parentKey === '2',
+      '6.1 getIssue 兼容纯数字、DCIAFS-n 与 26 位 id 三种入参，统一返回纯数字 key，准确识别三级 Issue.type、DSH-ASSIGNEES 认领真源与父票 key',
+      { getByNum, getBySerial, getByInternalId },
+    )
+
+    // 6.2 listIssues 自动补齐摘要缺失的详情正文，准确将阶段 4/5 映射为 closed、其余阶段映射为 open
+    const listAll = await backend.list(repoRef, undefined, readCtx)
+    const listOpenOnly = await backend.list(repoRef, { state: 'open' }, readCtx)
+    const listClosedOnly = await backend.list(repoRef, { state: 'closed' }, readCtx)
+    check(
+      listAll.ok === true &&
+        listAll.data.length === 4 &&
+        listAll.data.find((i: any) => i.key === '1')?.type === 'spec' &&
+        listAll.data.find((i: any) => i.key === '2')?.type === 'map' &&
+        listAll.data.find((i: any) => i.key === '3')?.state === 'closed' &&
+        listAll.data.find((i: any) => i.key === '4')?.state === 'closed' &&
+        listAll.data.find((i: any) => i.key === '4')?.reason === 'not_planned' &&
+        listOpenOnly.ok === true &&
+        listOpenOnly.data.length === 2 &&
+        listClosedOnly.ok === true &&
+        listClosedOnly.data.length === 2,
+      '6.2 listIssues 自动对摘要缺失正文的项调 GetWorkitem 补齐详情，并将阶段 4/5 映射为 closed、其余阶段映射为 open',
+      { listAllCount: listAll.data?.length, listOpenCount: listOpenOnly.data?.length, listClosedCount: listClosedOnly.data?.length },
+    )
+
+    // 6.3 counts、listPage（忽略 x-next-page: "2" 假阳性）与 listMaps 探索地图薄行列表
+    const countsRes = await backend.counts(repoRef, undefined, readCtx)
+    const countsByLabel = await backend.counts(repoRef, { labels: ['wayfinder:map'] }, readCtx)
+    const pageRes = await backend.listPage(repoRef, undefined, { limit: 50 }, readCtx)
+    const mapsRes = await backend.listMaps(repoRef, readCtx)
+    check(
+      countsRes.ok === true &&
+        countsRes.data.open === 2 &&
+        countsRes.data.closed === 2 &&
+        countsRes.data.total === 4 &&
+        countsByLabel.ok === true &&
+        countsByLabel.data.open === 1 &&
+        countsByLabel.data.closed === 0 &&
+        countsByLabel.data.total === 1 &&
+        pageRes.ok === true &&
+        pageRes.data.items.length === 4 &&
+        pageRes.data.nextCursor === null &&
+        pageRes.data.total === 4 &&
+        mapsRes.ok === true &&
+        mapsRes.data.rows.length === 1 &&
+        mapsRes.data.rows[0]?.key === '2' &&
+        mapsRes.data.rows[0]?.title === '让 Deck 支持云效探索地图' &&
+        mapsRes.data.truncated === false,
+      '6.3 counts（含按标签计数）、listPage（以 xPage < xTotalPages 判定尾页，忽略 x-next-page:2）与 listMaps 探索地图列表全部通过',
+      { countsRes, countsByLabel, pageRes, mapsRes },
+    )
+  }
+
+  console.log('\n== Slice 7：六种位置建票映射（Req/Task/Bug 及 Bug 未启用时回退 Task+bug）、幂等防重与生命周期状态流转 ==')
+  {
+    markersMod.clearYunxiaoIssueKeyCache()
+    repoIdModelMod.clearLearnedYunxiaoContexts()
+    const backend = roomMod.createYunxiaoBackend({} as any)
+    const repoRef = {
+      backend: 'yunxiao',
+      refId: REF_ID,
+      name: 'dci-agentic-forge-sandbox',
+      url: 'https://devops.aliyun.com/projex/project/' + PROJ_ID,
+    }
+
+    let bugEnabled = true
+    const createdStore = new Map<string, any>()
+    let nextSerial = 10
+    const createPayloads: any[] = []
+    const updatePayloads: Array<{ id: string; body: any }> = []
+
+    const writeCtx: any = {
+      cwd: '/ws-write',
+      platform: {
+        fs: makeFakeFs({ 'docs/agents/yunxiao.yaml': VALID_YUNXIAO_YAML }),
+        env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+      },
+      fetch: async (input: string | URL, init?: RequestInit) => {
+        const u = String(input)
+        const method = (init?.method || 'GET').toUpperCase()
+        if (u.endsWith('/oapi/v1/platform/user')) {
+          return new Response(
+            JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao', lastOrganization: ORG_ID }),
+            { status: 200 },
+          )
+        }
+        if (u.includes('/workitemTypes?category=Req')) {
+          return new Response(
+            JSON.stringify([{ id: '9uy29901re573f561d69jn40', name: '产品类需求', categoryId: 'Req', defaultType: true, enable: true }]),
+            { status: 200 },
+          )
+        }
+        if (u.includes('/workitemTypes?category=Task')) {
+          return new Response(
+            JSON.stringify([{ id: 'ba102e46bc6a8483d9b7f25c', name: '任务', categoryId: 'Task', defaultType: true, enable: true }]),
+            { status: 200 },
+          )
+        }
+        if (u.includes('/workitemTypes?category=Bug')) {
+          return new Response(
+            JSON.stringify(
+              bugEnabled
+                ? [{ id: '37da3a07df4d08aef2e3b393', name: '缺陷', categoryId: 'Bug', defaultType: true, enable: true }]
+                : [],
+            ),
+            { status: 200 },
+          )
+        }
+        if (u.endsWith('/labels') && method === 'GET') {
+          return new Response(
+            JSON.stringify([
+              { id: 'lbl-map', name: 'wayfinder:map', color: '#8B5CF6' },
+              { id: 'lbl-task', name: 'wayfinder:task', color: '#10B981' },
+              { id: 'lbl-ready', name: 'ready-for-agent', color: '#0E8A16' },
+              { id: 'lbl-bug', name: 'bug', color: '#D73A4A' },
+            ]),
+            { status: 200 },
+          )
+        }
+        if (u.endsWith('/workitems:search')) {
+          const items = Array.from(createdStore.values())
+          return new Response(JSON.stringify(items), {
+            status: 200,
+            headers: { 'x-page': '1', 'x-per-page': '100', 'x-total': String(items.length), 'x-total-pages': '1', 'x-next-page': '2' },
+          })
+        }
+        if (u.endsWith('/workitems') && method === 'POST') {
+          const body = JSON.parse(String(init?.body || '{}'))
+          createPayloads.push(body)
+          const num = nextSerial++
+          const id = ('createditem00000000000000' + String(num)).slice(-26)
+          const labelObjs = Array.isArray(body.labels)
+            ? body.labels.map((lid: string) => ({
+                id: lid,
+                name:
+                  lid === 'lbl-map'
+                    ? 'wayfinder:map'
+                    : lid === 'lbl-task'
+                      ? 'wayfinder:task'
+                      : lid === 'lbl-bug'
+                        ? 'bug'
+                        : 'ready-for-agent',
+                color: '#10B981',
+              }))
+            : []
+          const record = {
+            id,
+            serialNumber: 'DCIAFS-' + String(num),
+            subject: body.subject,
+            description: body.description || '',
+            formatType: body.formatType || 'MARKDOWN',
+            workitemType: { id: body.workitemTypeId },
+            statusStageId: '1',
+            parentId: body.parentId || null,
+            assignedTo: { id: body.assignedTo, name: 'BryanShao' },
+            labels: labelObjs,
+            gmtCreate: 1788780000000 + num * 1000,
+            gmtModified: 1788780000000 + num * 1000,
+          }
+          createdStore.set(id, record)
+          createdStore.set(record.serialNumber, record)
+          return new Response(JSON.stringify({ id }), { status: 200 })
+        }
+        if (u.includes('/workflow')) {
+          return new Response(
+            JSON.stringify({
+              defaultStatusId: '100005',
+              statuses: [
+                { id: '100005', name: '待处理', statusStageId: '1' },
+                { id: '100010', name: '处理中', statusStageId: '2' },
+                { id: '100014', name: '已完成', statusStageId: '4' },
+                { id: '141230', name: '已取消', statusStageId: '5' },
+              ],
+            }),
+            { status: 200 },
+          )
+        }
+        const wiMatch = u.match(/\/workitems\/([^/?]+)$/)
+        if (wiMatch && method === 'GET') {
+          const keyOrId = decodeURIComponent(wiMatch[1])
+          const item = createdStore.get(keyOrId)
+          if (!item) {
+            return new Response(JSON.stringify({ errorCode: 'InvalidWorkitem.NotFound', errorMessage: '工作项不存在' }), { status: 404 })
+          }
+          return new Response(JSON.stringify(item), { status: 200 })
+        }
+        if (wiMatch && method === 'PUT') {
+          const wid = decodeURIComponent(wiMatch[1])
+          const item = createdStore.get(wid)
+          const body = JSON.parse(String(init?.body || '{}'))
+          updatePayloads.push({ id: wid, body })
+          if (item) {
+            if (typeof body.subject === 'string') item.subject = body.subject
+            if (typeof body.description === 'string') item.description = body.description
+            if (typeof body.status === 'string') {
+              item.statusStageId = body.status === '100014' ? '4' : body.status === '141230' ? '5' : '1'
+            }
+          }
+          return new Response(null, { status: 204 })
+        }
+        if (u.includes('/comments')) {
+          return new Response(JSON.stringify([]), { status: 200 })
+        }
+        return new Response('unexpected: ' + method + ' ' + u, { status: 500 })
+      },
+    }
+
+    // 7.1 六种建票位置映射：map -> Req, spec -> Req (DSH-ISSUE-KIND: spec), map-ticket/spec-ticket/issue -> Task, bug -> Bug
+    const cMap = await backend.create(
+      repoRef,
+      { title: 'Map 容器', body: '# Map', type: 'map', labels: ['wayfinder:map'], idempotencyKey: 'idem-map-1' },
+      writeCtx,
+    )
+    const cSpec = await backend.create(
+      repoRef,
+      { title: 'Spec 容器', body: '# Spec', type: 'spec', labels: ['ready-for-agent'], idempotencyKey: 'idem-spec-1' },
+      writeCtx,
+    )
+    const cMapTicket = await backend.create(
+      repoRef,
+      { title: 'Map 子票', body: '# Sub', type: 'issue', fileKind: 'map-ticket', parentKey: cMap.data?.key, labels: ['wayfinder:task'] },
+      writeCtx,
+    )
+    const cSpecTicket = await backend.create(
+      repoRef,
+      { title: 'Spec 实施票', body: '<!-- DSH-ISSUE-KIND: ticket -->\n# Ticket', type: 'issue', fileKind: 'spec-ticket', parentKey: cSpec.data?.key },
+      writeCtx,
+    )
+    const cPlainIssue = await backend.create(
+      repoRef,
+      { title: '普通 Issue', body: '# Issue', type: 'issue', fileKind: 'plain-issue' },
+      writeCtx,
+    )
+    const cBugNative = await backend.create(
+      repoRef,
+      { title: '原生缺陷票', body: '# Bug', type: 'issue', fileKind: 'bug', labels: ['bug'] },
+      writeCtx,
+    )
+
+    // 7.2 当项目未启用 Bug 类型时，bug 自动回退创建为带 bug 标签的 Task
+    bugEnabled = false
+    const cBugFallback = await backend.create(
+      repoRef,
+      { title: '回退缺陷票', body: '# Bug Fallback', type: 'issue', fileKind: 'bug' },
+      writeCtx,
+    )
+    check(
+      cMap.ok === true &&
+        cMap.data.type === 'map' &&
+        cMap.data.assignees.length === 0 &&
+        createPayloads[0]?.workitemTypeId === '9uy29901re573f561d69jn40' &&
+        createPayloads[0]?.assignedTo === '6a86ddf4dfcb465c20f193e2' &&
+        createPayloads[0]?.formatType === 'MARKDOWN' &&
+        cSpec.ok === true &&
+        cSpec.data.type === 'spec' &&
+        cSpec.data.body.includes('<!-- DSH-ISSUE-KIND: spec -->') &&
+        createPayloads[1]?.workitemTypeId === '9uy29901re573f561d69jn40' &&
+        cMapTicket.ok === true &&
+        cMapTicket.data.parentKey === cMap.data.key &&
+        createPayloads[2]?.workitemTypeId === 'ba102e46bc6a8483d9b7f25c' &&
+        cSpecTicket.ok === true &&
+        createPayloads[3]?.workitemTypeId === 'ba102e46bc6a8483d9b7f25c' &&
+        cPlainIssue.ok === true &&
+        createPayloads[4]?.workitemTypeId === 'ba102e46bc6a8483d9b7f25c' &&
+        cBugNative.ok === true &&
+        createPayloads[5]?.workitemTypeId === '37da3a07df4d08aef2e3b393' &&
+        cBugFallback.ok === true &&
+        createPayloads[6]?.workitemTypeId === 'ba102e46bc6a8483d9b7f25c' &&
+        cBugFallback.data.labels.some((l: any) => l.name === 'bug'),
+      '7.1 六种位置映射准确（map/spec->Req、map-ticket/spec-ticket/issue->Task、bug->Bug 及未启用 Bug 时回退为带 bug 标签的 Task），未认领票用当前用户填充 assignedTo 且 Issue.assignees 返回 []',
+      { createPayloadsCount: createPayloads.length, cBugFallbackLabels: cBugFallback.data?.labels },
+    )
+
+    // 7.3 DSH-IDEMPOTENCY-KEY 幂等防重：重复提交相同 idempotencyKey 直接复用已有 open 工作项，不发第二次 POST
+    const countBeforeRetry = createPayloads.length
+    const cMapRetry = await backend.create(
+      repoRef,
+      { title: 'Map 容器', body: '# Map', type: 'map', labels: ['wayfinder:map'], idempotencyKey: 'idem-map-1' },
+      writeCtx,
+    )
+    check(
+      cMapRetry.ok === true &&
+        cMapRetry.data.key === cMap.data.key &&
+        createPayloads.length === countBeforeRetry,
+      '7.2 DSH-IDEMPOTENCY-KEY 幂等防重：相同幂等键重试直接命中并返回既有工作项 key，不重复创建',
+      { firstKey: cMap.data.key, retryKey: cMapRetry.data?.key, createPayloadsCount: createPayloads.length },
+    )
+
+    // 7.4 updateIssue（Markdown 正文与标题更新）、closeIssue（自动查询并流转至阶段 4 状态）与 reopenIssue
+    const updatedRes = await backend.update(
+      repoRef,
+      cPlainIssue.data.key,
+      { title: '更新后的标题', body: '# 更新后的 Markdown 正文\n\n内容段落' },
+      writeCtx,
+    )
+    const closedRes = await backend.close(repoRef, cPlainIssue.data.key, { reason: 'completed' }, writeCtx)
+    const reopenedRes = await backend.reopen(repoRef, cPlainIssue.data.key, writeCtx)
+    check(
+      updatedRes.ok === true &&
+        updatedRes.data.title === '更新后的标题' &&
+        updatedRes.data.body.includes('更新后的 Markdown 正文') &&
+        updatePayloads.some((p) => p.body.formatType === 'MARKDOWN') &&
+        closedRes.ok === true &&
+        closedRes.data.state === 'closed' &&
+        updatePayloads.some((p) => p.body.status === '100014') &&
+        reopenedRes.ok === true &&
+        reopenedRes.data.state === 'open' &&
+        updatePayloads.some((p) => p.body.status === '100005'),
+      '7.3 updateIssue 以 MARKDOWN 格式更新标题正文，closeIssue 自动查询阶段 4 状态（100014）流转关闭，reopenIssue 流转回阶段 1（100005）',
+      { updatedRes, closedRes, reopenedRes, updatePayloads },
+    )
+  }
+
+  console.log('\n== Slice 8：认领真源（setAssignees 同步 DSH-ASSIGNEES 与原生负责人/参与人）、Markdown 评论与标签闭环（含 HTTP 204 空标签） ==')
+  {
+    markersMod.clearYunxiaoIssueKeyCache()
+    repoIdModelMod.clearLearnedYunxiaoContexts()
+    const backend = roomMod.createYunxiaoBackend({} as any)
+    const repoRef = {
+      backend: 'yunxiao',
+      refId: REF_ID,
+      name: 'dci-agentic-forge-sandbox',
+      url: 'https://devops.aliyun.com/projex/project/' + PROJ_ID,
+    }
+
+    let labelsEmpty204 = true
+    const projectLabels: Array<{ id: string; name: string; color: string; description?: string }> = []
+    const workitemState: any = {
+      id: '268aa8ac348507516359714df3',
+      serialNumber: 'DCIAFS-3',
+      subject: '测试认领、评论与标签',
+      description: '<!-- DSH-PARENT: 2 -->\n# 子票 3\n\n正文内容\n',
+      formatType: 'MARKDOWN',
+      workitemType: { id: 'ba102e46bc6a8483d9b7f25c' },
+      statusStageId: '2',
+      parentId: '25ac2befde335fcc2218d7c8bb',
+      assignedTo: { id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao' },
+      participants: [],
+      labels: [],
+      gmtCreate: 1788777000000,
+      gmtModified: 1788778000000,
+    }
+    const putBodies: any[] = []
+    const commentPostBodies: any[] = []
+
+    const claimCtx: any = {
+      cwd: '/ws-claim',
+      platform: {
+        fs: makeFakeFs({ 'docs/agents/yunxiao.yaml': VALID_YUNXIAO_YAML }),
+        env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+      },
+      fetch: async (input: string | URL, init?: RequestInit) => {
+        const u = String(input)
+        const method = (init?.method || 'GET').toUpperCase()
+        if (u.endsWith('/oapi/v1/platform/user')) {
+          return new Response(
+            JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao', lastOrganization: ORG_ID }),
+            { status: 200 },
+          )
+        }
+        if (u.endsWith('/members')) {
+          return new Response(
+            JSON.stringify([
+              { userId: '6a86ddf4dfcb465c20f193e2', userName: 'BryanShao' },
+              { userId: '11223344556677889900aabb', userName: 'Alice' },
+            ]),
+            { status: 200 },
+          )
+        }
+        if (u.includes('/fields')) {
+          return new Response(
+            JSON.stringify([
+              { id: 'tag', identifier: 'labels', name: '标签', format: 'multiList', className: 'tag' },
+            ]),
+            { status: 200 },
+          )
+        }
+        if (u.endsWith('/labels') && method === 'GET') {
+          if (labelsEmpty204 && projectLabels.length === 0) {
+            return new Response(null, { status: 204 })
+          }
+          return new Response(JSON.stringify(projectLabels), { status: 200 })
+        }
+        if (u.endsWith('/labels') && method === 'POST') {
+          const b = JSON.parse(String(init?.body || '{}'))
+          const newLbl = {
+            id: 'lbl-' + String(projectLabels.length + 1),
+            name: b.name,
+            color: b.color || '#10B981',
+          }
+          projectLabels.push(newLbl)
+          labelsEmpty204 = false
+          return new Response(JSON.stringify({ id: newLbl.id }), { status: 200 })
+        }
+        const lblUpdateMatch = u.match(/\/labels\/([^/?]+)$/)
+        if (lblUpdateMatch && method === 'PUT') {
+          const lid = decodeURIComponent(lblUpdateMatch[1])
+          const b = JSON.parse(String(init?.body || '{}'))
+          const found = projectLabels.find((l) => l.id === lid || l.name === lid)
+          if (!found) return new Response(JSON.stringify({ errorMessage: 'label not found' }), { status: 404 })
+          if (b.color) found.color = b.color
+          return new Response(JSON.stringify(found), { status: 200 })
+        }
+        if (u.includes('/comments') && method === 'POST') {
+          const b = JSON.parse(String(init?.body || '{}'))
+          commentPostBodies.push(b)
+          return new Response(
+            JSON.stringify({
+              id: '24129999',
+              content: b.content,
+              contentFormat: b.formatType,
+              user: { id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao' },
+              gmtCreate: 1788790000000,
+              gmtModified: 1788790000000,
+            }),
+            { status: 200 },
+          )
+        }
+        if (u.includes('/comments') && method === 'GET') {
+          return new Response(JSON.stringify([]), { status: 200 })
+        }
+        if ((u.endsWith('/workitems/DCIAFS-3') || u.endsWith('/workitems/' + workitemState.id)) && method === 'GET') {
+          return new Response(JSON.stringify(workitemState), { status: 200 })
+        }
+        if (u.endsWith('/workitems/' + workitemState.id) && method === 'PUT') {
+          const b = JSON.parse(String(init?.body || '{}'))
+          putBodies.push(b)
+          if (typeof b.description === 'string') workitemState.description = b.description
+          if (typeof b.assignedTo === 'string') {
+            workitemState.assignedTo = {
+              id: b.assignedTo,
+              name: b.assignedTo === '11223344556677889900aabb' ? 'Alice' : 'BryanShao',
+            }
+          }
+          if (Array.isArray(b.participants)) {
+            workitemState.participants = b.participants.map((uid: string) => ({ id: uid }))
+          }
+          if (Array.isArray(b.labels)) {
+            workitemState.labels = b.labels.map((lid: string) => {
+              const found = projectLabels.find((l) => l.id === lid)
+              return found || { id: lid, name: lid, color: '#000000' }
+            })
+          }
+          return new Response(null, { status: 204 })
+        }
+        return new Response('unexpected: ' + method + ' ' + u, { status: 500 })
+      },
+    }
+
+    // 8.1 setAssignees 认领与释放：同步更新文件头 DSH-ASSIGNEES、原生 assignedTo 与 participants（释放时 participants 置 [] 且 Issue.assignees 回 []）
+    const claimRes = await backend.setAssignees(repoRef, '3', ['Alice', 'lead'], undefined, claimCtx)
+    const releaseRes = await backend.setAssignees(repoRef, '3', [], undefined, claimCtx)
+    check(
+      claimRes.ok === true &&
+        JSON.stringify(claimRes.data.assignees.map((a: any) => a.login)) === JSON.stringify(['Alice', 'lead']) &&
+        workitemState.description.includes('# 子票 3') &&
+        putBodies[0]?.assignedTo === '11223344556677889900aabb' &&
+        Array.isArray(putBodies[0]?.participants) &&
+        putBodies[0]?.participants.length === 2 &&
+        releaseRes.ok === true &&
+        releaseRes.data.assignees.length === 0 &&
+        !workitemState.description.includes('DSH-ASSIGNEES') &&
+        Array.isArray(putBodies[1]?.participants) &&
+        putBodies[1]?.participants.length === 0,
+      '8.1 setAssignees 认领时同步写入 DSH-ASSIGNEES 与原生 assignedTo/participants，释放时清空 DSH-ASSIGNEES 并传 participants:[]，读回 Issue.assignees 为 []',
+      { claimRes, releaseRes, putBodies },
+    )
+
+    // 8.2 addComment：以 formatType: "MARKDOWN" 创建评论并返回归一化 Comment 实体
+    const commentRes = await backend.comment(repoRef, '3', '## 进展汇报\n\n已完成离线测试验证。', claimCtx)
+    check(
+      commentRes.ok === true &&
+        commentRes.data.id === '24129999' &&
+        commentRes.data.body === '## 进展汇报\n\n已完成离线测试验证。' &&
+        commentRes.data.author.login === 'BryanShao' &&
+        commentPostBodies[0]?.formatType === 'MARKDOWN',
+      '8.2 comment 以 formatType: MARKDOWN 创建工作项评论并返回规范 Comment 对象',
+      { commentRes, commentPostBodies },
+    )
+
+    // 8.3 listLabels（HTTP 204 空响应归一为 []）、setLabels（自动创建/匹配标签并指派）与 setLabelColors（6 位十六进制颜色双向归一）
+    const emptyLabelsRes = await backend.listLabels(repoRef, claimCtx)
+    const assignLabelsRes = await backend.setLabels(
+      repoRef,
+      '3',
+      [{ name: 'wayfinder:task', color: '10B981' }, 'ready-for-agent'],
+      undefined,
+      claimCtx,
+    )
+    const listLabelsAfterCreate = await backend.listLabels(repoRef, claimCtx)
+    const colorBatchRes = await backend.setLabelColors(
+      repoRef,
+      [
+        { name: 'wayfinder:task', color: '8B5CF6' },
+        { name: 'ready-for-agent', color: 'not-a-hex' },
+      ],
+      claimCtx,
+    )
+    const clearLabelsRes = await backend.setLabels(repoRef, '3', [], undefined, claimCtx)
+    check(
+      emptyLabelsRes.ok === true &&
+        Array.isArray(emptyLabelsRes.data) &&
+        emptyLabelsRes.data.length === 0 &&
+        assignLabelsRes.ok === true &&
+        assignLabelsRes.data.labels.length === 2 &&
+        listLabelsAfterCreate.ok === true &&
+        listLabelsAfterCreate.data.length === 2 &&
+        listLabelsAfterCreate.data[0]?.color === '10b981' &&
+        colorBatchRes.ok === true &&
+        colorBatchRes.data.applied.length === 1 &&
+        colorBatchRes.data.applied[0]?.name === 'wayfinder:task' &&
+        colorBatchRes.data.applied[0]?.color === '8b5cf6' &&
+        colorBatchRes.data.failed.length === 1 &&
+        colorBatchRes.data.failed[0]?.name === 'ready-for-agent' &&
+        projectLabels.find((l) => l.name === 'wayfinder:task')?.color === '#8b5cf6' &&
+        clearLabelsRes.ok === true &&
+        clearLabelsRes.data.labels.length === 0,
+      '8.3 listLabels 将 HTTP 204 空响应归一为 []，setLabels 支持标签自动创建/指派与清空，setLabelColors 完成 6 位十六进制颜色双向归一与逐条记账',
+      { emptyLabelsRes, assignLabelsRes, listLabelsAfterCreate, colorBatchRes, clearLabelsRes },
     )
   }
 

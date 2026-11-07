@@ -140,6 +140,11 @@ export function resolveYunxiaoWorkitemId(scope: unknown, input: unknown): string
   return getOrCreateScopeMap(scope)?.keyToId.get(c.key) || null
 }
 
+/** 读取当前作用域通过工作项 serialNumber 学习到的项目代号 customCode。 */
+export function getScopeCustomCode(scope: unknown): string | null {
+  return getOrCreateScopeMap(scope)?.customCode || null
+}
+
 /** 清空票号双向映射缓存（供离线测试使用）。 */
 export function clearYunxiaoIssueKeyCache(): void {
   issueKeyScopes.clear()
@@ -291,6 +296,7 @@ export function parseHiddenBlockedBy(body: unknown): string[] | null {
   return null
 }
 
+/** 正文可见 Blocked by: 行解析出的单个阻塞项引用。 */
 export interface VisibleBlockedRef { key: string; title: string }
 
 /** 读正文中的可见 Blocked by: 行（隐藏机器表缺失时的回退读法）。 */

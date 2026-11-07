@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-07T16:40:57.082Z",
+  "generatedAt": "2026-11-07T18:22:20.858Z",
   "generatedBy": "node scripts/gate-map.mts",
   "chainLength": 597,
   "gateCount": 597,
@@ -10,7 +10,7 @@
   "completionRecordedGates": 140,
   "smokeLength": 8,
   "smokeCompletionRecordedGates": 5,
-  "graphFileCount": 984,
+  "graphFileCount": 987,
   "gates": [
     {
       "step": "node tests/verify-1207-splice-ts.ts",
@@ -13822,14 +13822,17 @@
         "src/tracker/rooms/yunxiao/graph/write.ts",
         "src/tracker/rooms/yunxiao/index.ts",
         "src/tracker/rooms/yunxiao/issues/counts.ts",
+        "src/tracker/rooms/yunxiao/issues/idempotency.ts",
         "src/tracker/rooms/yunxiao/issues/maps.ts",
         "src/tracker/rooms/yunxiao/issues/pages.ts",
         "src/tracker/rooms/yunxiao/issues/read.ts",
+        "src/tracker/rooms/yunxiao/issues/shared.ts",
         "src/tracker/rooms/yunxiao/issues/sub-issues.ts",
         "src/tracker/rooms/yunxiao/issues/write.ts",
         "src/tracker/rooms/yunxiao/labels/assign.ts",
         "src/tracker/rooms/yunxiao/labels/colors.ts",
         "src/tracker/rooms/yunxiao/labels/list.ts",
+        "src/tracker/rooms/yunxiao/model/normalize.ts",
         "src/tracker/rooms/yunxiao/preflight.ts",
         "src/tracker/rooms/yunxiao/project/init-project.ts",
         "src/tracker/rooms/yunxiao/repo/current-user.ts",
@@ -13848,6 +13851,7 @@
         "src/tracker/rooms/yunxiao/graph",
         "src/tracker/rooms/yunxiao/issues",
         "src/tracker/rooms/yunxiao/labels",
+        "src/tracker/rooms/yunxiao/model",
         "src/tracker/rooms/yunxiao/project",
         "src/tracker/rooms/yunxiao/repo",
         "src/tracker/rooms/yunxiao/room",
@@ -13856,8 +13860,8 @@
       "unattributed": false,
       "buildOutputOnly": false,
       "completionRecord": true,
-      "expectedAssertions": 15,
-      "reason": "归属来自 文件头 // 门禁归属: 注释（共 25 条）"
+      "expectedAssertions": 24,
+      "reason": "归属来自 文件头 // 门禁归属: 注释（共 28 条）"
     },
     {
       "step": "node tests/verify-1327-freshness-content.ts",
@@ -16178,7 +16182,8 @@
       "node tests/verify-yunxiao-room.ts"
     ],
     "src/tracker/rooms/yunxiao/model": [
-      "node tests/verify-yunxiao-config-and-remote.ts"
+      "node tests/verify-yunxiao-config-and-remote.ts",
+      "node tests/verify-yunxiao-room.ts"
     ],
     "src/tracker/rooms/yunxiao/project": [
       "node tests/verify-yunxiao-room.ts"
@@ -16553,9 +16558,9 @@
   },
   "coverage": {
     "sourceRoot": "src",
-    "fileCount": 1007,
+    "fileCount": 1010,
     "dirCount": 111,
-    "coveredFileCount": 1007,
+    "coveredFileCount": 1010,
     "ungatedFileCount": 0,
     "ungatedDirCount": 0,
     "dedicatedDirCount": 90,
@@ -17493,15 +17498,18 @@
       "src/tracker/rooms/yunxiao/graph/write.ts",
       "src/tracker/rooms/yunxiao/index.ts",
       "src/tracker/rooms/yunxiao/issues/counts.ts",
+      "src/tracker/rooms/yunxiao/issues/idempotency.ts",
       "src/tracker/rooms/yunxiao/issues/maps.ts",
       "src/tracker/rooms/yunxiao/issues/pages.ts",
       "src/tracker/rooms/yunxiao/issues/read.ts",
+      "src/tracker/rooms/yunxiao/issues/shared.ts",
       "src/tracker/rooms/yunxiao/issues/sub-issues.ts",
       "src/tracker/rooms/yunxiao/issues/write.ts",
       "src/tracker/rooms/yunxiao/labels/assign.ts",
       "src/tracker/rooms/yunxiao/labels/colors.ts",
       "src/tracker/rooms/yunxiao/labels/list.ts",
       "src/tracker/rooms/yunxiao/model/description-markers.ts",
+      "src/tracker/rooms/yunxiao/model/normalize.ts",
       "src/tracker/rooms/yunxiao/model/repo-identity.ts",
       "src/tracker/rooms/yunxiao/model/workspace-config.ts",
       "src/tracker/rooms/yunxiao/preflight.ts",
