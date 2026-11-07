@@ -295,6 +295,29 @@ export function getLearnedYunxiaoContext(cwdOrRefId: unknown): LearnedYunxiaoCon
   return learnedContexts.get(key) || null
 }
 
+/** 同时按工作区目录 cwd 与仓库标识 refId 更新已学习的云效上下文。 */
+export function learnYunxiaoContextFor(
+  scope: { cwd?: unknown; refId?: unknown },
+  patch: Partial<LearnedYunxiaoContext> & { organizationId: string; projectId: string },
+): void {
+  if (scope.cwd) learnYunxiaoContext(scope.cwd, patch)
+  if (scope.refId) learnYunxiaoContext(scope.refId, patch)
+}
+
+/** 校验并提取 GetProject 响应中的项目代号 customCode 与项目名 name。 */
+export function parseYunxiaoProjectPayload(
+  data: unknown,
+): { id: string; customCode: string; projectName: string } | null {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+  const bag = data as Record<string, unknown>
+  if (typeof bag['id'] !== 'string' && typeof bag['customCode'] !== 'string') return null
+  return {
+    id: typeof bag['id'] === 'string' ? bag['id'].trim() : '',
+    customCode: typeof bag['customCode'] === 'string' ? bag['customCode'].trim() : '',
+    projectName: typeof bag['name'] === 'string' ? bag['name'].trim() : '',
+  }
+}
+
 /** 清空已学习的云效上下文缓存（供离线测试隔离使用）。 */
 export function clearLearnedYunxiaoContexts(): void {
   learnedContexts.clear()

@@ -42,8 +42,9 @@ export function parseIssueTracker(raw: unknown): ParsedIssueTracker {
   const titleGithub = /^#\s*issue\s*tracker\s*:\s*github/im.test(text)
   const titleGitlab = /^#\s*issue\s*tracker\s*:\s*gitlab/im.test(text)
   const titleMarkdown = /^#\s*issue\s*tracker\s*:\s*(markdown|local)/im.test(text)
+  const titleYunxiao = /^#\s*issue\s*tracker\s*:\s*yunxiao(?:\s+projex)?/im.test(text)
 
-  // ── 第一阶段：标题优先（高置信），优先级 gitlab > markdown > github ──
+  // ── 第一阶段：标题优先（高置信），优先级 gitlab > markdown > github > yunxiao ──
   if (titleGitlab) {
     return { explicitBackendId: 'gitlab', rawHint: 'gitlab', confidence: 'high', reason: 'title-gitlab' }
   }
@@ -53,6 +54,9 @@ export function parseIssueTracker(raw: unknown): ParsedIssueTracker {
   if (titleGithub) {
     const ghHint = /gh\s+(issue|api|auth)|github\s*issues/i.test(text)
     return { explicitBackendId: 'github', rawHint: 'github', confidence: 'high', reason: ghHint ? 'github-template' : 'title-github' }
+  }
+  if (titleYunxiao) {
+    return { explicitBackendId: 'yunxiao', rawHint: 'yunxiao', confidence: 'high', reason: 'title-yunxiao' }
   }
 
   // ── 第二阶段：标题均未命中时，正文关键词 low 兜底 ──

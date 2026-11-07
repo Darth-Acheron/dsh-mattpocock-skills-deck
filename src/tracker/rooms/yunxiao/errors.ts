@@ -144,4 +144,19 @@ export function failYunxiao(
   return fail(verdict.kind, hintFor(verdict, nativeMessage), arguments.length > 2 ? raw : err)
 }
 
+/** 从异常对象或未知值中提取可读错误消息。 */
+export function errMsg(err: unknown): string {
+  if (err !== null && typeof err === 'object' && 'message' in (err as Record<string, unknown>)) {
+    const m = (err as Record<string, unknown>)['message']
+    if (typeof m === 'string' && m) return m
+  }
+  return String(err)
+}
+
+/** 判断未知值是否为非数组纯对象（Record）。 */
+export function asRecord(v: unknown): Record<string, unknown> | null {
+  if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>
+  return null
+}
+
 export default classifyYunxiaoError
