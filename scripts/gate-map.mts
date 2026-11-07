@@ -853,6 +853,8 @@ export const COMPLETION_RECORDED_GATES: Record<string, number> = {
   // 且合并落了标记就排上清除；子票高亮的键用界面查的那把尺子（工作单元 + 编号），不写裸编号。
   // 单跑实测 29 条。
   'verify-1926-flash-scope': 29,
+  // 2026-11-07 #01（规格 #00）：Yunxiao backend 配置解析、凭证脱敏、Codeup 远端识别、纯数字票号与文件头标记编解码及可注入 HTTP 传输底座门禁；单跑实测 29 条。
+  'verify-yunxiao-config-and-remote': 29,
 }
 
 // 冒烟链（scripts.smoke）上已经开闸的门禁，写法与上面那张表一样：写在这里 = 已开闸，值 = 期望条数。

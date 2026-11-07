@@ -261,7 +261,8 @@ const MASKED = '***（凭据已遮蔽）'
 
 /**
  * 遮蔽已知的凭据样式：GitHub 令牌（`ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`/`github_pat_`）、
- * GitLab 令牌（`glpat-`）、`Bearer` 与 `Authorization:` / `PRIVATE-TOKEN:` 头、
+ * GitLab 令牌（`glpat-`）、云效个人访问令牌与 OAuth 令牌（`pt-`/`oat-`）、
+ * `Bearer` 与 `Authorization:` / `PRIVATE-TOKEN:` / `x-yunxiao-token:` 头、
  * URL 里的 `user:password@`、查询串里的 `private_token=` / `access_token=` / `token=`。
  * 幂等：已经遮蔽过的文本再进一次不会再变。
  */
@@ -270,10 +271,13 @@ export function maskSecrets(input: string): string {
     .replace(/\bgh[pousr]_[A-Za-z0-9]{8,}/g, MASKED)
     .replace(/\bgithub_pat_[A-Za-z0-9_]{8,}/g, MASKED)
     .replace(/\bglpat-[A-Za-z0-9_\-]{8,}/g, MASKED)
+    .replace(/\b(?:pt|oat)-[A-Za-z0-9._\-]{8,}/g, MASKED)
     .replace(/(Bearer\s+)[A-Za-z0-9._\-+/=]{8,}/gi, '$1' + MASKED)
     .replace(/(Authorization\s*:\s*)\S+/gi, '$1' + MASKED)
     // GitLab 用 PRIVATE-TOKEN 头；`\S+` 会把整行剩下的内容一起吃掉，所以按行取到空白为止。
     .replace(/(PRIVATE-TOKEN\s*:\s*)[^\s]+/gi, '$1' + MASKED)
+    // 云效 OpenAPI 用 x-yunxiao-token 请求头；遇到引号或空白即停止，保留外层引号结构且保持幂等。
+    .replace(/(x-yunxiao-token\s*:\s*)(?:\*\*\*（凭据已遮蔽）|[^\s"']+)/gi, '$1' + MASKED)
     .replace(/([?&](?:private_token|access_token|token)=)[^&\s]+/gi, '$1' + MASKED)
     .replace(/(\/\/[^/\s:@]+:)([^@\s/]+)(@)/g, '$1' + MASKED + '$3')
 }

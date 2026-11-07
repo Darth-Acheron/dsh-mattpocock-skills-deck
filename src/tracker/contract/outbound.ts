@@ -44,7 +44,7 @@ export type OutboundBucket = 'read' | 'write' | 'probe'
  * 一起挡掉，反之亦然。房间与宿主通道在拿名额、上报结局时把这条路名带上；缺省按 github 处理
  * （现有绝大多数出站是 gh）。
  */
-export type OutboundService = 'github' | 'gitlab' | 'git'
+export type OutboundService = 'github' | 'gitlab' | 'yunxiao' | 'git'
 
 /**
  * 出站控制面（宿主实现，房间只读形状）。
