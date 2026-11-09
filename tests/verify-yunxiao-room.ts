@@ -1612,6 +1612,564 @@ async function main(): Promise<void> {
     )
   }
 
+  console.log('\n== Slice 9：父子关系图谱（setParent 原生 PARENT 优先、Bug 400 自动降级 DSH-PARENT + ASSOCIATED、解除父子、自环拦截与 listSubIssues 双源合并） ==')
+  {
+    markersMod.clearYunxiaoIssueKeyCache()
+    repoIdModelMod.clearLearnedYunxiaoContexts()
+    const backend = roomMod.createYunxiaoBackend({} as any)
+    const repoRef = {
+      backend: 'yunxiao',
+      refId: REF_ID,
+      name: 'dci-agentic-forge-sandbox',
+      url: 'https://devops.aliyun.com/projex/project/' + PROJ_ID,
+    }
+    const edgeRulesMod = await imp('src/deck/rules/edge-landing.ts')
+
+    const mapItem: any = {
+      id: '25ac2befde335fcc2218d7c8bb',
+      serialNumber: 'DCIAFS-2',
+      subject: '探索地图 2',
+      description: '# Map 2\n',
+      formatType: 'MARKDOWN',
+      statusStageId: '2',
+      parentId: 'EMPTY_VALUE',
+      labels: [{ id: 'lbl-map', name: 'wayfinder:map', color: '#8B5CF6' }],
+      gmtCreate: 1788776000000,
+      gmtModified: 1788779000000,
+    }
+    const taskItem: any = {
+      id: '268aa8ac348507516359714df3',
+      serialNumber: 'DCIAFS-3',
+      subject: '任务子票 3',
+      description: '# Task 3\n',
+      formatType: 'MARKDOWN',
+      statusStageId: '1',
+      parentId: null,
+      labels: [{ id: 'lbl-task', name: 'wayfinder:task', color: '#10B981' }],
+      gmtCreate: 1788777000000,
+      gmtModified: 1788778000000,
+    }
+    const bugItem: any = {
+      id: '87db091efc8fa4189e507ea93b',
+      serialNumber: 'DCIAFS-4',
+      subject: '缺陷子票 4（默认不支持原生 PARENT）',
+      description: '# Bug 4\n',
+      formatType: 'MARKDOWN',
+      statusStageId: '1',
+      parentId: null,
+      labels: [{ id: 'lbl-bug', name: 'bug', color: '#D73A4A' }],
+      gmtCreate: 1788777500000,
+      gmtModified: 1788778500000,
+    }
+
+    const store = new Map<string, any>([
+      [mapItem.id, mapItem],
+      [mapItem.serialNumber, mapItem],
+      [taskItem.id, taskItem],
+      [taskItem.serialNumber, taskItem],
+      [bugItem.id, bugItem],
+      [bugItem.serialNumber, bugItem],
+    ])
+    const relationCalls: Array<{ method: string; wid: string; relationType: string; targetId: string }> = []
+    const subRelationRecords: Array<{ id: string; relationType: string; resourceType: string; resourceId: string }> = []
+
+    const parentCtx: any = {
+      cwd: '/ws-parent',
+      platform: {
+        fs: makeFakeFs({ 'docs/agents/yunxiao.yaml': VALID_YUNXIAO_YAML }),
+        env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+      },
+      fetch: async (input: string | URL, init?: RequestInit) => {
+        const u = String(input)
+        const method = (init?.method || 'GET').toUpperCase()
+        const relMatch = u.match(/\/workitems\/([^/?]+)\/relationRecords/)
+        if (relMatch) {
+          const wid = decodeURIComponent(relMatch[1])
+          if (method === 'GET' && u.includes('relationType=SUB')) {
+            return new Response(JSON.stringify(subRelationRecords), { status: 200 })
+          }
+          if (method === 'POST') {
+            const b = JSON.parse(String(init?.body || '{}'))
+            relationCalls.push({ method: 'POST', wid, relationType: b.relationType, targetId: b.workitemId })
+            if (wid === bugItem.id && b.relationType === 'PARENT') {
+              return new Response(
+                JSON.stringify({ errorCode: 'InvaildData.Failed', errorMessage: '无法创建此关系, 不满足关系对应的类型约束！' }),
+                { status: 400 },
+              )
+            }
+            if (wid === taskItem.id && b.relationType === 'PARENT') {
+              taskItem.parentId = b.workitemId
+              subRelationRecords.push({ id: 'rel-sub-3', relationType: 'SUB', resourceType: 'Task', resourceId: taskItem.id })
+            }
+            return new Response(JSON.stringify({ id: 'rel-' + wid }), { status: 200 })
+          }
+          if (method === 'DELETE') {
+            const urlObj = new URL(u)
+            const rType = urlObj.searchParams.get('relationType') || ''
+            const tId = urlObj.searchParams.get('workitemId') || ''
+            relationCalls.push({ method: 'DELETE', wid, relationType: rType, targetId: tId })
+            if (wid === taskItem.id && rType === 'PARENT') {
+              taskItem.parentId = ''
+              const idx = subRelationRecords.findIndex((r) => r.resourceId === taskItem.id)
+              if (idx >= 0) subRelationRecords.splice(idx, 1)
+            }
+            return new Response(null, { status: 204 })
+          }
+        }
+        if (u.endsWith('/workitems:search')) {
+          return new Response(JSON.stringify([mapItem, taskItem, bugItem]), {
+            status: 200,
+            headers: { 'x-page': '1', 'x-per-page': '100', 'x-total': '3', 'x-total-pages': '1', 'x-next-page': '2' },
+          })
+        }
+        if (u.includes('/comments')) {
+          return new Response(JSON.stringify([]), { status: 200 })
+        }
+        const wiMatch = u.match(/\/workitems\/([^/?]+)$/)
+        if (wiMatch && method === 'GET') {
+          const item = store.get(decodeURIComponent(wiMatch[1]))
+          if (!item) return new Response(JSON.stringify({ errorCode: 'InvalidWorkitem.NotFound', errorMessage: '不存在' }), { status: 404 })
+          return new Response(JSON.stringify(item), { status: 200 })
+        }
+        if (wiMatch && method === 'PUT') {
+          const item = store.get(decodeURIComponent(wiMatch[1]))
+          const b = JSON.parse(String(init?.body || '{}'))
+          if (item && typeof b.description === 'string') item.description = b.description
+          if (item && ('parentId' in b)) item.parentId = b.parentId
+          return new Response(null, { status: 204 })
+        }
+        return new Response('unexpected: ' + method + ' ' + u, { status: 500 })
+      },
+    }
+
+    // 9.1 Task 设置父票：成对写入 DSH-PARENT 与原生 PARENT 关系，通过 edgeVerdict('parent') 写后读回核对
+    const setTaskParent = await backend.setParent(repoRef, '3', '2', undefined, parentCtx)
+    const getTaskBack = await backend.get(repoRef, '3', {}, parentCtx)
+    const taskVerdict = edgeRulesMod.edgeVerdict('parent', '2', { issue: getTaskBack.data, dependencies: null })
+
+    // 9.2 Bug 设置父票：原生 PARENT 返回 400 时自动保留 DSH-PARENT 并建立 ASSOCIATED 关联，读回 parentKey 仍为 "2"
+    const setBugParent = await backend.setParent(repoRef, '4', '2', undefined, parentCtx)
+    const getBugBack = await backend.get(repoRef, '4', {}, parentCtx)
+    const bugVerdict = edgeRulesMod.edgeVerdict('parent', '2', { issue: getBugBack.data, dependencies: null })
+
+    // 9.3 listSubIssues：合并原生 SUB 关系记录（#3）与文件头 DSH-PARENT 回退扫描结果（#4），不重不漏
+    const subIssuesRes = await backend.listSubIssues(repoRef, '2', {}, parentCtx)
+    const subKeys = subIssuesRes.ok ? subIssuesRes.data.items.map((i: any) => i.key).sort() : []
+
+    // 9.4 解除父票（parentKey = null）与自环拦截（parentKey === key -> conflict）
+    const clearTaskParent = await backend.setParent(repoRef, '3', null, undefined, parentCtx)
+    const clearBugParent = await backend.setParent(repoRef, '4', null, undefined, parentCtx)
+    const selfParentRes = await backend.setParent(repoRef, '3', '3', undefined, parentCtx)
+
+    const c1 = setTaskParent.ok === true && setTaskParent.data.parentKey === '2' && taskVerdict === 'landed'
+    const c2 = setBugParent.ok === true && setBugParent.data.parentKey === '2' && bugVerdict === 'landed' &&
+      relationCalls.some((c) => c.method === 'POST' && c.wid === bugItem.id && c.relationType === 'ASSOCIATED' && c.targetId === mapItem.id)
+    const c3 = subIssuesRes.ok === true && JSON.stringify(subKeys) === JSON.stringify(['3', '4']) && subIssuesRes.data.total === 2 && subIssuesRes.data.fetched === 2
+    const c4 = clearTaskParent.ok === true && clearTaskParent.data.parentKey === null && clearBugParent.ok === true && clearBugParent.data.parentKey === null && !taskItem.description.includes('DSH-PARENT') && !bugItem.description.includes('DSH-PARENT')
+    const c5 = selfParentRes.ok === false && selfParentRes.error.kind === 'conflict'
+    check(
+      c1 && c2 && c3 && c4 && c5,
+      '9.1 setParent 成对双写 DSH-PARENT 与原生 PARENT（Bug 400 自动降级 ASSOCIATED）、解除父子与自环拦截，listSubIssues 合并原生 SUB 与 DSH-PARENT 扫描结果',
+      { c1, c2, c3, c4, c5, taskVerdict, bugVerdict, subKeys },
+    )
+  }
+
+  console.log('\n== Slice 10：阻塞依赖关系图谱（setBlockedBy 写前环检、原生 DEPEND_ON 优先、400 自动降级成对标记 + ASSOCIATED、getDependencies 双源合并与反向 blocking 推导、edge-landing 写后读回核对） ==')
+  {
+    markersMod.clearYunxiaoIssueKeyCache()
+    repoIdModelMod.clearLearnedYunxiaoContexts()
+    const backend = roomMod.createYunxiaoBackend({} as any)
+    const repoRef = {
+      backend: 'yunxiao',
+      refId: REF_ID,
+      name: 'dci-agentic-forge-sandbox',
+      url: 'https://devops.aliyun.com/projex/project/' + PROJ_ID,
+    }
+    const edgeRulesMod = await imp('src/deck/rules/edge-landing.ts')
+    const graphReadMod = await imp('src/tracker/rooms/yunxiao/graph/read.ts')
+    const errorsMod = await imp('src/tracker/rooms/yunxiao/errors.ts')
+
+    let dependOnAllowed = false
+    const w1: any = {
+      id: 'f7d327d50b8fca57a146979938',
+      serialNumber: 'DCIAFS-1',
+      subject: '前置基础工单 1（已关闭）',
+      description: '# Ticket 1\n',
+      formatType: 'MARKDOWN',
+      statusStageId: '4', // closed
+      parentId: null,
+      labels: [],
+      gmtCreate: 1788775000000,
+      gmtModified: 1788776000000,
+    }
+    const w2: any = {
+      id: '25ac2befde335fcc2218d7c8bb',
+      serialNumber: 'DCIAFS-2',
+      subject: '中间工单 2（打开中）',
+      description: '# Ticket 2\n',
+      formatType: 'MARKDOWN',
+      statusStageId: '2', // open
+      parentId: null,
+      labels: [],
+      gmtCreate: 1788776000000,
+      gmtModified: 1788777000000,
+    }
+    const w3: any = {
+      id: '268aa8ac348507516359714df3',
+      serialNumber: 'DCIAFS-3',
+      subject: '下游工单 3（打开中）',
+      description: '# Ticket 3\n',
+      formatType: 'MARKDOWN',
+      statusStageId: '1', // open
+      parentId: null,
+      labels: [],
+      gmtCreate: 1788777000000,
+      gmtModified: 1788778000000,
+    }
+
+    const store = new Map<string, any>([
+      [w1.id, w1],
+      [w1.serialNumber, w1],
+      [w2.id, w2],
+      [w2.serialNumber, w2],
+      [w3.id, w3],
+      [w3.serialNumber, w3],
+    ])
+    // relationRecordsByItem: workitemId -> Array<{ relationType, resourceId }>
+    const relations = new Map<string, Array<{ id: string; relationType: string; resourceType: string; resourceId: string }>>()
+    const getRelList = (wid: string) => {
+      if (!relations.has(wid)) relations.set(wid, [])
+      return relations.get(wid)!
+    }
+    const relWriteCalls: Array<{ method: string; wid: string; relationType: string; targetId: string }> = []
+
+    const blockCtx: any = {
+      cwd: '/ws-block',
+      platform: {
+        fs: makeFakeFs({ 'docs/agents/yunxiao.yaml': VALID_YUNXIAO_YAML }),
+        env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+      },
+      fetch: async (input: string | URL, init?: RequestInit) => {
+        const u = String(input)
+        const method = (init?.method || 'GET').toUpperCase()
+        const relMatch = u.match(/\/workitems\/([^/?]+)\/relationRecords/)
+        if (relMatch) {
+          const wid = decodeURIComponent(relMatch[1])
+          const item = store.get(wid)
+          const realWid = item ? item.id : wid
+          if (method === 'GET') {
+            const urlObj = new URL(u)
+            const rType = urlObj.searchParams.get('relationType') || ''
+            const list = getRelList(realWid).filter((r) => r.relationType === rType)
+            return new Response(JSON.stringify(list), { status: 200 })
+          }
+          if (method === 'POST') {
+            const b = JSON.parse(String(init?.body || '{}'))
+            relWriteCalls.push({ method: 'POST', wid: realWid, relationType: b.relationType, targetId: b.workitemId })
+            if (b.relationType === 'DEPEND_ON' && !dependOnAllowed) {
+              return new Response(
+                JSON.stringify({ errorCode: 'InvaildData.Failed', errorMessage: '无法创建此关系, 不满足关系对应的类型约束！' }),
+                { status: 400 },
+              )
+            }
+            const list = getRelList(realWid)
+            if (!list.some((r) => r.relationType === b.relationType && r.resourceId === b.workitemId)) {
+              list.push({ id: 'rel-' + realWid + '-' + b.workitemId, relationType: b.relationType, resourceType: 'Task', resourceId: b.workitemId })
+            }
+            if (b.relationType === 'DEPEND_ON') {
+              const revList = getRelList(b.workitemId)
+              if (!revList.some((r) => r.relationType === 'DEPENDED_BY' && r.resourceId === realWid)) {
+                revList.push({ id: 'rel-rev-' + b.workitemId + '-' + realWid, relationType: 'DEPENDED_BY', resourceType: 'Task', resourceId: realWid })
+              }
+            }
+            return new Response(JSON.stringify({ id: 'rel-ok' }), { status: 200 })
+          }
+          if (method === 'DELETE') {
+            const urlObj = new URL(u)
+            const rType = urlObj.searchParams.get('relationType') || ''
+            const tId = urlObj.searchParams.get('workitemId') || ''
+            relWriteCalls.push({ method: 'DELETE', wid: realWid, relationType: rType, targetId: tId })
+            const list = getRelList(realWid)
+            const idx = list.findIndex((r) => r.relationType === rType && r.resourceId === tId)
+            if (idx >= 0) list.splice(idx, 1)
+            if (rType === 'DEPEND_ON') {
+              const revList = getRelList(tId)
+              const rIdx = revList.findIndex((r) => r.relationType === 'DEPENDED_BY' && r.resourceId === realWid)
+              if (rIdx >= 0) revList.splice(rIdx, 1)
+            }
+            return new Response(null, { status: 204 })
+          }
+        }
+        if (u.endsWith('/workitems:search')) {
+          return new Response(JSON.stringify([w1, w2, w3]), {
+            status: 200,
+            headers: { 'x-page': '1', 'x-per-page': '100', 'x-total': '3', 'x-total-pages': '1', 'x-next-page': '2' },
+          })
+        }
+        if (u.includes('/comments')) {
+          return new Response(JSON.stringify([]), { status: 200 })
+        }
+        const wiMatch = u.match(/\/workitems\/([^/?]+)$/)
+        if (wiMatch && method === 'GET') {
+          const item = store.get(decodeURIComponent(wiMatch[1]))
+          if (!item) return new Response(JSON.stringify({ errorCode: 'InvalidWorkitem.NotFound', errorMessage: '不存在' }), { status: 404 })
+          return new Response(JSON.stringify(item), { status: 200 })
+        }
+        if (wiMatch && method === 'PUT') {
+          const item = store.get(decodeURIComponent(wiMatch[1]))
+          const b = JSON.parse(String(init?.body || '{}'))
+          if (item && typeof b.description === 'string') item.description = b.description
+          return new Response(null, { status: 204 })
+        }
+        return new Response('unexpected: ' + method + ' ' + u, { status: 500 })
+      },
+    }
+
+    // 10.1 checkIssueExists 核验存在与不存在的票号
+    const exists1 = typeof graphReadMod.checkIssueExists === 'function' ? await graphReadMod.checkIssueExists(blockCtx, repoRef, '1') : { ok: false }
+    const exists99 = typeof graphReadMod.checkIssueExists === 'function' ? await graphReadMod.checkIssueExists(blockCtx, repoRef, '99') : { ok: false }
+
+    // 10.2 企业默认矩阵限制（DEPEND_ON 返回 400）时：setBlockedBy(#2, ['1']) 自动降级写入 Blocked by: #1 + DSH-BLOCKED-BY: 1 并建立 ASSOCIATED 关联
+    const setFallbackRes = await backend.setBlockedBy(repoRef, '2', ['1'], undefined, blockCtx)
+    const get2After = await backend.get(repoRef, '2', {}, blockCtx)
+    const dep2After = await backend.getDependencies(repoRef, '2', {}, blockCtx)
+    const landingFallback = edgeRulesMod.classifyEdgeLanding('block', '1', { issue: get2After.data, dependencies: dep2After.data }, '2')
+    const verdictFallback = edgeRulesMod.edgeVerdict('block', '1', { issue: get2After.data, dependencies: dep2After.data })
+
+    // 10.3 反向 blocking 边推导：查询 #1 的 getDependencies，blocking 应包含 #2（标题与 open 状态已补齐）
+    const dep1Reverse = await backend.getDependencies(repoRef, '1', {}, blockCtx)
+
+    // 10.4 图环检测：此时 #2 被 #1 阻塞；尝试设置 #3 被 #2 阻塞（合法），再尝试设置 #1 被 #3 阻塞（形成 1 -> 3 -> 2 -> 1 环）或自环（#2 被 #2 阻塞）均被拒绝（conflict）
+    const set3BlockedBy2 = await backend.setBlockedBy(repoRef, '3', ['2'], undefined, blockCtx)
+    const cycleRes = await backend.setBlockedBy(repoRef, '1', ['3'], undefined, blockCtx)
+    const selfLoopRes = await backend.setBlockedBy(repoRef, '2', ['2'], undefined, blockCtx)
+
+    // 10.5 当企业开启原生 DEPEND_ON（dependOnAllowed = true）时：将 #3 从回退正文边直接切换为原生 DEPEND_ON，自动清理正文标记与旧 ASSOCIATED 关联，且 classifyEdgeLanding 判为 native
+    dependOnAllowed = true
+    const setNativeRes = await backend.setBlockedBy(repoRef, '3', ['1'], undefined, blockCtx)
+    const get3Native = await backend.get(repoRef, '3', {}, blockCtx)
+    const dep3Native = await backend.getDependencies(repoRef, '3', {}, blockCtx)
+    const landingNative = edgeRulesMod.classifyEdgeLanding('block', '1', { issue: get3Native.data, dependencies: dep3Native.data }, '3')
+    const verdictNative = edgeRulesMod.edgeVerdict('block', '1', { issue: get3Native.data, dependencies: dep3Native.data })
+    const oldAssociatedCleaned = relWriteCalls.some(
+      (c) => c.method === 'DELETE' && c.wid === w3.id && c.relationType === 'ASSOCIATED' && c.targetId === w2.id,
+    )
+    const nonConstraint400Ignored =
+      errorsMod.isRelationMatrixConstraintError({
+        ok: false,
+        status: 400,
+        stderr: '{"errorCode":"InvalidIdentifier.NotFound","errorMessage":"项目不存在"}',
+        stdout: '',
+      }) === false
+
+    check(
+      oldAssociatedCleaned &&
+        nonConstraint400Ignored &&
+      exists1.ok === true &&
+        exists1.exists === true &&
+        exists99.ok === true &&
+        exists99.exists === false &&
+        setFallbackRes.ok === true &&
+        w2.description.includes('Blocked by: #1') &&
+        w2.description.includes('<!-- DSH-BLOCKED-BY: 1 -->') &&
+        relWriteCalls.some((c) => c.method === 'POST' && c.wid === w2.id && c.relationType === 'ASSOCIATED' && c.targetId === w1.id) &&
+        verdictFallback === 'landed' &&
+        landingFallback.kind === 'body-line' &&
+        dep2After.ok === true &&
+        dep2After.data.blockedBy.length === 1 &&
+        dep2After.data.blockedBy[0]?.key === '1' &&
+        dep2After.data.blockedBy[0]?.title === '前置基础工单 1（已关闭）' &&
+        dep2After.data.blockedBy[0]?.state === 'closed' &&
+        dep1Reverse.ok === true &&
+        dep1Reverse.data.blocking.some((b: any) => b.key === '2' && b.state === 'open') &&
+        set3BlockedBy2.ok === true &&
+        cycleRes.ok === false &&
+        cycleRes.error.kind === 'conflict' &&
+        selfLoopRes.ok === false &&
+        selfLoopRes.error.kind === 'conflict' &&
+        setNativeRes.ok === true &&
+        verdictNative === 'landed' &&
+        landingNative.kind === 'native' &&
+        dep3Native.ok === true &&
+        dep3Native.data.blockedBy[0]?.key === '1' &&
+        dep3Native.data.blockedBy[0]?.state === 'closed',
+      '10.1 阻塞依赖关系：支持 checkIssueExists、写前图环检测、DEPEND_ON 400 自动回退成对标记 + ASSOCIATED、原生 DEPEND_ON 优先、双源合并补齐标题状态与反向 blocking 边，100% 通过 edge-landing 写后读回核对',
+      {
+        exists1,
+        exists99,
+        verdictFallback,
+        landingFallback,
+        dep2After,
+        dep1Reverse,
+        cycleRes,
+        selfLoopRes,
+        verdictNative,
+        landingNative,
+      },
+    )
+  }
+  console.log('\n== Slice 11：Codeup 一键开仓发布（initProject 仓库名校验、本地 Git 初始化与身份兜底、CreateRepository public->internal 与 namespaceId、GetRepository 回查克隆地址、配置 origin 并推送 HEAD） ==')
+  {
+    markersMod.clearYunxiaoIssueKeyCache()
+    repoIdModelMod.clearLearnedYunxiaoContexts()
+    const backend = roomMod.createYunxiaoBackend({} as any)
+
+    // 11.1 非法仓库名直接拒绝（parse + input-refused），不触发任何 git 或 HTTP 请求
+    let execCountBad = 0
+    let fetchCountBad = 0
+    const badNameEmpty = await backend.initProject(
+      { cwd: '/ws-init-bad' },
+      { name: '   ' },
+      {
+        cwd: '/ws-init-bad',
+        exec: async () => { execCountBad += 1; return { code: 0, stdout: '', stderr: '' } },
+        fetch: async () => { fetchCountBad += 1; return new Response('{}', { status: 200 }) },
+      } as any,
+    )
+    const badNameChars = await backend.initProject(
+      { cwd: '/ws-init-bad' },
+      { name: 'invalid/repo name!' },
+      {
+        cwd: '/ws-init-bad',
+        exec: async () => { execCountBad += 1; return { code: 0, stdout: '', stderr: '' } },
+        fetch: async () => { fetchCountBad += 1; return new Response('{}', { status: 200 }) },
+      } as any,
+    )
+    check(
+      badNameEmpty.ok === false &&
+        badNameEmpty.error.kind === 'parse' &&
+        badNameEmpty.error.stage === 'input-refused' &&
+        badNameChars.ok === false &&
+        badNameChars.error.kind === 'parse' &&
+        badNameChars.error.stage === 'input-refused' &&
+        execCountBad === 0 &&
+        fetchCountBad === 0,
+      '11.1 initProject 对空仓库名或非法字符仓库名立即返回 parse（input-refused），零 git/HTTP 调用',
+      { badNameEmpty, badNameChars, execCountBad, fetchCountBad },
+    )
+
+    // 11.2 完整开仓发布主链：属主自愈 / git init / git add . / git commit（含身份缺失自动补齐） -> CreateRepository（public 映射为 internal，透传 namespaceId，不传 readMeType: USER_GUIDE） -> GetRepository(id) 回查权威克隆地址 -> 配置 origin -> git push -u origin HEAD
+    const gitCommands: string[][] = []
+    let createRepoBody: any = null
+    let createRepoUrl = ''
+    let getRepoCalledWithId = false
+    let commitAttempts = 0
+    let ownershipChecks = 0
+
+    const initCtx: any = {
+      cwd: '/ws-init-ok',
+      platform: {
+        resolveExecutable: async (bin: string) => (bin === 'git' ? '/usr/bin/git' : null),
+        fs: makeFakeFs({
+          'docs/agents/yunxiao.yaml': VALID_YUNXIAO_YAML + '\nnamespaceId: 2813489',
+        }),
+        env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+      },
+      exec: async (_cmd: string, args: string[]) => {
+        gitCommands.push(args)
+        if (args.includes('rev-parse') && args.includes('--is-inside-work-tree')) {
+          ownershipChecks += 1
+          if (ownershipChecks === 1) {
+            return { code: 128, stdout: '', stderr: "fatal: detected dubious ownership in repository at '/ws-init-ok'" }
+          }
+          return { code: 128, stdout: '', stderr: 'fatal: not a git repository (or any of the parent directories): .git' }
+        }
+        if (args[0] === 'config' && args.includes('safe.directory')) {
+          return { code: 0, stdout: '', stderr: '' }
+        }
+        if (args[0] === 'init') return { code: 0, stdout: 'Initialized empty Git repository\n', stderr: '' }
+        if (args[0] === 'add') return { code: 0, stdout: '', stderr: '' }
+        if (args[0] === 'commit') {
+          commitAttempts += 1
+          if (commitAttempts === 1) {
+            return { code: 128, stdout: '', stderr: 'Author identity unknown\n*** Please tell me who you are.' }
+          }
+          return { code: 0, stdout: '[main (root-commit) 1234567] initial commit\n', stderr: '' }
+        }
+        if (args[0] === 'config') return { code: 0, stdout: '', stderr: '' }
+        if (args[0] === 'remote' && args[1] === 'get-url') return { code: 2, stdout: '', stderr: 'No such remote' }
+        if (args[0] === 'remote' && args[1] === 'add') return { code: 0, stdout: '', stderr: '' }
+        if (args[0] === 'push') return { code: 0, stdout: 'Branch main set up to track remote branch main from origin.\n', stderr: '' }
+        return { code: 0, stdout: '', stderr: '' }
+      },
+      fetch: async (input: string | URL, init?: RequestInit) => {
+        const u = String(input)
+        const method = (init?.method || 'GET').toUpperCase()
+        if (u.endsWith('/oapi/v1/platform/user')) {
+          return new Response(
+            JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao', lastOrganization: ORG_ID }),
+            { status: 200 },
+          )
+        }
+        if (u.includes('/codeup/organizations/' + ORG_ID + '/repositories') && method === 'POST') {
+          createRepoUrl = u
+          createRepoBody = JSON.parse(String(init?.body || '{}'))
+          return new Response(
+            JSON.stringify({
+              id: 8899001,
+              name: createRepoBody.name,
+              path: createRepoBody.path,
+              pathWithNamespace: ORG_ID + '/Apple/' + createRepoBody.path,
+              nameWithNamespace: ORG_ID + ' / Apple / ' + createRepoBody.name,
+              visibility: createRepoBody.visibility,
+              webUrl: 'https://codeup.aliyun.com/' + ORG_ID + '/Apple/' + createRepoBody.path,
+              accessLevel: 40,
+              archived: false,
+            }),
+            { status: 200 },
+          )
+        }
+        if (u.endsWith('/codeup/organizations/' + ORG_ID + '/repositories/8899001') && method === 'GET') {
+          getRepoCalledWithId = true
+          return new Response(
+            JSON.stringify({
+              id: 8899001,
+              name: 'new-deck-service',
+              path: 'new-deck-service',
+              pathWithNamespace: ORG_ID + '/Apple/new-deck-service',
+              webUrl: 'https://codeup.aliyun.com/' + ORG_ID + '/Apple/new-deck-service',
+              httpUrlToRepo: 'https://codeup.aliyun.com/' + ORG_ID + '/Apple/new-deck-service.git',
+              sshUrlToRepo: 'git@codeup.aliyun.com:' + ORG_ID + '/Apple/new-deck-service.git',
+              accessLevel: '40',
+              archived: false,
+            }),
+            { status: 200 },
+          )
+        }
+        return new Response('unexpected: ' + method + ' ' + u, { status: 500 })
+      },
+    }
+
+    const initRes = await backend.initProject(
+      { cwd: '/ws-init-ok' },
+      { name: 'new-deck-service', visibility: 'public', description: '云效一键开仓测试仓库' },
+      initCtx,
+    )
+    const learnedAfterInit = repoIdModelMod.getLearnedYunxiaoContext('/ws-init-ok')
+    check(
+      initRes.ok === true &&
+        initRes.data.backend === 'yunxiao' &&
+        initRes.data.refId === REF_ID &&
+        initRes.data.url === 'https://codeup.aliyun.com/' + ORG_ID + '/Apple/new-deck-service' &&
+        createRepoUrl.includes('createParentPath=true') &&
+        createRepoBody?.name === 'new-deck-service' &&
+        createRepoBody?.path === 'new-deck-service' &&
+        createRepoBody?.visibility === 'internal' &&
+        createRepoBody?.namespaceId === 2813489 &&
+        createRepoBody?.description === '云效一键开仓测试仓库' &&
+        createRepoBody?.readMeType !== 'USER_GUIDE' &&
+        getRepoCalledWithId === true &&
+        gitCommands.some((a) => a.includes('safe.directory')) &&
+        gitCommands.some((a) => a[0] === 'init') &&
+        gitCommands.some((a) => a[0] === 'remote' && a[1] === 'add' && a[2] === 'origin' && a[3] === 'https://codeup.aliyun.com/' + ORG_ID + '/Apple/new-deck-service.git') &&
+        gitCommands.some((a) => a[0] === 'push' && a.includes('-u') && a.includes('origin') && a.includes('HEAD')) &&
+        learnedAfterInit?.codeupRepo?.id === 8899001 &&
+        learnedAfterInit?.codeupRepo?.pathWithNamespace === ORG_ID + '/Apple/new-deck-service',
+      '11.2 initProject 完成属主自愈、本地 Git 初始化与首提交、CreateRepository（public->internal、namespaceId、避免 USER_GUIDE 冲突）、GetRepository 回查克隆地址、配置 origin 并推送 HEAD，同步更新 learnedYunxiaoContext',
+      { initRes, createRepoUrl, createRepoBody, getRepoCalledWithId, gitCommands, learnedAfterInit },
+    )
+  }
+
   console.log('')
   console.log(failed ? '存在失败 — ' + GATE + ' 未通过' : '全部通过（' + total + ' 项断言）')
   printGateResult(GATE, total, failed)

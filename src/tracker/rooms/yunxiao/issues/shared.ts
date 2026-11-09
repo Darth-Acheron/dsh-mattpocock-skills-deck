@@ -322,4 +322,12 @@ export async function ensureProjectLabelIdsForWrite(
   return { ok: true, labelIds: ids }
 }
 
+/** 从关系记录行（ListWorkitemRelationRecords 响应元素）中提取对端工作项 26 位 ID。 */
+export function extractRelationWorkitemId(record: unknown): string {
+  const bag = asRecord(record)
+  if (!bag) return ''
+  const raw = bag['resourceId'] ?? bag['workitemId'] ?? bag['targetWorkitemId'] ?? bag['id']
+  return typeof raw === 'string' ? raw.trim() : ''
+}
+
 export { errMsg }

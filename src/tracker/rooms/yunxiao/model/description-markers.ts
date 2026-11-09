@@ -46,6 +46,23 @@ export function classifyYunxiaoIssueInput(raw: unknown): YunxiaoIssueInputClassi
   return null
 }
 
+/** 判断两个工作项入参是否在本地分类层即可确定指向同一张工作项（用于写前快速自环检测）。 */
+export function isSameYunxiaoIssueInput(a: unknown, b: unknown): boolean {
+  const rawA = String(a == null ? '' : a).trim()
+  const rawB = String(b == null ? '' : b).trim()
+  if (rawA && rawA === rawB) return true
+  const ca = classifyYunxiaoIssueInput(a)
+  const cb = classifyYunxiaoIssueInput(b)
+  if (!ca || !cb) return false
+  if ((ca.kind === 'numeric' || ca.kind === 'serial') && (cb.kind === 'numeric' || cb.kind === 'serial')) {
+    return ca.key === cb.key
+  }
+  if (ca.kind === 'internal-id' && cb.kind === 'internal-id') {
+    return ca.id.toLowerCase() === cb.id.toLowerCase()
+  }
+  return false
+}
+
 /** 由纯数字票号与项目 customCode 拼出 Yunxiao Projex 的 serialNumber（如 "2" + "DCIAFS" -> "DCIAFS-2"）。 */
 export function toYunxiaoSerialNumber(keyOrInput: unknown, customCode: unknown): string {
   const classified = classifyYunxiaoIssueInput(keyOrInput)

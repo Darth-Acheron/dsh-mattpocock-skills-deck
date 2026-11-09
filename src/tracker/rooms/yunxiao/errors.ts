@@ -159,4 +159,14 @@ export function asRecord(v: unknown): Record<string, unknown> | null {
   return null
 }
 
+/** 判断关系写接口失败是否属于云效企业关系矩阵类型约束限制（HTTP 400）。 */
+export function isRelationMatrixConstraintError(
+  res: { ok?: boolean; status?: number; stderr?: string; stdout?: string } | null | undefined,
+): boolean {
+  if (!res || res.ok) return false
+  if (res.status !== 400) return false
+  const text = String(res.stderr || res.stdout || '')
+  return /无法创建此关系|不满足关系对应的类型约束|InvaildData\.Failed|InvalidData\.Failed|relation/i.test(text)
+}
+
 export default classifyYunxiaoError

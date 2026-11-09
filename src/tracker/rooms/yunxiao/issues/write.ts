@@ -19,7 +19,7 @@ import { TRACKER_ERROR_STAGE, type OpResult, type TrackerError } from '../../../
 import { checkIdempotencyKey } from '../../../../refresh/contract/idempotency-keys.js'
 import { fail } from '../../../kernel/preflight.js'
 import { GITLAB_READ_TIMEOUT_MS } from '../../../../shared/time-config/src/values.js'
-import { asRecord, failYunxiao } from '../errors.js'
+import { asRecord, failYunxiao, isRelationMatrixConstraintError } from '../errors.js'
 import {
   parseHiddenIssueKind, rememberYunxiaoIssueIdentity, rewriteDescriptionWithAssignees,
   rewriteDescriptionWithHiddenParent, rewriteDescriptionWithIssueKind, withAnchor,
@@ -28,8 +28,8 @@ import { getLearnedYunxiaoContext, learnYunxiaoContextFor } from '../model/repo-
 import { normalizeYunxiaoIssue } from '../model/normalize.js'
 import {
   requestPlatformUser, requestProjectMembers, requestProjectWorkitemTypes,
-  requestWorkitemCreate, requestWorkitemUpdate, requestWorkitemWorkflow,
-  requestWorkitemWorkflowInfo, type YunxiaoCreateWorkitemBody,
+  requestWorkitemCreate, requestWorkitemRelationRecordCreate, requestWorkitemUpdate,
+  requestWorkitemWorkflow, requestWorkitemWorkflowInfo, type YunxiaoCreateWorkitemBody,
 } from '../requests.js'
 import { lookupByAnchor } from './idempotency.js'
 import { getIssue } from './read.js'
@@ -222,12 +222,24 @@ export async function createIssue(ctx: BackendContext, repo: RepositoryRef, inpu
       ...(labelIds.length > 0 ? { labels: labelIds } : {}),
       ...(assigneeLogins.length > 0 && userResolved.participantIds.length > 0 ? { participants: userResolved.participantIds } : {}),
     }
-    const createRes = await requestWorkitemCreate(effective, proj.organizationId, createBody, GITLAB_READ_TIMEOUT_MS)
+    let createRes = await requestWorkitemCreate(effective, proj.organizationId, createBody, GITLAB_READ_TIMEOUT_MS)
+    let fallbackParentAssociateId = ''
+    if (!createRes.ok && nativeParentId && isRelationMatrixConstraintError(createRes)) {
+      const { parentId: _omitParent, ...retryBody } = createBody
+      void _omitParent
+      createRes = await requestWorkitemCreate(effective, proj.organizationId, retryBody, GITLAB_READ_TIMEOUT_MS)
+      if (createRes.ok) fallbackParentAssociateId = nativeParentId
+    }
     if (!createRes.ok) return failYunxiao(createRes, createRes.stderr || createRes.stdout || '创建工作项失败', createRes, effective)
 
     const createdBag = asRecord(createRes.data)
     const createdId = createdBag && typeof createdBag['id'] === 'string' ? createdBag['id'].trim() : ''
     if (!createdId) return fail(ERROR_KIND.PARSE as ErrorKind, 'CreateWorkitem 响应缺少有效的 id 字段', createRes.stdout)
+    if (fallbackParentAssociateId) {
+      try {
+        await requestWorkitemRelationRecordCreate(effective, proj.organizationId, createdId, 'ASSOCIATED', fallbackParentAssociateId, GITLAB_READ_TIMEOUT_MS)
+      } catch { /* best-effort */ }
+    }
 
     const fetched = await fetchRawWorkitem(effective, proj, createdId)
     const issue = fetched.ok
