@@ -3,9 +3,9 @@
  *
  * 核心行为：
  *   1. 将调用方传入的 6 位十六进制颜色归一化为小写，并在发往云效时补上 # 前缀（#rrggbb）；
- *   2. 先经 fetchProjectLabelNameMap 读取项目标签字典以按名称定位 labelId；若某标签已存在则调用
+ *   2. 先经 fetchProjectLabelNameMap 读取项目全量标签字典以按名称定位 labelId；若某标签已存在则调用
  *      PUT .../labels/{labelId} 更新颜色，若标签尚未存在则调用 POST .../labels 创建带该颜色的标签；
- *   3. 逐条记账到 applied / failed，确保入参每一项恰好落入其中之一。
+ *   3. 按 WRITE_CONCURRENCY_DEFAULT / WRITE_CONCURRENCY_MAX 受控并发执行，逐条记账到 applied / failed。
  */
 
 import { ERROR_KIND } from '../../../contract/vocabulary.js'
@@ -32,6 +32,31 @@ import {
 export const WRITE_CONCURRENCY_MAX = PAGINATION.gitlab.labelWriteConcurrencyMax
 /** 批量修改项目标签颜色的默认并发数。 */
 export const WRITE_CONCURRENCY_DEFAULT = PAGINATION.gitlab.labelWriteConcurrencyDefault
+
+function writeConcurrency(ctx: OpContext): number {
+  const bag = ctx as OpContext & { labelColorConcurrency?: unknown }
+  const raw = ctx && typeof bag.labelColorConcurrency === 'number' ? bag.labelColorConcurrency : WRITE_CONCURRENCY_DEFAULT
+  if (!Number.isFinite(raw) || raw < 1) return WRITE_CONCURRENCY_DEFAULT
+  return Math.min(Math.floor(raw), WRITE_CONCURRENCY_MAX)
+}
+
+async function runWithLimit<T, R>(items: T[], limit: number, worker: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let next = 0
+  const lanes = Math.max(1, Math.min(limit, items.length))
+  const runners: Promise<void>[] = []
+  for (let i = 0; i < lanes; i++) {
+    runners.push((async () => {
+      for (;;) {
+        const idx = next++
+        if (idx >= items.length) return
+        results[idx] = await worker(items[idx], idx)
+      }
+    })())
+  }
+  await Promise.all(runners)
+  return results
+}
 
 function changesProblem(changes: unknown): string {
   if (!Array.isArray(changes)) return '修改标签颜色需要一批「标签 → 新颜色」的改动，本次收到的内容不是数组'
@@ -81,17 +106,14 @@ export async function setLabelColors(
     const mapRes = await fetchProjectLabelNameMap(effective, proj)
     const nameToId = mapRes.ok ? mapRes.nameToId : new Map<string, string>()
 
-    const applied: { name: string; color: string }[] = []
-    const failed: { name: string; reason: TrackerError }[] = []
-
-    for (const ch of changes) {
+    const results = await runWithLimit(changes, writeConcurrency(ctx), async (ch) => {
       const wantHex = normalizeColor(ch.color)
       if (!wantHex) {
-        failed.push({
+        return {
+          ok: false as const,
           name: ch.name,
           reason: reason(ERROR_KIND.PARSE as ErrorKind, '「' + ch.name + '」的新颜色不正确：请改为六位十六进制，例如 9d7cd8。', ''),
-        })
-        continue
+        }
       }
       const colorWithHash = '#' + wantHex
       const labelName = ch.name.trim()
@@ -115,14 +137,21 @@ export async function setLabelColors(
           )
 
       if (res.ok) {
-        applied.push({ name: ch.name, color: wantHex })
-      } else {
-        const verdict = classifyYunxiaoError(res, ctx)
-        failed.push({
-          name: ch.name,
-          reason: reason(verdict.kind, '修改「' + ch.name + '」的颜色失败：' + (res.stderr || res.stdout || 'HTTP ' + res.status), res),
-        })
+        return { ok: true as const, name: ch.name, color: wantHex }
       }
+      const verdict = classifyYunxiaoError(res, ctx)
+      return {
+        ok: false as const,
+        name: ch.name,
+        reason: reason(verdict.kind, '修改「' + ch.name + '」的颜色失败：' + (res.stderr || res.stdout || 'HTTP ' + res.status), res),
+      }
+    })
+
+    const applied: { name: string; color: string }[] = []
+    const failed: { name: string; reason: TrackerError }[] = []
+    for (const r of results) {
+      if (r.ok) applied.push({ name: r.name, color: r.color })
+      else failed.push({ name: r.name, reason: r.reason })
     }
 
     return { ok: true, data: { applied, failed } }

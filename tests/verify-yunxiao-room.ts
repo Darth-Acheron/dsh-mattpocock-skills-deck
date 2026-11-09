@@ -1515,6 +1515,101 @@ async function main(): Promise<void> {
       '8.3 listLabels 将 HTTP 204 空响应归一为 []，setLabels 支持标签自动创建/指派与清空，setLabelColors 完成 6 位十六进制颜色双向归一与逐条记账',
       { emptyLabelsRes, assignLabelsRes, listLabelsAfterCreate, colorBatchRes, clearLabelsRes },
     )
+
+    // 8.4 代码评审回归断言：setLabels 采纳 GetWorkitemTypeFieldConfig 返回的自定义标签字段标识（如 tag）、fetchProjectLabelNameMap 支持跨页查找第 2 页标签、listMaps 在搜索摘要省略 labels/description 时自动调 GetWorkitem 补齐而不误丢探索地图
+    const reviewPutBodies: any[] = []
+    let labelPagesFetched = 0
+    const reviewCtx: any = {
+      cwd: '/ws-review-fix',
+      platform: {
+        fs: makeFakeFs({ 'docs/agents/yunxiao.yaml': VALID_YUNXIAO_YAML }),
+        env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+      },
+      fetch: async (input: string | URL, init?: RequestInit) => {
+        const u = String(input)
+        const method = (init?.method || 'GET').toUpperCase()
+        if (u.includes('/fields')) {
+          return new Response(
+            JSON.stringify([{ id: 'tag', identifier: 'tag', name: '标签', format: 'multiList', className: 'tag' }]),
+            { status: 200 },
+          )
+        }
+        if (u.includes('/labels') && method === 'GET') {
+          labelPagesFetched += 1
+          const isPage2 = u.includes('page=2')
+          const pageItems = isPage2
+            ? [{ id: 'lbl-page2-map', name: 'wayfinder:map', color: '#8B5CF6' }]
+            : [{ id: 'lbl-page1-other', name: 'needs-triage', color: '#FBCA04' }]
+          return new Response(JSON.stringify(pageItems), {
+            status: 200,
+            headers: {
+              'x-page': isPage2 ? '2' : '1',
+              'x-per-page': '1',
+              'x-total': '2',
+              'x-total-pages': '2',
+              'x-next-page': '2',
+            },
+          })
+        }
+        if (u.endsWith('/workitems:search')) {
+          // 模拟云效搜索摘要省略了 description 与 labels 字段
+          return new Response(
+            JSON.stringify([
+              {
+                id: '25ac2befde335fcc2218d7c8bb',
+                serialNumber: 'DCIAFS-2',
+                subject: '跨页标签与摘要补齐探索地图',
+                formatType: null,
+                statusStageId: '2',
+                gmtCreate: 1788776000000,
+                gmtModified: 1788779000000,
+              },
+            ]),
+            {
+              status: 200,
+              headers: { 'x-page': '1', 'x-per-page': '100', 'x-total': '1', 'x-total-pages': '1', 'x-next-page': '2' },
+            },
+          )
+        }
+        if ((u.endsWith('/workitems/DCIAFS-2') || u.endsWith('/workitems/25ac2befde335fcc2218d7c8bb')) && method === 'GET') {
+          return new Response(
+            JSON.stringify({
+              id: '25ac2befde335fcc2218d7c8bb',
+              serialNumber: 'DCIAFS-2',
+              subject: '跨页标签与摘要补齐探索地图',
+              description: '# 探索地图正文\n',
+              formatType: 'MARKDOWN',
+              workitemType: { id: '9uy29901re573f561d69jn40' },
+              statusStageId: '2',
+              labels: [{ id: 'lbl-page2-map', name: 'wayfinder:map', color: '#8B5CF6' }],
+              gmtCreate: 1788776000000,
+              gmtModified: 1788779000000,
+            }),
+            { status: 200 },
+          )
+        }
+        if (u.endsWith('/workitems/25ac2befde335fcc2218d7c8bb') && method === 'PUT') {
+          const b = JSON.parse(String(init?.body || '{}'))
+          reviewPutBodies.push(b)
+          return new Response(null, { status: 204 })
+        }
+        return new Response('unexpected: ' + method + ' ' + u, { status: 500 })
+      },
+    }
+
+    const customFieldSetLabels = await backend.setLabels(repoRef, '2', ['wayfinder:map'], undefined, reviewCtx)
+    const mapsFromOmittedSummary = await backend.listMaps(repoRef, reviewCtx)
+    check(
+      customFieldSetLabels.ok === true &&
+        Array.isArray(reviewPutBodies[0]?.tag) &&
+        reviewPutBodies[0]?.tag[0] === 'lbl-page2-map' &&
+        labelPagesFetched >= 2 &&
+        mapsFromOmittedSummary.ok === true &&
+        mapsFromOmittedSummary.data.rows.length === 1 &&
+        mapsFromOmittedSummary.data.rows[0]?.key === '2',
+      '8.4 setLabels 采纳字段配置返回的自定义标签字段名（tag），fetchProjectLabelNameMap 支持跨页查找标签，listMaps 在摘要省略 labels 时自动补齐详情',
+      { customFieldSetLabels, reviewPutBodies, labelPagesFetched, mapsFromOmittedSummary },
+    )
   }
 
   console.log('')

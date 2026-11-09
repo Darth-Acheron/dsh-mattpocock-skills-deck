@@ -27,20 +27,19 @@ import { normalizeYunxiaoIssue } from '../model/normalize.js'
 import { requestWorkitemsSearch } from '../requests.js'
 import { emitReadDegraded } from '../support/read-log.js'
 import {
-  buildSearchConditions,
   DEFAULT_WORKITEM_CATEGORIES,
   enrichWorkitemComments,
   enrichWorkitemListDetails,
   errMsg,
   fetchRawWorkitem,
-  resolveProjectLabelIdsByNames,
+  resolveLabelFilterConditions,
   resolveProjectRef,
   type CtxLike,
   type RawBag,
   type RepoLike,
 } from './shared.js'
 
-const COMMENTS_MAX = 200
+const COMMENTS_MAX = PAGINATION.gitlab.limitMax
 const LIST_PER_PAGE = PAGINATION.gitlab.maxPerPage
 
 function commentsWantOf(opts: GetOpts | null | undefined): number | null {
@@ -102,18 +101,12 @@ export async function listIssues(
   }
 
   try {
-    let conditions: string | undefined
-    if (filter && Array.isArray(filter.labels) && filter.labels.length > 0) {
-      const lblResolved = await resolveProjectLabelIdsByNames(effective, proj, filter.labels)
-      if (!lblResolved.ok) {
-        emitReadDegraded(effective, 'list', 'list:transport', Date.now() - t0, lblResolved.error.kind)
-        return lblResolved
-      }
-      if (!lblResolved.matchedAll) return { ok: true, data: [] }
-      if (lblResolved.labelIds.length > 0) {
-        conditions = buildSearchConditions({ labelIds: lblResolved.labelIds })
-      }
+    const lblFilter = await resolveLabelFilterConditions(effective, proj, filter)
+    if (!lblFilter.ok) {
+      emitReadDegraded(effective, 'list', 'list:transport', Date.now() - t0, lblFilter.error.kind)
+      return lblFilter
     }
+    if (!lblFilter.matchedAll) return { ok: true, data: [] }
 
     const res = await requestWorkitemsSearch(
       effective,
@@ -122,7 +115,7 @@ export async function listIssues(
         spaceId: proj.projectId,
         spaceType: 'Project',
         category: DEFAULT_WORKITEM_CATEGORIES,
-        ...(conditions ? { conditions } : {}),
+        ...(lblFilter.conditions ? { conditions: lblFilter.conditions } : {}),
         page: 1,
         perPage: LIST_PER_PAGE,
         orderBy: 'gmtCreate',

@@ -7,19 +7,20 @@
  *      - 将调用方传入的纯数字票号（"2"）、带前缀编号（"DCIAFS-2"）或 26 位内部 ID 双向桥接为
  *        GetWorkitem 可接受的标识及写接口必填的 26 位内部 id；
  *      - 在 SearchWorkitems 摘要缺失完整 description 时自动调用 GetWorkitem 补齐正文。
- *   2. 项目标签字典读取（含 HTTP 204 空响应归一）、乐观并发校验与按需创建收口在本模块，供列表过滤、建票与改标签复用。
+ *   2. 项目标签字典读取（含 HTTP 204 空响应归一与跨页翻页）、乐观并发校验与按需创建收口在本模块，供列表过滤、建票与改标签复用。
  */
 
 import { ERROR_KIND } from '../../../contract/vocabulary.js'
 import type { ErrorKind } from '../../../contract/identity.js'
 import type { BackendContext, OpContext } from '../../../contract/contexts.js'
 import type { Label, RepositoryRef } from '../../../contract/entities.js'
-import type { AssigneeInput, LabelInput, SetOpts } from '../../../contract/inputs.js'
+import type { AssigneeInput, LabelInput, ListFilter, SetOpts } from '../../../contract/inputs.js'
 import type { TrackerError } from '../../../contract/results.js'
+import { PAGINATION } from '../../../contract/pagination.js'
 import { normalizeColor } from '../../../../shared/label-color/src/colors.js'
 import { fail } from '../../../kernel/preflight.js'
 import { GITLAB_READ_TIMEOUT_MS, GITLAB_PROBE_TIMEOUT_MS } from '../../../../shared/time-config/src/values.js'
-import type { YunxiaoCtx, YunxiaoHttpResult } from '../client.js'
+import { hasNextYunxiaoPage, type YunxiaoCtx, type YunxiaoHttpResult } from '../client.js'
 import { asRecord, errMsg, failYunxiao } from '../errors.js'
 import {
   classifyYunxiaoIssueInput, getScopeCustomCode, rememberYunxiaoIssueIdentity,
@@ -46,6 +47,11 @@ export type RawBag = Record<string, unknown>
 
 /** 默认跨类别搜索范围：覆盖需求（Req）、任务（Task）与缺陷（Bug）。 */
 export const DEFAULT_WORKITEM_CATEGORIES = 'Req,Task,Bug'
+
+const DETAIL_CONCURRENCY = PAGINATION.gitlab.labelWriteConcurrencyMax
+const COMMENTS_MAX = PAGINATION.gitlab.limitMax
+const LABEL_LIST_PER_PAGE = PAGINATION.gitlab.labelListPerPage
+const LABEL_LIST_MAX_PAGES = PAGINATION.gitlab.labelListMaxPages
 
 /** 解析后的云效组织与项目坐标。 */
 export interface ResolvedProjectRef { refId: string; organizationId: string; projectId: string }
@@ -176,7 +182,7 @@ export function needsDetailEnrichment(raw: RawBag): boolean {
   return typeof raw['description'] !== 'string' || (raw['formatType'] === null && raw['description'] === '')
 }
 
-/** 为列表项按需并发补齐完整工作项详情（限制并发数 4，确保文件头标记与标签不丢失）。 */
+/** 为列表项按需并发补齐完整工作项详情（限制并发数为 PAGINATION.gitlab.labelWriteConcurrencyMax，确保文件头标记与标签不丢失）。 */
 export async function enrichWorkitemListDetails(opCtx: CtxLike | null | undefined, proj: ResolvedProjectRef, items: RawBag[]): Promise<RawBag[]> {
   const out = items.slice()
   const indices: number[] = []
@@ -185,7 +191,7 @@ export async function enrichWorkitemListDetails(opCtx: CtxLike | null | undefine
     if (needsDetailEnrichment(out[i])) indices.push(i)
   }
   if (indices.length === 0) return out
-  const concurrency = Math.min(4, indices.length)
+  const concurrency = Math.min(DETAIL_CONCURRENCY, indices.length)
   let cursor = 0
   const workers: Promise<void>[] = []
   for (let w = 0; w < concurrency; w++) {
@@ -216,7 +222,7 @@ export async function enrichWorkitemListDetails(opCtx: CtxLike | null | undefine
 export async function enrichWorkitemComments(opCtx: CtxLike | null | undefined, proj: ResolvedProjectRef, raw: RawBag, idOrSerial: string, commentsWant?: number | null): Promise<RawBag> {
   if (commentsWant === 0) return raw
   try {
-    const limit = typeof commentsWant === 'number' && Number.isFinite(commentsWant) && commentsWant > 0 ? Math.min(200, Math.floor(commentsWant)) : 20
+    const limit = typeof commentsWant === 'number' && Number.isFinite(commentsWant) && commentsWant > 0 ? Math.min(COMMENTS_MAX, Math.floor(commentsWant)) : PAGINATION.github.anchorLookupSearchLimit
     const res = await requestWorkitemCommentsList(opCtx, proj.organizationId, idOrSerial, 'page=1&perPage=' + String(limit), GITLAB_READ_TIMEOUT_MS)
     if (res.ok && Array.isArray(res.data)) {
       const all = res.data as unknown[]
@@ -236,22 +242,28 @@ export function buildSearchConditions(opts?: { labelIds?: readonly string[]; sub
   return filterItems.length > 0 ? JSON.stringify({ conditionGroups: [filterItems] }) : undefined
 }
 
-/** 读取项目标签字典（name / 小写 name -> labelId，兼容 HTTP 204 空响应）。 */
+/** 读取项目全量标签字典（按 hasNextYunxiaoPage 自动翻页，兼容 HTTP 204 空响应）。 */
 export async function fetchProjectLabelNameMap(
   opCtx: CtxLike | null | undefined, proj: ResolvedProjectRef,
 ): Promise<{ ok: true; nameToId: Map<string, string>; rows: RawBag[] } | { ok: false; error: TrackerError }> {
-  const res = await requestProjectLabelsList(opCtx, proj.organizationId, proj.projectId, '', GITLAB_READ_TIMEOUT_MS)
-  if (!res.ok) return failYunxiao(res, res.stderr || res.stdout || '查询项目标签列表失败', res, opCtx ?? undefined)
-  const rows = res.status === 204 || res.data === null ? [] : Array.isArray(res.data) ? (res.data as RawBag[]) : null
-  if (rows === null) return fail(ERROR_KIND.PARSE as ErrorKind, '项目标签列表响应不是合法数组', res.stdout)
   const nameToId = new Map<string, string>()
-  for (const r of rows) {
-    if (!r || typeof r !== 'object') continue
-    const n = typeof r['name'] === 'string' ? r['name'].trim() : ''
-    const id = typeof r['id'] === 'string' ? r['id'].trim() : ''
-    if (n && id) { nameToId.set(n, id); nameToId.set(n.toLowerCase(), id) }
+  const allRows: RawBag[] = []
+  for (let page = 1; page <= LABEL_LIST_MAX_PAGES; page++) {
+    const query = page === 1 ? '' : 'page=' + String(page) + '&perPage=' + String(LABEL_LIST_PER_PAGE)
+    const res = await requestProjectLabelsList(opCtx, proj.organizationId, proj.projectId, query, GITLAB_READ_TIMEOUT_MS)
+    if (!res.ok) return failYunxiao(res, res.stderr || res.stdout || '查询项目标签列表失败', res, opCtx ?? undefined)
+    if (res.status === 204 || res.data === null || (res.stdout.trim() === '' && res.data === null)) break
+    if (!Array.isArray(res.data)) return fail(ERROR_KIND.PARSE as ErrorKind, '项目标签列表响应不是合法数组', res.stdout)
+    for (const r of res.data as RawBag[]) {
+      if (!r || typeof r !== 'object') continue
+      allRows.push(r)
+      const n = typeof r['name'] === 'string' ? r['name'].trim() : ''
+      const id = typeof r['id'] === 'string' ? r['id'].trim() : ''
+      if (n && id) { nameToId.set(n, id); nameToId.set(n.toLowerCase(), id) }
+    }
+    if (!hasNextYunxiaoPage(res.headers)) break
   }
-  return { ok: true, nameToId, rows }
+  return { ok: true, nameToId, rows: allRows }
 }
 
 /** 将标签名列表解析为项目中的标签 ID 列表（供 SearchWorkitems 按 tag 过滤使用）。 */
@@ -269,6 +281,18 @@ export async function resolveProjectLabelIdsByNames(
     if (!ids.includes(id)) ids.push(id)
   }
   return { ok: true, matchedAll: true, labelIds: ids }
+}
+
+/** 将 ListFilter.labels 解析为 SearchWorkitems 的 conditions 字符串（统一收口 listIssues / counts / listPage 的标签前置过滤）。 */
+export async function resolveLabelFilterConditions(
+  opCtx: CtxLike | null | undefined, proj: ResolvedProjectRef, filter: ListFilter | null | undefined,
+): Promise<{ ok: true; matchedAll: boolean; conditions?: string } | { ok: false; error: TrackerError }> {
+  if (!filter || !Array.isArray(filter.labels) || filter.labels.length === 0) return { ok: true, matchedAll: true }
+  const lblResolved = await resolveProjectLabelIdsByNames(opCtx, proj, filter.labels)
+  if (!lblResolved.ok) return lblResolved
+  if (!lblResolved.matchedAll) return { ok: true, matchedAll: false }
+  const conditions = lblResolved.labelIds.length > 0 ? buildSearchConditions({ labelIds: lblResolved.labelIds }) : undefined
+  return { ok: true, matchedAll: true, ...(conditions ? { conditions } : {}) }
 }
 
 /** 确保目标标签在项目中全部存在并返回对应的标签 ID 数组（缺失时自动调用 CreateLabel，创建失败如实报错）。 */

@@ -24,11 +24,10 @@ import { requestWorkitemsSearch } from '../requests.js'
 import { emitReadDegraded } from '../support/read-log.js'
 import { counts } from './counts.js'
 import {
-  buildSearchConditions,
   DEFAULT_WORKITEM_CATEGORIES,
   enrichWorkitemListDetails,
   errMsg,
-  resolveProjectLabelIdsByNames,
+  resolveLabelFilterConditions,
   resolveProjectRef,
   type CtxLike,
   type RawBag,
@@ -84,19 +83,13 @@ export async function listPage(
   }
 
   try {
-    let conditions: string | undefined
-    if (filter && Array.isArray(filter.labels) && filter.labels.length > 0) {
-      const lblResolved = await resolveProjectLabelIdsByNames(effective, proj, filter.labels)
-      if (!lblResolved.ok) {
-        emitReadDegraded(ctx, 'listPage', 'listPage:transport', Date.now() - t0, lblResolved.error.kind)
-        return lblResolved
-      }
-      if (!lblResolved.matchedAll) {
-        return { ok: true, data: { items: [], nextCursor: null, total: 0 } }
-      }
-      if (lblResolved.labelIds.length > 0) {
-        conditions = buildSearchConditions({ labelIds: lblResolved.labelIds })
-      }
+    const lblFilter = await resolveLabelFilterConditions(effective, proj, filter)
+    if (!lblFilter.ok) {
+      emitReadDegraded(ctx, 'listPage', 'listPage:transport', Date.now() - t0, lblFilter.error.kind)
+      return lblFilter
+    }
+    if (!lblFilter.matchedAll) {
+      return { ok: true, data: { items: [], nextCursor: null, total: 0 } }
     }
 
     const res = await requestWorkitemsSearch(
@@ -106,7 +99,7 @@ export async function listPage(
         spaceId: proj.projectId,
         spaceType: 'Project',
         category: DEFAULT_WORKITEM_CATEGORIES,
-        ...(conditions ? { conditions } : {}),
+        ...(lblFilter.conditions ? { conditions: lblFilter.conditions } : {}),
         page,
         perPage,
         orderBy: 'gmtCreate',

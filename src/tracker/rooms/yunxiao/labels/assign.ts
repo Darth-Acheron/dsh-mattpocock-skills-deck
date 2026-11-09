@@ -4,8 +4,8 @@
  * 核心行为：
  *   1. 支持 expectedUpdatedAt 乐观并发前置校验；
  *   2. 将传入的标签名（或带色对象）经 ensureProjectLabelIdsForWrite 对齐到项目标签 ID（不存在时自动调用 CreateLabel 创建，失败如实报错）；
- *   3. 按工作项类型字段配置（GetWorkitemTypeFieldConfig）识别标签字段标识（默认 labels），并通过 UpdateWorkitem
- *      整集替换工作项标签（支持传 [] 清空标签）。
+ *   3. 按工作项类型字段配置（GetWorkitemTypeFieldConfig）识别标签字段标识（优先取匹配的 identifier || id，默认回退 labels），
+ *      并通过 UpdateWorkitem 整集替换工作项标签（支持传 [] 清空标签）。
  */
 
 import { ERROR_KIND } from '../../../contract/vocabulary.js'
@@ -40,7 +40,7 @@ function extractLabelFieldKey(fieldData: unknown): string {
     const id = typeof bag['id'] === 'string' ? bag['id'].trim() : ''
     const identifier = typeof bag['identifier'] === 'string' ? bag['identifier'].trim() : ''
     if (cls === 'tag' || id === 'tag' || id === 'labels' || identifier === 'labels' || identifier === 'tag') {
-      if (identifier === 'labels' || id === 'labels') return 'labels'
+      return identifier || id || 'labels'
     }
   }
   return 'labels'

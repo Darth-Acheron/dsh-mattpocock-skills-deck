@@ -24,10 +24,9 @@ import { deriveYunxiaoStateAndReason } from '../model/normalize.js'
 import { requestWorkitemsSearch } from '../requests.js'
 import { emitReadDegraded } from '../support/read-log.js'
 import {
-  buildSearchConditions,
   DEFAULT_WORKITEM_CATEGORIES,
   errMsg,
-  resolveProjectLabelIdsByNames,
+  resolveLabelFilterConditions,
   resolveProjectRef,
   type CtxLike,
   type RawBag,
@@ -35,7 +34,7 @@ import {
 } from './shared.js'
 
 const COUNT_PER_PAGE = PAGINATION.gitlab.maxPerPage
-const COUNT_MAX_PAGES = 50
+const COUNT_MAX_PAGES = PAGINATION.gitlab.labelListMaxPages
 
 function narrowStateOf(filter: ListFilter | null | undefined): 'open' | 'closed' | '' {
   const s = filter && typeof filter.state === 'string' ? filter.state.trim().toLowerCase() : ''
@@ -58,19 +57,13 @@ export async function counts(
 
   const narrow = narrowStateOf(filter)
   try {
-    let conditions: string | undefined
-    if (filter && Array.isArray(filter.labels) && filter.labels.length > 0) {
-      const lblResolved = await resolveProjectLabelIdsByNames(effective, proj, filter.labels)
-      if (!lblResolved.ok) {
-        emitReadDegraded(ctx, 'counts', 'counts:transport', Date.now() - t0, lblResolved.error.kind)
-        return lblResolved
-      }
-      if (!lblResolved.matchedAll) {
-        return { ok: true, data: { open: 0, closed: 0, total: 0 } }
-      }
-      if (lblResolved.labelIds.length > 0) {
-        conditions = buildSearchConditions({ labelIds: lblResolved.labelIds })
-      }
+    const lblFilter = await resolveLabelFilterConditions(effective, proj, filter)
+    if (!lblFilter.ok) {
+      emitReadDegraded(ctx, 'counts', 'counts:transport', Date.now() - t0, lblFilter.error.kind)
+      return lblFilter
+    }
+    if (!lblFilter.matchedAll) {
+      return { ok: true, data: { open: 0, closed: 0, total: 0 } }
     }
 
     let opened = 0
@@ -83,7 +76,7 @@ export async function counts(
           spaceId: proj.projectId,
           spaceType: 'Project',
           category: DEFAULT_WORKITEM_CATEGORIES,
-          ...(conditions ? { conditions } : {}),
+          ...(lblFilter.conditions ? { conditions: lblFilter.conditions } : {}),
           page,
           perPage: COUNT_PER_PAGE,
           orderBy: 'gmtCreate',

@@ -3,7 +3,8 @@
  *
  * 核心行为：
  *   1. 先通过项目标签列表定位 wayfinder:map 标签 ID；若该标签在项目中尚不存在，直接返回空列表（零额外搜索）；
- *   2. 按页拉取带 wayfinder:map 标签的候选工作项，内存复核后按更新时间倒序产出 MapRow（{ key, title, state, url }）；
+ *   2. 按页拉取带 wayfinder:map 标签的候选工作项，当搜索摘要缺失正文或标签时经 enrichWorkitemListDetails 补齐详情，
+ *      内存复核后按更新时间倒序产出 MapRow（{ key, title, state, url }）；
  *   3. 严格依据 hasNextYunxiaoPage(res.headers) 翻页（最多 PAGINATION.gitlab.mapListMaxPages 页）。
  */
 
@@ -22,6 +23,7 @@ import { requestWorkitemsSearch } from '../requests.js'
 import {
   buildSearchConditions,
   DEFAULT_WORKITEM_CATEGORIES,
+  enrichWorkitemListDetails,
   errMsg,
   resolveProjectLabelIdsByNames,
   resolveProjectRef,
@@ -89,9 +91,12 @@ export async function listMaps(
         return fail(ERROR_KIND.PARSE as ErrorKind, 'listMaps: SearchWorkitems 返回值不是数组', res.stdout)
       }
 
-      for (const raw of res.data as unknown[]) {
-        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
-        const issue = normalizeYunxiaoIssue(raw as RawBag, repo)
+      const rawRows = (res.data as unknown[]).filter(
+        (r): r is RawBag => Boolean(r) && typeof r === 'object' && !Array.isArray(r),
+      )
+      const enrichedRows = await enrichWorkitemListDetails(effective, proj, rawRows)
+      for (const raw of enrichedRows) {
+        const issue = normalizeYunxiaoIssue(raw, repo)
         if (issue.type !== 'map' && !hasMapLabel(issue.labels)) continue
         kept.push({
           row: { key: String(issue.key), title: issue.title, state: issue.state, url: issue.url },
