@@ -23,6 +23,7 @@ import { GITLAB_SLOW_READ_TIMEOUT_MS } from '../../../../shared/time-config/src/
 import { hasNextYunxiaoPage } from '../client.js'
 import { failYunxiao } from '../errors.js'
 import { classifyYunxiaoIssueInput, resolveYunxiaoIssueKey } from '../model/description-markers.js'
+import { enrichYunxiaoIssuesGraph } from '../graph/read.js'
 import { normalizeYunxiaoIssue } from '../model/normalize.js'
 import { requestWorkitemsSearch } from '../requests.js'
 import { emitReadDegraded } from '../support/read-log.js'
@@ -140,6 +141,7 @@ export async function listIssues(
     )
     const enrichedRows = await enrichWorkitemListDetails(effective, proj, rawRows)
     const allIssues = enrichedRows.map((raw) => normalizeYunxiaoIssue(raw, repo))
+    await enrichYunxiaoIssuesGraph(effective, proj, enrichedRows, allIssues)
     const filtered = allIssues.filter((iss) => filterMatchesIssue(iss, filter, proj.refId))
 
     const hasMore = hasNextYunxiaoPage(res.headers) || rawRows.length >= LIST_PER_PAGE
@@ -188,6 +190,7 @@ export async function getIssue(
     const wantComments = commentsWantOf(opts)
     await enrichWorkitemComments(effective, proj, fetched.raw, fetched.workitemId, wantComments)
     const issue = normalizeYunxiaoIssue(fetched.raw, repo)
+    await enrichYunxiaoIssuesGraph(effective, proj, [fetched.raw], [issue])
     return { ok: true, data: issue }
   } catch (err: unknown) {
     const failed = failYunxiao(err, errMsg(err), err, effective)

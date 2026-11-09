@@ -902,6 +902,7 @@ async function main(): Promise<void> {
       labels: [],
     }
 
+    let failParentWorkitemRead = false
     const readCtx: any = {
       cwd: '/ws-read',
       platform: {
@@ -914,6 +915,7 @@ async function main(): Promise<void> {
           return new Response(JSON.stringify(workitem1), { status: 200 })
         }
         if (u.endsWith('/workitems/DCIAFS-2') || u.endsWith('/workitems/' + workitem2.id)) {
+          if (failParentWorkitemRead) return new Response('parent temporarily unreadable', { status: 503 })
           return new Response(JSON.stringify(workitem2), { status: 200 })
         }
         if (u.endsWith('/workitems/DCIAFS-3') || u.endsWith('/workitems/' + workitem3.id)) {
@@ -921,6 +923,9 @@ async function main(): Promise<void> {
         }
         if (u.endsWith('/workitems/DCIAFS-4') || u.endsWith('/workitems/' + workitem4.id)) {
           return new Response(JSON.stringify(workitem4), { status: 200 })
+        }
+        if (u.includes('/relationRecords')) {
+          return new Response(JSON.stringify([]), { status: 200 })
         }
         if (u.includes('/comments')) {
           return new Response(
@@ -1045,6 +1050,25 @@ async function main(): Promise<void> {
         mapsRes.data.truncated === false,
       '6.3 counts（含按标签计数）、listPage（以 xPage < xTotalPages 判定尾页，忽略 x-next-page:2）与 listMaps 探索地图列表全部通过',
       { countsRes, countsByLabel, pageRes, mapsRes },
+    )
+
+    // 6.4 原生 parentId 优先于可能过期的正文标记；父票补查失败时明确失败，不把未知父票当成根票
+    workitem4.parentId = workitem2.id
+    workitem4.description = '<!-- DSH-PARENT: 1 -->\n# 已取消\n'
+    markersMod.clearYunxiaoIssueKeyCache()
+    const nativeParentPreferred = await backend.get(repoRef, '4', {}, readCtx)
+    workitem4.description = '# 已取消\n'
+    markersMod.clearYunxiaoIssueKeyCache()
+    failParentWorkitemRead = true
+    const unknownParent = await backend.get(repoRef, '4', {}, readCtx)
+    failParentWorkitemRead = false
+    workitem4.parentId = ''
+    check(
+      nativeParentPreferred.ok === true &&
+        nativeParentPreferred.data.parentKey === '2' &&
+        unknownParent.ok === false,
+      '6.4 原生 parentId 优先于正文父票标记，父票补查失败时明确失败而非返回 parentKey:null',
+      { nativeParentPreferred, unknownParent },
     )
   }
 
@@ -1672,6 +1696,7 @@ async function main(): Promise<void> {
     ])
     const relationCalls: Array<{ method: string; wid: string; relationType: string; targetId: string }> = []
     const subRelationRecords: Array<{ id: string; relationType: string; resourceType: string; resourceId: string }> = []
+    const parentPutBodies: Array<{ wid: string; body: any }> = []
 
     const parentCtx: any = {
       cwd: '/ws-parent',
@@ -1687,6 +1712,9 @@ async function main(): Promise<void> {
           const wid = decodeURIComponent(relMatch[1])
           if (method === 'GET' && u.includes('relationType=SUB')) {
             return new Response(JSON.stringify(subRelationRecords), { status: 200 })
+          }
+          if (method === 'GET') {
+            return new Response(JSON.stringify([]), { status: 200 })
           }
           if (method === 'POST') {
             const b = JSON.parse(String(init?.body || '{}'))
@@ -1732,10 +1760,18 @@ async function main(): Promise<void> {
           return new Response(JSON.stringify(item), { status: 200 })
         }
         if (wiMatch && method === 'PUT') {
-          const item = store.get(decodeURIComponent(wiMatch[1]))
+          const wid = decodeURIComponent(wiMatch[1])
+          const item = store.get(wid)
           const b = JSON.parse(String(init?.body || '{}'))
+          parentPutBodies.push({ wid, body: b })
+          if (wid === bugItem.id && b.parentId === mapItem.id) {
+            return new Response(
+              JSON.stringify({ errorCode: 'InvaildData.Failed', errorMessage: '无法创建此关系, 不满足关系对应的类型约束！' }),
+              { status: 400 },
+            )
+          }
           if (item && typeof b.description === 'string') item.description = b.description
-          if (item && ('parentId' in b)) item.parentId = b.parentId
+          if (item && ('parentId' in b) && wid !== bugItem.id) item.parentId = b.parentId
           return new Response(null, { status: 204 })
         }
         return new Response('unexpected: ' + method + ' ' + u, { status: 500 })
@@ -1751,18 +1787,36 @@ async function main(): Promise<void> {
     const setBugParent = await backend.setParent(repoRef, '4', '2', undefined, parentCtx)
     const getBugBack = await backend.get(repoRef, '4', {}, parentCtx)
     const bugVerdict = edgeRulesMod.edgeVerdict('parent', '2', { issue: getBugBack.data, dependencies: null })
+    const bugParentPutBodies = parentPutBodies.filter((c) => c.wid === bugItem.id).map((c) => c.body)
 
     // 9.3 listSubIssues：合并原生 SUB 关系记录（#3）与文件头 DSH-PARENT 回退扫描结果（#4），不重不漏
     const subIssuesRes = await backend.listSubIssues(repoRef, '2', {}, parentCtx)
     const subKeys = subIssuesRes.ok ? subIssuesRes.data.items.map((i: any) => i.key).sort() : []
+
+    // 9.3b 冷缓存且无 DSH-PARENT 时：getIssue 仍通过 parentId 自动补查并解析为纯数字 parentKey（绝不泄漏 26 位内部 ID）
+    taskItem.description = '# Task 3 without hidden marker\n'
+    markersMod.clearYunxiaoIssueKeyCache()
+    const getColdParent = await backend.get(repoRef, '3', {}, parentCtx)
+    taskItem.description = '<!-- DSH-PARENT: 2 -->\n# Task 3\n'
 
     // 9.4 解除父票（parentKey = null）与自环拦截（parentKey === key -> conflict）
     const clearTaskParent = await backend.setParent(repoRef, '3', null, undefined, parentCtx)
     const clearBugParent = await backend.setParent(repoRef, '4', null, undefined, parentCtx)
     const selfParentRes = await backend.setParent(repoRef, '3', '3', undefined, parentCtx)
 
-    const c1 = setTaskParent.ok === true && setTaskParent.data.parentKey === '2' && taskVerdict === 'landed'
+    const c1 =
+      setTaskParent.ok === true &&
+      setTaskParent.data.parentKey === '2' &&
+      taskVerdict === 'landed' &&
+      parentPutBodies.some((p) => p.wid === taskItem.id && p.body.parentId === mapItem.id) &&
+      getColdParent.ok === true &&
+      getColdParent.data.parentKey === '2'
     const c2 = setBugParent.ok === true && setBugParent.data.parentKey === '2' && bugVerdict === 'landed' &&
+      bugParentPutBodies.length === 2 &&
+      bugParentPutBodies[0]?.parentId === mapItem.id &&
+      bugParentPutBodies[0]?.description.includes('DSH-PARENT: 2') &&
+      !('parentId' in (bugParentPutBodies[1] || {})) &&
+      bugParentPutBodies[1]?.description.includes('DSH-PARENT: 2') &&
       relationCalls.some((c) => c.method === 'POST' && c.wid === bugItem.id && c.relationType === 'ASSOCIATED' && c.targetId === mapItem.id)
     const c3 = subIssuesRes.ok === true && JSON.stringify(subKeys) === JSON.stringify(['3', '4']) && subIssuesRes.data.total === 2 && subIssuesRes.data.fetched === 2
     const c4 = clearTaskParent.ok === true && clearTaskParent.data.parentKey === null && clearBugParent.ok === true && clearBugParent.data.parentKey === null && !taskItem.description.includes('DSH-PARENT') && !bugItem.description.includes('DSH-PARENT')
@@ -1770,7 +1824,7 @@ async function main(): Promise<void> {
     check(
       c1 && c2 && c3 && c4 && c5,
       '9.1 setParent 成对双写 DSH-PARENT 与原生 PARENT（Bug 400 自动降级 ASSOCIATED）、解除父子与自环拦截，listSubIssues 合并原生 SUB 与 DSH-PARENT 扫描结果',
-      { c1, c2, c3, c4, c5, taskVerdict, bugVerdict, subKeys },
+      { c1, c2, c3, c4, c5, taskVerdict, bugVerdict, bugParentPutBodies, subKeys },
     )
   }
 
@@ -1790,6 +1844,14 @@ async function main(): Promise<void> {
     const errorsMod = await imp('src/tracker/rooms/yunxiao/errors.ts')
 
     let dependOnAllowed = false
+    let pagedSearch = false
+    let pagedSearchRequests = 0
+    let headerlessFullPageSearch = false
+    let headerlessSearchRequests = 0
+    let explicitLastFullPageSearch = false
+    let explicitLastSearchRequests = 0
+    let failDependOnFor = ''
+    let failDependedByFor = ''
     const w1: any = {
       id: 'f7d327d50b8fca57a146979938',
       serialNumber: 'DCIAFS-1',
@@ -1827,6 +1889,19 @@ async function main(): Promise<void> {
       gmtModified: 1788778000000,
     }
 
+    const w4: any = {
+      id: 'b7d327d50b8fca57a146979939',
+      serialNumber: 'DCIAFS-4',
+      subject: '第二页上的下游工单 4（打开中）',
+      description: '<!-- DSH-BLOCKED-BY: 1 -->\nBlocked by: #1\n# Ticket 4\n',
+      formatType: 'MARKDOWN',
+      statusStageId: '1',
+      parentId: null,
+      labels: [],
+      gmtCreate: 1788778000000,
+      gmtModified: 1788779000000,
+    }
+
     const store = new Map<string, any>([
       [w1.id, w1],
       [w1.serialNumber, w1],
@@ -1860,6 +1935,12 @@ async function main(): Promise<void> {
           if (method === 'GET') {
             const urlObj = new URL(u)
             const rType = urlObj.searchParams.get('relationType') || ''
+            if (rType === 'DEPEND_ON' && realWid === failDependOnFor) {
+              return new Response('native dependency temporarily unreadable', { status: 503 })
+            }
+            if (rType === 'DEPENDED_BY' && realWid === failDependedByFor) {
+              return new Response('native reverse dependency temporarily unreadable', { status: 503 })
+            }
             const list = getRelList(realWid).filter((r) => r.relationType === rType)
             return new Response(JSON.stringify(list), { status: 200 })
           }
@@ -1901,6 +1982,47 @@ async function main(): Promise<void> {
           }
         }
         if (u.endsWith('/workitems:search')) {
+          if (headerlessFullPageSearch || explicitLastFullPageSearch) {
+            const body = JSON.parse(String(init?.body || '{}'))
+            const page = Number(body.page || 1)
+            if (headerlessFullPageSearch) headerlessSearchRequests += 1
+            if (explicitLastFullPageSearch) explicitLastSearchRequests += 1
+            const firstPage = [
+              w1,
+              ...Array.from({ length: 99 }, (_, index) => ({
+                id: String(index + 1000).padStart(26, '0'),
+                serialNumber: 'DCIAFS-' + String(index + 1000),
+                subject: '无分页头满页夹具 ' + String(index + 1000),
+                description: '# No blockers\n',
+                formatType: 'MARKDOWN',
+                statusStageId: '1',
+                parentId: null,
+                labels: [],
+                gmtCreate: 1788770000000 + index,
+                gmtModified: 1788770000000 + index,
+              })),
+            ]
+            const rows = explicitLastFullPageSearch || page === 1 ? firstPage : [w4]
+            return new Response(JSON.stringify(rows), {
+              status: 200,
+              ...(explicitLastFullPageSearch ? { headers: { 'x-page': '1', 'x-total-pages': '1', 'x-next-page': '2' } } : {}),
+            })
+          }
+          if (pagedSearch) {
+            const body = JSON.parse(String(init?.body || '{}'))
+            const page = Number(body.page || 1)
+            pagedSearchRequests += 1
+            return new Response(JSON.stringify(page === 1 ? [w1, w2] : [w3, w4]), {
+              status: 200,
+              headers: {
+                'x-page': String(page),
+                'x-per-page': '100',
+                'x-total': '4',
+                'x-total-pages': '2',
+                'x-next-page': page === 1 ? '2' : '2',
+              },
+            })
+          }
           return new Response(JSON.stringify([w1, w2, w3]), {
             status: 200,
             headers: { 'x-page': '1', 'x-per-page': '100', 'x-total': '3', 'x-total-pages': '1', 'x-next-page': '2' },
@@ -1949,6 +2071,9 @@ async function main(): Promise<void> {
     const setNativeRes = await backend.setBlockedBy(repoRef, '3', ['1'], undefined, blockCtx)
     const get3Native = await backend.get(repoRef, '3', {}, blockCtx)
     const dep3Native = await backend.getDependencies(repoRef, '3', {}, blockCtx)
+    const listAfterNative = await backend.list(repoRef, undefined, blockCtx)
+    const item2InList = listAfterNative.ok ? listAfterNative.data.find((i: any) => i.key === '2') : null
+    const item3InList = listAfterNative.ok ? listAfterNative.data.find((i: any) => i.key === '3') : null
     const landingNative = edgeRulesMod.classifyEdgeLanding('block', '1', { issue: get3Native.data, dependencies: dep3Native.data }, '3')
     const verdictNative = edgeRulesMod.edgeVerdict('block', '1', { issue: get3Native.data, dependencies: dep3Native.data })
     const oldAssociatedCleaned = relWriteCalls.some(
@@ -1961,6 +2086,12 @@ async function main(): Promise<void> {
         stderr: '{"errorCode":"InvalidIdentifier.NotFound","errorMessage":"项目不存在"}',
         stdout: '',
       }) === false
+
+    // 10.6 反向扫描必须翻页：#4 只出现在第二页，且只有正文降级阻塞标记；只扫第一页会漏掉 #1 -> blocking[#4]
+    store.set(w4.id, w4)
+    store.set(w4.serialNumber, w4)
+    pagedSearch = true
+    const dep1Paged = await backend.getDependencies(repoRef, '1', {}, blockCtx)
 
     check(
       oldAssociatedCleaned &&
@@ -1990,10 +2121,22 @@ async function main(): Promise<void> {
         setNativeRes.ok === true &&
         verdictNative === 'landed' &&
         landingNative.kind === 'native' &&
+        get3Native.ok === true &&
+        get3Native.data.blockedBy[0]?.key === '1' &&
+        get3Native.data.blockedBy[0]?.state === 'closed' &&
+        item2InList?.blockedBy?.[0]?.key === '1' &&
+        item2InList?.blockedBy?.[0]?.state === 'closed' &&
+        item2InList?.blockedBy?.[0]?.title === '前置基础工单 1（已关闭）' &&
+        item3InList?.blockedBy?.[0]?.key === '1' &&
+        item3InList?.blockedBy?.[0]?.state === 'closed' &&
         dep3Native.ok === true &&
         dep3Native.data.blockedBy[0]?.key === '1' &&
-        dep3Native.data.blockedBy[0]?.state === 'closed',
-      '10.1 阻塞依赖关系：支持 checkIssueExists、写前图环检测、DEPEND_ON 400 自动回退成对标记 + ASSOCIATED、原生 DEPEND_ON 优先、双源合并补齐标题状态与反向 blocking 边，100% 通过 edge-landing 写后读回核对',
+        dep3Native.data.blockedBy[0]?.state === 'closed' &&
+        pagedSearchRequests >= 2 &&
+        dep1Paged.ok === true &&
+        dep1Paged.data.blockingComplete === true &&
+        dep1Paged.data.blocking.some((b: any) => b.key === '4' && b.title === w4.subject && b.state === 'open'),
+      '10.1 阻塞依赖关系：支持 checkIssueExists、写前图环检测、DEPEND_ON 400 自动回退成对标记 + ASSOCIATED、原生 DEPEND_ON 优先、双源合并补齐标题状态与反向 blocking 边，跨页扫描不遗漏第二页正文降级边，edge-landing 写后读回核对通过',
       {
         exists1,
         exists99,
@@ -2005,7 +2148,66 @@ async function main(): Promise<void> {
         selfLoopRes,
         verdictNative,
         landingNative,
+        dep1Paged,
+        pagedSearchRequests,
       },
+    )
+
+    // 10.2 没有分页头但首页恰好满 100 条时也必须继续读下一页，不能提前宣称扫描完整
+    pagedSearch = false
+    headerlessFullPageSearch = true
+    const dep1Headerless = await backend.getDependencies(repoRef, '1', {}, blockCtx)
+    headerlessFullPageSearch = false
+    check(
+      headerlessSearchRequests >= 2 &&
+        dep1Headerless.ok === true &&
+        dep1Headerless.data.blockingComplete === true &&
+        dep1Headerless.data.blocking.some((b: any) => b.key === '4'),
+      '10.2 缺分页头的满页结果仍继续翻页，第二页正文降级边进入反向 blocking 且完整度如实标记',
+      { dep1Headerless, headerlessSearchRequests },
+    )
+
+    // 10.3 原生关系读失败不是“没有边”：公共单票读明确失败，依赖投影如实报告两侧都不完整
+    failDependOnFor = w2.id
+    const failedProbeIssue = await backend.get(repoRef, '2', {}, blockCtx)
+    const incompleteDeps = await backend.getDependencies(repoRef, '2', {}, blockCtx)
+    failDependOnFor = ''
+    check(
+      failedProbeIssue.ok === false &&
+        incompleteDeps.ok === true &&
+        incompleteDeps.data.blockedByComplete === false &&
+        incompleteDeps.data.blockingComplete === false &&
+        typeof incompleteDeps.data.blockingNote === 'string' &&
+        incompleteDeps.data.blockingNote.includes('不完整') &&
+        incompleteDeps.data.blockedBy.some((b: any) => b.key === '1'),
+      '10.3 原生 DEPEND_ON 探测失败时单票读明确失败，依赖投影保留已知边并标记两侧不完整',
+      { failedProbeIssue, incompleteDeps },
+    )
+
+    // 10.4 反向原生关系读取失败时，即使扫描成功也不把反向结果标成完整
+    failDependedByFor = w1.id
+    const reverseProbeIncomplete = await backend.getDependencies(repoRef, '1', {}, blockCtx)
+    failDependedByFor = ''
+    check(
+      reverseProbeIncomplete.ok === true &&
+        reverseProbeIncomplete.data.blockedByComplete === true &&
+        reverseProbeIncomplete.data.blockingComplete === false &&
+        typeof reverseProbeIncomplete.data.blockingNote === 'string' &&
+        reverseProbeIncomplete.data.blockingNote.includes('不完整'),
+      '10.4 原生 DEPENDED_BY 探测失败时反向 blocking 明确标记不完整并附注记',
+      { reverseProbeIncomplete },
+    )
+
+    // 10.5 分页头明确只有一页时，即使这一页恰好 100 条也不再翻页，更不能误报不完整
+    explicitLastFullPageSearch = true
+    const dep1ExplicitLast = await backend.getDependencies(repoRef, '1', {}, blockCtx)
+    explicitLastFullPageSearch = false
+    check(
+      explicitLastSearchRequests === 1 &&
+        dep1ExplicitLast.ok === true &&
+        dep1ExplicitLast.data.blockingComplete === true,
+      '10.5 明确末页的满页结果只读一次并保持 blockingComplete:true，满页兜底不覆盖分页头',
+      { dep1ExplicitLast, explicitLastSearchRequests },
     )
   }
   console.log('\n== Slice 11：Codeup 一键开仓发布（initProject 仓库名校验、本地 Git 初始化与身份兜底、CreateRepository public->internal 与 namespaceId、GetRepository 回查克隆地址、配置 origin 并推送 HEAD） ==')

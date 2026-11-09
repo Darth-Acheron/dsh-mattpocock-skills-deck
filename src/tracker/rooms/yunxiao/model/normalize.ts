@@ -187,13 +187,40 @@ export function normalizeYunxiaoComments(raw: unknown): Comment[] {
   return out
 }
 
-/** 推导父工作项纯数字票号 parentKey（归一三种空值形态，原生 parentId 优先，文件头 DSH-PARENT 回退）。 */
+/** 将单个原始工作项字典与已知票号转换为契约 IssueRef（自动提取标题、开闭状态与对象类型）。 */
+export function toYunxiaoIssueRef(key: string, raw: unknown): IssueRef {
+  const k = key.trim()
+  const bag = asBag(raw)
+  if (!bag) {
+    return { key: k, title: '#' + k, state: STATE.OPEN as State, type: ISSUE_TYPE.ISSUE as IssueType }
+  }
+  const title =
+    typeof bag['subject'] === 'string' && bag['subject'].trim()
+      ? bag['subject'].trim()
+      : typeof bag['title'] === 'string' && bag['title'].trim()
+        ? bag['title'].trim()
+        : '#' + k
+  return {
+    key: k,
+    title,
+    state: deriveYunxiaoStateAndReason(bag).state,
+    type: deriveYunxiaoIssueType(bag),
+  }
+}
+
+/** 推导父工作项纯数字票号 parentKey（归一三种空值形态，原生 parentId 解析为数字票号优先，文件头 DSH-PARENT 回退，避免泄漏 26 位内部 ID）。 */
 export function deriveYunxiaoParentKey(raw: unknown, scope: unknown): string | null {
   const bag = asBag(raw)
   const hiddenParent = parseHiddenParent(bodyOfWorkitem(raw))
   if (!bag) return hiddenParent
   const normParentId = normalizeYunxiaoParentId(bag['parentId'])
-  if (normParentId) return resolveYunxiaoIssueKey(scope, normParentId) || hiddenParent || normParentId
+  if (normParentId) {
+    const resolved = resolveYunxiaoIssueKey(scope, normParentId)
+    if (resolved) return resolved
+    const c = classifyYunxiaoIssueInput(normParentId)
+    if (c && (c.kind === 'numeric' || c.kind === 'serial')) return c.key
+    if (hiddenParent) return hiddenParent
+  }
   if (hiddenParent) return hiddenParent
   if (typeof bag['parentKey'] === 'string' && bag['parentKey'].trim()) {
     const c = classifyYunxiaoIssueInput(bag['parentKey'])

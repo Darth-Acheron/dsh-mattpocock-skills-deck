@@ -853,9 +853,10 @@ export const COMPLETION_RECORDED_GATES: Record<string, number> = {
   // 且合并落了标记就排上清除；子票高亮的键用界面查的那把尺子（工作单元 + 编号），不写裸编号。
   // 单跑实测 29 条。
   'verify-1926-flash-scope': 29,
-  // 2026-11-07 #01（规格 #00）：Yunxiao backend 配置解析、凭证脱敏、Codeup 远端识别、纯数字票号与文件头标记编解码及可注入 HTTP 传输底座门禁；单跑实测 29 条。
+  // 2026-11-09 #01–#04（规格 #00）：两扇 Yunxiao 门禁分别覆盖配置与远端识别 32 条、房间公共契约 34 条；
+  // 房间门禁覆盖父票解析失败、分页头与满页边界、正反向原生关系探测失败后的诚实完整度，期望按单跑 GATE-RESULT 登记。
   'verify-yunxiao-config-and-remote': 32,
-  'verify-yunxiao-room': 25,
+  'verify-yunxiao-room': 34,
 }
 
 // 冒烟链（scripts.smoke）上已经开闸的门禁，写法与上面那张表一样：写在这里 = 已开闸，值 = 期望条数。

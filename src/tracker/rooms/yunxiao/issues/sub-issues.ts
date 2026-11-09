@@ -26,8 +26,9 @@ import {
   normalizeYunxiaoParentId,
   rememberYunxiaoIssueIdentity,
 } from '../model/description-markers.js'
+import { enrichYunxiaoIssuesGraph } from '../graph/read.js'
 import { normalizeYunxiaoIssue } from '../model/normalize.js'
-import { requestWorkitemRelationRecordsList, requestWorkitemsSearch } from '../requests.js'
+import { requestWorkitemRelationRecordsList, requestWorkitemsSearch, type YunxiaoSearchBody } from '../requests.js'
 import { emitReadDegraded } from '../support/read-log.js'
 import {
   DEFAULT_WORKITEM_CATEGORIES,
@@ -103,6 +104,7 @@ export async function listSubIssues(
 
     // 3) 翻页扫描项目工作项列表，补齐摘要缺失正文，合并「原生 SUB 命中 / 原生 parentId 命中 / 文件头 DSH-PARENT 命中」
     const items: Issue[] = []
+    const itemRaws: RawBag[] = []
     const seenKeys = new Set<string>()
     const seenWorkitemIds = new Set<string>()
     let dropped = 0
@@ -110,35 +112,18 @@ export async function listSubIssues(
     let lastRes: YunxiaoHttpResult | null = null
 
     for (let page = 1; page <= MAX_SCAN_PAGES; page++) {
-      let searchRes = await requestWorkitemsSearch(
-        effective,
-        proj.organizationId,
-        {
-          spaceId: proj.projectId,
-          spaceType: 'Project',
-          category: DEFAULT_WORKITEM_CATEGORIES,
-          page,
-          perPage: PAGE_SIZE,
-          orderBy: 'gmtCreate',
-          sort: 'asc',
-        },
-        GITLAB_SLOW_READ_TIMEOUT_MS,
-      )
+      const searchBody: YunxiaoSearchBody = {
+        spaceId: proj.projectId,
+        spaceType: 'Project',
+        category: DEFAULT_WORKITEM_CATEGORIES,
+        page,
+        perPage: PAGE_SIZE,
+        orderBy: 'gmtCreate',
+        sort: 'asc',
+      }
+      let searchRes = await requestWorkitemsSearch(effective, proj.organizationId, searchBody, GITLAB_SLOW_READ_TIMEOUT_MS)
       if (!searchRes.ok) {
-        searchRes = await requestWorkitemsSearch(
-          effective,
-          proj.organizationId,
-          {
-            spaceId: proj.projectId,
-            spaceType: 'Project',
-            category: DEFAULT_WORKITEM_CATEGORIES,
-            page,
-            perPage: PAGE_SIZE,
-            orderBy: 'gmtCreate',
-            sort: 'asc',
-          },
-          GITLAB_SLOW_READ_TIMEOUT_MS,
-        )
+        searchRes = await requestWorkitemsSearch(effective, proj.organizationId, searchBody, GITLAB_SLOW_READ_TIMEOUT_MS)
       }
       lastRes = searchRes
       if (!searchRes.ok) {
@@ -197,6 +182,7 @@ export async function listSubIssues(
             if (!seenKeys.has(issue.key)) {
               seenKeys.add(issue.key)
               items.push(issue)
+              itemRaws.push(rowForNormalize)
             }
           }
         } catch {
@@ -218,12 +204,18 @@ export async function listSubIssues(
       const subFetched = await fetchRawWorkitem(effective, proj, subIdLower)
       if (!subFetched.ok) continue
       rememberYunxiaoIssueIdentity(proj.refId, { id: subFetched.workitemId, key: subFetched.key })
-      const issue = normalizeYunxiaoIssue({ ...subFetched.raw, parentId: wantParentId }, repo || undefined)
+      const rawSub: RawBag = { ...subFetched.raw, parentId: wantParentId }
+      const issue = normalizeYunxiaoIssue(rawSub, repo || undefined)
       if (issue.key !== wantParentKey && !seenKeys.has(issue.key)) {
         issue.parentKey = wantParentKey
         seenKeys.add(issue.key)
         items.push(issue)
+        itemRaws.push(rawSub)
       }
+    }
+
+    if (items.length > 0) {
+      await enrichYunxiaoIssuesGraph(effective, proj, itemRaws, items)
     }
 
     if (dropped > 0 && items.length === 0) {

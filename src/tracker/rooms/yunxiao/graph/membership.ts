@@ -235,18 +235,25 @@ export async function setParent(
       await removeNativeParentRelations(effective, proj, childFetched.workitemId, staleOldParents)
     }
 
-    // 1) 更新正文文件头 DSH-PARENT 标记
-    if (newBody !== oldBody) {
-      const bodyUpdRes = await requestWorkitemUpdate(
+    // 1) 成对更新正文文件头 DSH-PARENT 标记与原生 parentId 字段（若该类型不支持原生 parentId 字段写入则自动回退仅写正文标记）
+    let bodyUpdRes = await requestWorkitemUpdate(
+      effective,
+      proj.organizationId,
+      childFetched.workitemId,
+      { description: newBody, formatType: 'MARKDOWN', parentId: wantParentId },
+      GITLAB_READ_TIMEOUT_MS,
+    )
+    if (!bodyUpdRes.ok && isRelationMatrixConstraintError(bodyUpdRes)) {
+      bodyUpdRes = await requestWorkitemUpdate(
         effective,
         proj.organizationId,
         childFetched.workitemId,
         { description: newBody, formatType: 'MARKDOWN' },
         GITLAB_READ_TIMEOUT_MS,
       )
-      if (!bodyUpdRes.ok) {
-        return failYunxiao(bodyUpdRes, bodyUpdRes.stderr || bodyUpdRes.stdout || '写入父工作项标记失败', bodyUpdRes, effective)
-      }
+    }
+    if (!bodyUpdRes.ok) {
+      return failYunxiao(bodyUpdRes, bodyUpdRes.stderr || bodyUpdRes.stdout || '写入父工作项标记失败', bodyUpdRes, effective)
     }
 
     // 2) 优先尝试建立原生 PARENT 关系记录；若因企业默认矩阵限制返回 400，则自动降级建立原生 ASSOCIATED 关联

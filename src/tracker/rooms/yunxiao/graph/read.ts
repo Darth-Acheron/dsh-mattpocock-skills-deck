@@ -1,5 +1,5 @@
 /**
- * src/tracker/rooms/yunxiao/graph/read.ts —— Yunxiao Projex 阻塞依赖关系读取与工作项存在性核验路由（规格 #04）。
+ * src/tracker/rooms/yunxiao/graph/read.ts —— Yunxiao Projex 阻塞依赖关系读取、列表图谱富化与工作项存在性核验路由（规格 #04）。
  *
  * 为什么采用「原生 DEPEND_ON 关系记录 + 正文文件头 DSH-BLOCKED-BY（及可见 Blocked by: 行）」双源合并：
  *   1. 真机实测（Wayfinder #11）证实云效企业默认关系矩阵仅在 Topic -> Req 间开启 DEPEND_ON，
@@ -7,32 +7,34 @@
  *      ListWorkitemRelationRecords(relationType="DEPEND_ON") 中；当采用默认配置时，阻塞关系由
  *      setBlockedBy 自动回退写入成对正文标记（Blocked by: #n + <!-- DSH-BLOCKED-BY: n -->）并挂 ASSOCIATED 关联；
  *   2. ListWorkitemRelationRecords 仅返回目标工作项的 26 位 resourceId，不含目标标题与开闭状态；
- *   3. 因此读侧（getDependencies）合并原生 DEPEND_ON 记录与正文隐藏/可见阻塞标记，逐张补齐阻塞方标题与
- *      open/closed 状态（未知时按保守方向记为 open 以防 frontier 误放行），并通过原生 DEPENDED_BY 记录与
- *      项目工作项扫描推导反向 blocking 边。
+ *   3. 因此读侧（getDependencies 及列表/单票图谱富化 enrichYunxiaoIssuesGraph）合并原生 DEPEND_ON 记录与
+ *      正文隐藏/可见阻塞标记，逐张补齐阻塞方标题与 open/closed 状态（未知时按保守方向记为 open 以防 frontier 误放行），
+ *      并通过原生 DEPENDED_BY 记录与跨页项目工作项扫描推导反向 blocking 边。
  */
 
 import { ERROR_KIND, ISSUE_TYPE, STATE } from '../../../contract/vocabulary.js'
 import type { ErrorKind, IssueType, State } from '../../../contract/identity.js'
 import type { BackendContext, OpContext } from '../../../contract/contexts.js'
-import type { IssueRef, RepositoryRef } from '../../../contract/entities.js'
+import type { Issue, IssueRef, RepositoryRef } from '../../../contract/entities.js'
 import type { DepsOpts } from '../../../contract/inputs.js'
 import { TRACKER_ERROR_STAGE, type DependenciesResult, type TrackerError } from '../../../contract/results.js'
 import { PAGINATION } from '../../../contract/pagination.js'
 import { fail } from '../../../kernel/preflight.js'
 import { GITLAB_READ_TIMEOUT_MS, GITLAB_SLOW_READ_TIMEOUT_MS } from '../../../../shared/time-config/src/values.js'
+import { hasNextYunxiaoPage } from '../client.js'
 import { errMsg, failYunxiao } from '../errors.js'
 import {
   classifyYunxiaoIssueInput,
+  normalizeYunxiaoParentId,
   parseBlockedByFallback,
   rememberYunxiaoIssueIdentity,
   resolveYunxiaoIssueKey,
+  resolveYunxiaoWorkitemId,
 } from '../model/description-markers.js'
 import {
   bodyOfWorkitem,
-  deriveYunxiaoIssueType,
-  deriveYunxiaoStateAndReason,
   normalizeYunxiaoIssue,
+  toYunxiaoIssueRef,
 } from '../model/normalize.js'
 import { requestWorkitemRelationRecordsList, requestWorkitemsSearch } from '../requests.js'
 import {
@@ -48,6 +50,8 @@ import {
 } from '../issues/shared.js'
 
 const SCAN_PAGE_SIZE = PAGINATION.gitlab.maxPerPage
+const SCAN_MAX_PAGES = PAGINATION.gitlab.mapListMaxPages
+const GRAPH_CONCURRENCY = PAGINATION.gitlab.labelWriteConcurrencyMax
 
 export { extractRelationWorkitemId }
 export type { CtxLike, RawBag, RepoLike, ResolvedProjectRef }
@@ -58,6 +62,8 @@ export interface YunxiaoNativeDependProbe {
   targetIds: string[]
   /** 探测请求是否失败。 */
   probeFailed: boolean
+  /** 失败原因；公共读路径用它明确失败，扫描路径用它把完整度降为 false。 */
+  error?: TrackerError
 }
 
 /**
@@ -109,7 +115,8 @@ export async function probeNativeRelationTargets(
       GITLAB_READ_TIMEOUT_MS,
     )
     if (!res.ok || !Array.isArray(res.data)) {
-      return { targetIds: [], probeFailed: true }
+      const failed = failYunxiao(res, res.stderr || res.stdout || '原生关系接口没有返回有效数组', res, opCtx || undefined)
+      return { targetIds: [], probeFailed: true, error: failed.error }
     }
     const targetIds: string[] = []
     for (const item of res.data) {
@@ -117,8 +124,9 @@ export async function probeNativeRelationTargets(
       if (tid && !targetIds.includes(tid)) targetIds.push(tid)
     }
     return { targetIds, probeFailed: false }
-  } catch {
-    return { targetIds: [], probeFailed: true }
+  } catch (err: unknown) {
+    const failed = failYunxiao(err, errMsg(err), err, opCtx || undefined)
+    return { targetIds: [], probeFailed: true, error: failed.error }
   }
 }
 
@@ -148,55 +156,109 @@ export async function resolveIssueRefsWithState(
       })
       if (k && !seenKeys.has(k)) {
         seenKeys.add(k)
-        const title =
-          typeof cachedRaw['subject'] === 'string' && cachedRaw['subject'].trim()
-            ? cachedRaw['subject'].trim()
-            : typeof cachedRaw['title'] === 'string' && cachedRaw['title'].trim()
-              ? cachedRaw['title'].trim()
-              : '#' + k
-        out.push({
-          key: k,
-          title,
-          state: deriveYunxiaoStateAndReason(cachedRaw).state,
-          type: deriveYunxiaoIssueType(cachedRaw),
-        })
+        out.push(toYunxiaoIssueRef(k, cachedRaw))
       }
       continue
     }
 
     const fetched = await fetchRawWorkitem(opCtx, proj, t)
     if (fetched.ok) {
-      if (seenKeys.has(fetched.key)) continue
-      seenKeys.add(fetched.key)
-      const title =
-        typeof fetched.raw['subject'] === 'string' && fetched.raw['subject'].trim()
-          ? fetched.raw['subject'].trim()
-          : typeof fetched.raw['title'] === 'string' && fetched.raw['title'].trim()
-            ? fetched.raw['title'].trim()
-            : '#' + fetched.key
-      out.push({
-        key: fetched.key,
-        title,
-        state: deriveYunxiaoStateAndReason(fetched.raw).state,
-        type: deriveYunxiaoIssueType(fetched.raw),
-      })
+      knownByKeyOrId?.set(fetched.key, fetched.raw)
+      knownByKeyOrId?.set(fetched.workitemId.toLowerCase(), fetched.raw)
+      if (!seenKeys.has(fetched.key)) {
+        seenKeys.add(fetched.key)
+        out.push(toYunxiaoIssueRef(fetched.key, fetched.raw))
+      }
     } else {
       const fallbackKey = resolveYunxiaoIssueKey(proj.refId, t) || t
-      if (seenKeys.has(fallbackKey)) continue
-      seenKeys.add(fallbackKey)
-      out.push({
-        key: fallbackKey,
-        title: '#' + fallbackKey,
-        state: STATE.OPEN as State,
-        type: ISSUE_TYPE.ISSUE as IssueType,
-      })
+      if (!seenKeys.has(fallbackKey)) {
+        seenKeys.add(fallbackKey)
+        out.push({
+          key: fallbackKey,
+          title: '#' + fallbackKey,
+          state: STATE.OPEN as State,
+          type: ISSUE_TYPE.ISSUE as IssueType,
+        })
+      }
     }
   }
   return out
 }
 
 /**
- * 拉取项目内工作项快照并构建已知票面字典（key/id -> RawBag）与阻塞邻接表（key -> blockerKeys[]）。
+ * 为已归一化的工作项列表或单票补齐冷缓存下的原生 parentKey、合并原生 DEPEND_ON 记录并富化 blockedBy 的标题与开闭状态。
+ * 原生父票或依赖关系读不出来时向上抛出，让公共读操作明确失败，避免把未知关系当成“没有”而误放行 frontier。
+ */
+export async function enrichYunxiaoIssuesGraph(
+  opCtx: CtxLike | null | undefined,
+  proj: ResolvedProjectRef,
+  rawRows: readonly RawBag[],
+  issues: Issue[],
+): Promise<Issue[]> {
+  if (issues.length === 0) return issues
+  const knownRaw = new Map<string, RawBag>()
+  for (let i = 0; i < rawRows.length; i++) {
+    const r = rawRows[i]
+    const iss = issues[i]
+    if (iss?.key) knownRaw.set(iss.key, r)
+    const wid = typeof r['id'] === 'string' ? r['id'].trim() : ''
+    if (wid) knownRaw.set(wid.toLowerCase(), r)
+  }
+
+  // 1) 原生 parentId 优先于正文标记：冷缓存下必须补查父票；补查失败时向上抛出，不能把未知父票当成根票。
+  for (let i = 0; i < issues.length; i++) {
+    const iss = issues[i]
+    const r = rawRows[i]
+    if (!iss || !r) continue
+    const normParentId = normalizeYunxiaoParentId(r['parentId'])
+    if (!normParentId) continue
+    let pk = resolveYunxiaoIssueKey(proj.refId, normParentId) || ''
+    if (!pk) {
+      const fetchedParent = await fetchRawWorkitem(opCtx, proj, normParentId)
+      if (!fetchedParent.ok) throw fetchedParent.error
+      pk = fetchedParent.key
+      knownRaw.set(fetchedParent.key, fetchedParent.raw)
+      knownRaw.set(fetchedParent.workitemId.toLowerCase(), fetchedParent.raw)
+    }
+    if (pk) iss.parentKey = pk
+  }
+
+  // 2) 受控并发探测每张票的原生 DEPEND_ON 关系记录，并与正文阻塞标记合并后富化阻塞方的标题与 open/closed 状态
+  const concurrency = Math.min(GRAPH_CONCURRENCY, issues.length)
+  let cursor = 0
+  const workers: Promise<void>[] = []
+  for (let w = 0; w < concurrency; w++) {
+    workers.push((async () => {
+      for (;;) {
+        const idx = cursor++
+        if (idx >= issues.length) return
+        const iss = issues[idx]
+        const r = rawRows[idx]
+        if (!iss || !r) continue
+        const wid = (typeof r['id'] === 'string' && r['id'].trim()) || resolveYunxiaoWorkitemId(proj.refId, iss.key) || ''
+        let nativeTargets: string[] = []
+        if (wid) {
+          const probe = await probeNativeRelationTargets(opCtx, proj, wid, 'DEPEND_ON')
+          if (probe.probeFailed) throw probe.error || new Error('原生 DEPEND_ON 关系读取失败')
+          nativeTargets = probe.targetIds
+        }
+        const bodyTargets = (iss.blockedBy || []).map((b) => b.key).filter(Boolean)
+        const combined = [...nativeTargets]
+        for (const bt of bodyTargets) {
+          if (bt && !combined.includes(bt)) combined.push(bt)
+        }
+        if (combined.length > 0) {
+          iss.blockedBy = await resolveIssueRefsWithState(opCtx, proj, combined, knownRaw)
+        }
+      }
+    })())
+  }
+  await Promise.all(workers)
+  return issues
+}
+
+/**
+ * 跨页拉取项目内工作项快照并构建已知票面字典（key/id -> RawBag）与阻塞邻接表（key -> blockerKeys[]）。
  * 同时用于 getDependencies 反向推导 blocking 边与 setBlockedBy 写前图环检测。
  */
 export async function scanProjectBlockingSnapshot(
@@ -207,32 +269,45 @@ export async function scanProjectBlockingSnapshot(
   const knownRaw = new Map<string, RawBag>()
   const blockedByMap = new Map<string, string[]>()
   let complete = true
+  const allEnriched: RawBag[] = []
 
   try {
-    const res = await requestWorkitemsSearch(
-      opCtx,
-      proj.organizationId,
-      {
-        spaceId: proj.projectId,
-        spaceType: 'Project',
-        category: DEFAULT_WORKITEM_CATEGORIES,
-        page: 1,
-        perPage: SCAN_PAGE_SIZE,
-        orderBy: 'gmtCreate',
-        sort: 'desc',
-      },
-      GITLAB_SLOW_READ_TIMEOUT_MS,
-    )
-    if (!res.ok || !Array.isArray(res.data)) {
-      return { knownRaw, blockedByMap, complete: false }
+    for (let page = 1; page <= SCAN_MAX_PAGES; page++) {
+      const res = await requestWorkitemsSearch(
+        opCtx,
+        proj.organizationId,
+        {
+          spaceId: proj.projectId,
+          spaceType: 'Project',
+          category: DEFAULT_WORKITEM_CATEGORIES,
+          page,
+          perPage: SCAN_PAGE_SIZE,
+          orderBy: 'gmtCreate',
+          sort: 'desc',
+        },
+        GITLAB_SLOW_READ_TIMEOUT_MS,
+      )
+      if (!res.ok || !Array.isArray(res.data)) {
+        return { knownRaw, blockedByMap, complete: false }
+      }
+      const rawRows = (res.data as unknown[]).filter(
+        (r): r is RawBag => Boolean(r) && typeof r === 'object' && !Array.isArray(r),
+      )
+      if (rawRows.length === 0) break
+      const enriched = await enrichWorkitemListDetails(opCtx, proj, rawRows)
+      allEnriched.push(...enriched)
+      // 分页头齐全时严格按 xPage < xTotalPages；只有分页头缺失时，才用满页表示“可能还有”并继续读。
+      const hasPaginationHeaders = typeof res.headers.xPage === 'number' && typeof res.headers.xTotalPages === 'number'
+      const hasMore = hasPaginationHeaders ? hasNextYunxiaoPage(res.headers) : rawRows.length >= SCAN_PAGE_SIZE
+      if (!hasMore) break
+      if (page === SCAN_MAX_PAGES) complete = false
     }
-    const rawRows = (res.data as unknown[]).filter(
-      (r): r is RawBag => Boolean(r) && typeof r === 'object' && !Array.isArray(r),
-    )
-    if (rawRows.length >= SCAN_PAGE_SIZE) complete = false
-    const enriched = await enrichWorkitemListDetails(opCtx, proj, rawRows)
-    for (const r of enriched) {
-      const issue = normalizeYunxiaoIssue(r, repo || undefined)
+
+    const issues = allEnriched.map((r) => normalizeYunxiaoIssue(r, repo || undefined))
+    await enrichYunxiaoIssuesGraph(opCtx, proj, allEnriched, issues)
+    for (let i = 0; i < issues.length; i++) {
+      const issue = issues[i]
+      const r = allEnriched[i]
       if (!issue.key) continue
       knownRaw.set(issue.key, r)
       const wid = typeof r['id'] === 'string' ? r['id'].trim() : ''
@@ -282,7 +357,6 @@ export async function getDependencies(
     const selfKey = selfFetched.key
     const selfId = selfFetched.workitemId
 
-    // 1) 正向 blockedBy：合并原生 DEPEND_ON 记录与正文文件头 DSH-BLOCKED-BY / 可见行
     const nativeDependOn = await probeNativeRelationTargets(effective, proj, selfId, 'DEPEND_ON')
     const bodyBlockers = parseBlockedByFallback(bodyOfWorkitem(selfFetched.raw)) || []
     const combinedBlockerTargets: string[] = [...nativeDependOn.targetIds]
@@ -290,14 +364,12 @@ export async function getDependencies(
       if (bk && !combinedBlockerTargets.includes(bk)) combinedBlockerTargets.push(bk)
     }
 
-    // 2) 扫描项目快照，既用于加速补齐 blockedBy 标题状态，也用于推导反向 blocking 边
     const snapshot = await scanProjectBlockingSnapshot(effective, proj, repo)
     snapshot.knownRaw.set(selfKey, selfFetched.raw)
     snapshot.knownRaw.set(selfId.toLowerCase(), selfFetched.raw)
 
     const blockedBy = await resolveIssueRefsWithState(effective, proj, combinedBlockerTargets, snapshot.knownRaw)
 
-    // 3) 反向 blocking：合并原生 DEPENDED_BY 记录与快照中 blockedBy 指向 selfKey 的工作项
     const nativeDependedBy = await probeNativeRelationTargets(effective, proj, selfId, 'DEPENDED_BY')
     const reverseTargets: string[] = [...nativeDependedBy.targetIds]
     for (const [candidateKey, candidateBlockers] of snapshot.blockedByMap.entries()) {
@@ -308,14 +380,21 @@ export async function getDependencies(
     }
     const blocking = await resolveIssueRefsWithState(effective, proj, reverseTargets, snapshot.knownRaw)
 
+    const blockedByComplete = !nativeDependOn.probeFailed
+    const blockingComplete = snapshot.complete && !nativeDependedBy.probeFailed
+    const blockingNote = blockedByComplete && blockingComplete
+      ? undefined
+      : '本次阻塞关系读取不完整：未读到的关系不代表不存在，请重试后再判断 frontier。'
+
     return {
       ok: true,
       data: {
         blockedBy,
         blocking,
-        blockedByComplete: true,
-        blockingComplete: snapshot.complete,
+        blockedByComplete,
+        blockingComplete,
         blockingSource: nativeDependedBy.targetIds.length > 0 && snapshot.complete ? 'native' : 'scan',
+        ...(blockingNote ? { blockingNote } : {}),
       },
     }
   } catch (err: unknown) {
@@ -323,4 +402,4 @@ export async function getDependencies(
   }
 }
 
-export default { getDependencies, checkIssueExists }
+export default { getDependencies, checkIssueExists, enrichYunxiaoIssuesGraph }
