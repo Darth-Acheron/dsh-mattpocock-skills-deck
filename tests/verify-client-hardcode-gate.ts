@@ -27,9 +27,9 @@ let passed = 0
 const ok = function (name) { passed++; console.log('  PASS', name) }
 const bad = function (name) { failed = true; console.log('  FAIL', name) }
 
-const RE_F1 = /(===|==)\s*['"](github|gitlab|markdown)['"]|['"](github|gitlab|markdown)['"]\s*(===|==)/
-const RE_F2 = /https:\/\/github\.com|https:\/\/gitlab\.com/
-const RE_F3 = /\{\s*id:\s*'(github|markdown|gitlab)'\s*,\s*label:/
+const RE_F1 = /(===|==)\s*['"](github|gitlab|markdown|yunxiao)['"]|['"](github|gitlab|markdown|yunxiao)['"]\s*(===|==)/
+const RE_F2 = /https:\/\/github\.com|https:\/\/gitlab\.com|https:\/\/devops\.aliyun\.com|https:\/\/codeup\.aliyun\.com/
+const RE_F3 = /\{\s*id:\s*'(github|markdown|gitlab|yunxiao)'\s*,\s*label:/
 const RE_LICENSED = /MATT_REPO|mattpocock\/skills|skills@latest|installSkills|PREVIEW_VALUES|dsh-mattpocock-skills-deck|FeatherHunter\/dsh-|FeatherHunter\/featherhunter-plugin-manage|FeatherHunter\/ilife|["']https:\/\/github\.com\/["'] \+ plugin\.repo/ // #231 清尾后仅剩可留项：技能仓库常量/安装指引文案/演示预览值；#repo-link 登记本插件自身仓库主页 URL（构建注入产物）；#520 登记作者其他插件静态链接前缀；base-data 登记 base 包内联数据里的作者网址与 GitHub 地址兜底拼接
 function stripComments(buf) { return buf.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '') }
 
@@ -40,7 +40,7 @@ function scanLabel(rel, buf) {
   lines.forEach(function (line, i) {
     if (RE_F1.test(line)) f1.push(i + 1)
     if (RE_F2.test(line) && !RE_LICENSED.test(line)) f2bad.push(i + 1)
-    if (RE_F3.test(line) && !isBuiltin && !RE_LICENSED.test(line) && line.indexOf("[{ id: 'github', label: 'GitHub' }, { id: 'markdown', label: 'Markdown' }, { id: 'gitlab', label: 'GitLab' }]") < 0) f3bad.push(i + 1)
+    if (RE_F3.test(line) && !isBuiltin && !RE_LICENSED.test(line) && line.indexOf("[{ id: 'github', label: 'GitHub' }, { id: 'markdown', label: 'Markdown' }, { id: 'gitlab', label: 'GitLab' }, { id: 'yunxiao', label: 'Yunxiao' }]") < 0) f3bad.push(i + 1)
   })
   return { f1, f2bad, f3bad }
 }

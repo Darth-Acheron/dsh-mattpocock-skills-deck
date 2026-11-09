@@ -69,7 +69,7 @@ export const GENERIC_CATALOG: readonly CatalogItem[] = Object.freeze([
     id: 'skill:wayfinder',
     label: '技能 wayfinder 已安装',
     scope: 'generic',
-    backends: ['github','markdown','gitlab'],
+    backends: ['github','markdown','gitlab','yunxiao'],
     check: { kind: 'primitive', primitive: PRIMITIVE_KIND.SKILL_PROBE, skill: 'wayfinder' },
     origin: 'host/index.js:SKILL_PROBE_NAMES (inventory 类别 8)',
   },
@@ -77,7 +77,7 @@ export const GENERIC_CATALOG: readonly CatalogItem[] = Object.freeze([
     id: 'skill:setup-matt-pocock-skills',
     label: '技能 setup-matt-pocock-skills 已安装',
     scope: 'generic',
-    backends: ['github','markdown','gitlab'],
+    backends: ['github','markdown','gitlab','yunxiao'],
     check: { kind: 'primitive', primitive: PRIMITIVE_KIND.SKILL_PROBE, skill: 'setup-matt-pocock-skills' },
     origin: 'host/index.js:SKILL_PROBE_NAMES',
   },
@@ -85,7 +85,7 @@ export const GENERIC_CATALOG: readonly CatalogItem[] = Object.freeze([
     id: 'skill:ask-matt',
     label: '技能 ask-matt 已安装',
     scope: 'generic',
-    backends: ['github','markdown','gitlab'],
+    backends: ['github','markdown','gitlab','yunxiao'],
     check: { kind: 'primitive', primitive: PRIMITIVE_KIND.SKILL_PROBE, skill: 'ask-matt' },
     origin: 'host/index.js:SKILL_PROBE_NAMES',
   },
@@ -93,7 +93,7 @@ export const GENERIC_CATALOG: readonly CatalogItem[] = Object.freeze([
     id: 'env:home',
     label: '用户主目录可解析',
     scope: 'generic',
-    backends: ['github','markdown','gitlab'],
+    backends: ['github','markdown','gitlab','yunxiao'],
     // /homeDir（2026-08-28 修复）：主目录判定只问平台层（#171：win32 不读 HOME，走 os.homedir→USERPROFILE；linux/mac 走 os.homedir）。
     //   原 ENV(HOME) 在 Windows 必然误报「HOME not set」（Windows 从不设置该环境变量）。
     //   为什么是通用检查：技能判装的单一根 ~/.agents/skills（#276/#281）由此解析，三后端共用同一用户级根，
@@ -113,7 +113,7 @@ export const GENERIC_CATALOG: readonly CatalogItem[] = Object.freeze([
     id: 'tracker:initialized',
     label: '工作区已初始化（有说明文件）',
     scope: 'generic',
-    backends: ['github','markdown','gitlab'],
+    backends: ['github','markdown','gitlab','yunxiao'],
     check: { kind: 'primitive', primitive: PRIMITIVE_KIND.FILE_EXISTS, path: 'docs/agents/issue-tracker.md' },
     origin: 'host/checkTracker (inventory 类别 8)',
   },
@@ -234,9 +234,37 @@ export const MARKDOWN_CATALOG: readonly CatalogItem[] = Object.freeze([
   },
 ])
 
+/** Yunxiao 后端检查目录（仅 yunxiao 适用，三阶段递进：本地配置 → 令牌认证 → Projex 项目与关联 Codeup 仓库访问）。 */
+export const YUNXIAO_CATALOG: readonly CatalogItem[] = Object.freeze([
+  {
+    id: 'yunxiao:configured',
+    label: '已配置云效组织与 Yunxiao Projex 项目',
+    scope: 'backend',
+    backends: ['yunxiao'],
+    check: { kind: 'backend', id: 'configured', backendId: 'yunxiao' },
+    origin: 'rooms/yunxiao/preflight.ts:1 (规格 #02 / #05)',
+  },
+  {
+    id: 'yunxiao:authed',
+    label: '云效个人访问令牌有效',
+    scope: 'backend',
+    backends: ['yunxiao'],
+    check: { kind: 'preflight', id: 'yunxiaoAuth' },
+    origin: 'rooms/yunxiao/preflight.ts:2 (规格 #02 / #05)',
+  },
+  {
+    id: 'yunxiao:repoAccess',
+    label: 'Yunxiao Projex 项目与关联仓库可访问',
+    scope: 'backend',
+    backends: ['yunxiao'],
+    check: { kind: 'backend', id: 'repoAccess', backendId: 'yunxiao' },
+    origin: 'rooms/yunxiao/preflight.ts:3-4 (规格 #02 / #05)',
+  },
+])
+
 // 冻结目录项本身（不只是数组）：GitHub 房的模块检查表现在直接引用这些对象、不再各持一份副本；
 // 元素如果可变，谁都能通过模块表改掉目录里的字，唯一真源就被绕过了。
-for (const list of [GENERIC_CATALOG, GITHUB_CATALOG, GITLAB_CATALOG, MARKDOWN_CATALOG]) {
+for (const list of [GENERIC_CATALOG, GITHUB_CATALOG, GITLAB_CATALOG, MARKDOWN_CATALOG, YUNXIAO_CATALOG]) {
   for (const item of list) Object.freeze(item)
 }
 
@@ -246,19 +274,25 @@ export const ALL_CATALOGS = Object.freeze({
   github: GITHUB_CATALOG,
   gitlab: GITLAB_CATALOG,
   markdown: MARKDOWN_CATALOG,
+  yunxiao: YUNXIAO_CATALOG,
 })
 
 /**
  * 判定某检查项是否通用（形式化判据）。
  *
- * 约定：只认本文件四个目录里的 id，目录里没有的一律返回 null 而不是猜一个归属；反例是把未知 id 默认当通用，拼错 id 的检查会在所有后端下静默通过。
+ * 约定：只认本文件五个目录里的 id，目录里没有的一律返回 null 而不是猜一个归属；反例是把未知 id 默认当通用，拼错 id 的检查会在所有后端下静默通过。
  *
  * @param {string} checkId
  * @returns {'generic'|'backend'|null}
  */
 export function scopeOf(checkId: string): 'generic' | 'backend' | null {
   if (GENERIC_CATALOG.some(c => c.id === checkId)) return 'generic'
-  if (GITHUB_CATALOG.some(c => c.id === checkId) || GITLAB_CATALOG.some(c => c.id === checkId) || MARKDOWN_CATALOG.some(c => c.id === checkId)) return 'backend'
+  if (
+    GITHUB_CATALOG.some(c => c.id === checkId) ||
+    GITLAB_CATALOG.some(c => c.id === checkId) ||
+    MARKDOWN_CATALOG.some(c => c.id === checkId) ||
+    YUNXIAO_CATALOG.some(c => c.id === checkId)
+  ) return 'backend'
   return null
 }
 
@@ -267,14 +301,15 @@ export function scopeOf(checkId: string): 'generic' | 'backend' | null {
  *
  * 约定：未知后端只给通用目录，不抛错也不补后端目录；反例是抛错，后端尚未选定时调用方会直接中断整条链。
  *
- * @param {'github'|'markdown'|'gitlab'|null} backendId
+ * @param {'github'|'markdown'|'gitlab'|'yunxiao'|null} backendId
  * @returns {CatalogItem[]}
  */
-export function catalogFor(backendId: 'github' | 'markdown' | 'gitlab' | null | undefined): CatalogItem[] {
+export function catalogFor(backendId: 'github' | 'markdown' | 'gitlab' | 'yunxiao' | null | undefined): CatalogItem[] {
   const base = [...GENERIC_CATALOG]
   if (backendId === 'github') base.push(...GITHUB_CATALOG)
   else if (backendId === 'gitlab') base.push(...GITLAB_CATALOG)
   else if (backendId === 'markdown') base.push(...MARKDOWN_CATALOG)
+  else if (backendId === 'yunxiao') base.push(...YUNXIAO_CATALOG)
   return base
 }
 
@@ -284,10 +319,10 @@ export function catalogFor(backendId: 'github' | 'markdown' | 'gitlab' | null | 
  * 约定：先按 catalogFor 取「通用 + 该后端」，再只留 scope==='backend'；未知后端得到空数组，不抛错。
  * 反例是各调用方各写一遍 `scope === 'backend'` 过滤——今天写法一样，明天就可能有一处漏改。
  *
- * @param {'github'|'markdown'|'gitlab'|null|undefined} backendId
+ * @param {'github'|'markdown'|'gitlab'|'yunxiao'|null|undefined} backendId
  * @returns {CatalogItem[]}
  */
-export function backendItemsOf(backendId: 'github' | 'markdown' | 'gitlab' | null | undefined): CatalogItem[] {
+export function backendItemsOf(backendId: 'github' | 'markdown' | 'gitlab' | 'yunxiao' | null | undefined): CatalogItem[] {
   return catalogFor(backendId).filter((item) => item.scope === 'backend')
 }
 

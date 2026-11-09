@@ -82,7 +82,7 @@ export const GUIDE_STEPS: ReadonlyArray<GuideStep> = Object.freeze([
     // 「尚未初始化／技能缺失」黄条再跳回蓝条，所以这一步读本地门控状态，不读链快照。
     id: 'selection:backendSelected',
     checks: ['selection:backendSelected'],
-    backends: ['github', 'markdown', 'gitlab'],
+    backends: ['github', 'markdown', 'gitlab', 'yunxiao'],
     ready: STEP_READY.GATE,
     banner: BANNER.gate,
     missing: MISSING.pickBackend,
@@ -153,12 +153,42 @@ export const GUIDE_STEPS: ReadonlyArray<GuideStep> = Object.freeze([
     blocksSetup: true,
   },
   {
+    // 规格 #02 / #05：云效本地坐标已配置（docs/agents/yunxiao.yaml 或 YUNXIAO_* 环境变量）。
+    id: 'yunxiao:configured',
+    checks: ['yunxiao:configured'],
+    backends: ['yunxiao'],
+    ready: STEP_READY.CHAIN,
+    banner: BANNER.ghCli,
+    missing: MISSING.installCli,
+    blocksSetup: false,
+  },
+  {
+    // 规格 #02 / #05：云效个人访问令牌（x-yunxiao-token）已配置且有效。
+    id: 'yunxiao:authed',
+    checks: ['yunxiao:authed'],
+    backends: ['yunxiao'],
+    ready: STEP_READY.CHAIN,
+    banner: BANNER.ghAuth,
+    missing: MISSING.cliLogin,
+    blocksSetup: false,
+  },
+  {
+    // 规格 #02 / #05：Yunxiao Projex 项目与按需关联的 Codeup 仓库可访问。
+    id: 'yunxiao:repoAccess',
+    checks: ['yunxiao:repoAccess'],
+    backends: ['yunxiao'],
+    ready: STEP_READY.CHAIN,
+    banner: BANNER.repo,
+    missing: MISSING.repoRemoteFix,
+    blocksSetup: true,
+  },
+  {
     // 第 7 步：工作区已初始化。2026-11-03 起判据回到初始化产物 docs/agents/issue-tracker.md
     //   （#1806 加的身份记录 workspace-root.yaml 已按维护者定版删除；工作区根只认
     //   docs/agents/workspace.yaml，往上找，见 docs/adr/20261103-workspace-root-upward-search.md）。
     id: 'tracker:initialized',
     checks: ['tracker:initialized'],
-    backends: ['github', 'markdown', 'gitlab'],
+    backends: ['github', 'markdown', 'gitlab', 'yunxiao'],
     ready: STEP_READY.CHAIN,
     banner: BANNER.setup,
     missing: MISSING.setupRun,
@@ -168,7 +198,7 @@ export const GUIDE_STEPS: ReadonlyArray<GuideStep> = Object.freeze([
     // 第 9 步：技能套件的三个技能，一条横幅管三项（取三项里最差的那一项，与今天渲染一致）。
     id: 'skill:wayfinder',
     checks: ['skill:wayfinder', 'skill:setup-matt-pocock-skills', 'skill:ask-matt'],
-    backends: ['github', 'markdown', 'gitlab'],
+    backends: ['github', 'markdown', 'gitlab', 'yunxiao'],
     ready: STEP_READY.CHAIN,
     banner: BANNER.skills,
     missing: MISSING.installSkills,

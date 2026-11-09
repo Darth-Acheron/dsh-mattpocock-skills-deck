@@ -87,7 +87,7 @@ export function registerGenericPredicates(registry: PredicateRegistry): void {
 
 // 获取通用目录（任意后端下输出一致，#226 验收）。
 // 入参忽略，仅为接口一致；通用目录不随它改变。
-export function getGenericCatalog(_backendId: 'github' | 'markdown' | 'gitlab' | null = null): CatalogItem[] {
+export function getGenericCatalog(_backendId: 'github' | 'markdown' | 'gitlab' | 'yunxiao' | null = null): CatalogItem[] {
   return [...GENERIC_CATALOG]
 }
 
@@ -123,10 +123,11 @@ export function assertGenericConsistent(): { ok: boolean; detail: string } {
   const b = catalogFor('github').filter((c) => c.scope === 'generic').map((c) => c.id).sort().join(',')
   const c = catalogFor('markdown').filter((c) => c.scope === 'generic').map((c) => c.id).sort().join(',')
   const d = catalogFor('gitlab').filter((c) => c.scope === 'generic').map((c) => c.id).sort().join(',')
-  const ok = a === b && b === c && c === d
+  const e = catalogFor('yunxiao').filter((c) => c.scope === 'generic').map((c) => c.id).sort().join(',')
+  const ok = a === b && b === c && c === d && d === e
   return {
     ok,
-    detail: ok ? 'generic catalog consistent: ' + a : 'inconsistent: null=[' + a + '] github=[' + b + '] markdown=[' + c + '] gitlab=[' + d + ']',
+    detail: ok ? 'generic catalog consistent: ' + a : 'inconsistent: null=[' + a + '] github=[' + b + '] markdown=[' + c + '] gitlab=[' + d + '] yunxiao=[' + e + ']',
   }
 }
 

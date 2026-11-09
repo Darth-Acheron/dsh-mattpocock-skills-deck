@@ -77,7 +77,7 @@ export function createSkillDoc(deps?: any): any {
     '0002-postgres-for-write-model.md': 'ADR-FORMAT.md',
   }
   const CHOICE_REFS: any = {
-    'issue-tracker.md': ['issue-tracker-github.md', 'issue-tracker-gitlab.md', 'issue-tracker-local.md'],
+    'issue-tracker.md': ['issue-tracker-github.md', 'issue-tracker-gitlab.md', 'issue-tracker-local.md', 'issue-tracker-yunxiao.md'],
   }
   const PROJECT_FILES: any = {
     'AGENTS.md': true,
@@ -218,7 +218,7 @@ export function createSkillDoc(deps?: any): any {
     return { root: rootPath, byBase: byBase }
   }
   function staticRefs() {
-    return Object.keys(FORMAT_ALIASES).concat(Object.keys(CHOICE_REFS), Object.keys(PROJECT_FILES))
+    return Object.keys(FORMAT_ALIASES).concat(Object.keys(CHOICE_REFS), Object.keys(PROJECT_FILES), CHOICE_REFS['issue-tracker.md'] || [])
   }
   function refsOf(index: any) {
     const out: string[] = []
@@ -276,10 +276,21 @@ export function createSkillDoc(deps?: any): any {
       }
       return { root: root, entry: null, options: options, refs: refsOf(index) }
     }
+    if (baseName === 'issue-tracker-yunxiao.md') {
+      try {
+        const extra = deps && typeof deps.loadExtraTemplate === 'function'
+          ? await deps.loadExtraTemplate(baseName)
+          : (await (await import('../tracker/registry/builtins.js')).loadYunxiaoHostExtras()).YUNXIAO_ISSUE_TRACKER_TEMPLATE
+        if (extra && extra.en) {
+          return { root: '__builtin__', entry: { skill: 'setup-matt-pocock-skills', rel: baseName, builtin: { md: extra.en, mdZh: extra.zh || null, path: 'builtin://setup-matt-pocock-skills/' + baseName, pathZh: 'builtin://setup-matt-pocock-skills/issue-tracker-yunxiao.zh.md' } }, refs: await allRefs() }
+        }
+      } catch {}
+    }
     return { root: null, entry: null, refs: await allRefs() }
   }
   /** 读一份随包文件；超长、空文件、读不动都按「没有这一篇」。中文译文按既有规则有就一起回。 */
   async function readEntry(rootPath: string, entry: any, mods: any) {
+    if (rootPath === '__builtin__' && entry && entry.builtin) return entry.builtin
     // @ts-expect-error —— Node 内建模块的动态引用：类型声明随 @types/node 缺席，运行时一定存在（纯类型层面）。
     const fsp: any = await import('node:fs/promises')
     const pathMod = mods.pathMod

@@ -87,8 +87,6 @@ export function repoSearchAddress(
 export const issueRefPattern = /devops\.aliyun\.com\/projex\/project\/[^\/\s]+\/workitem\/([A-Za-z0-9_-]+)/g
 
 export const links = {
-  issueUrlTemplate: 'https://devops.aliyun.com/projex/project/{refId}/workitem/{key}',
-  repoUrlTemplate: 'https://devops.aliyun.com/projex/project/{refId}',
   searchUrlTemplate: 'https://devops.aliyun.com/projex?search={q}',
   linkPatternSource: 'devops\\.aliyun\\.com\\/projex\\/project\\/[^\\/\\s]+\\/workitem\\/([A-Za-z0-9_-]+)',
 }

@@ -30,6 +30,14 @@
  * 门禁归属: src/tracker/rooms/yunxiao/graph/membership.ts
  * 门禁归属: src/tracker/rooms/yunxiao/project/init-project.ts
  * 门禁归属: src/tracker/kernel/issue-tracker-declaration.ts
+ * 门禁归属: src/tracker/registry/builtins.ts
+ * 门禁归属: src/tracker/detection/backendDecision.ts
+ * 门禁归属: src/shared/tracker/check-catalog-dirs.ts
+ * 门禁归属: src/shared/tracker/guide-steps.ts
+ * 门禁归属: src/refresh/rooms/host/chain-env-map.ts
+ * 门禁归属: src/refresh/rooms/host/check-chain-evaluation.ts
+ * 门禁归属: src/host/skillDoc.ts
+ * 门禁归属: scripts/real-machine/commands/yunxiao-sandbox.mts
  *
  * 用法：node --import ./scripts/ts-hook.mts tests/verify-yunxiao-room.ts
  */
@@ -292,7 +300,18 @@ async function main(): Promise<void> {
     const reg4 = regCoreMod.createRegistry({})
     const builtinMods = await builtinsMod.loadBuiltinBackendModules()
     for (const m of builtinMods) reg4.register(m)
-    reg4.register(roomMod.yunxiaoBackend)
+
+    check(
+      JSON.stringify(builtinsMod.BUILTIN_ROOM_IDS) === JSON.stringify(['github', 'markdown', 'gitlab', 'yunxiao']) &&
+        builtinMods.some((m) => m.id === 'yunxiao') &&
+        JSON.stringify(decisionMod.MULTI_CLAIM_ORDER) === JSON.stringify(['github', 'markdown', 'gitlab', 'yunxiao']),
+      '2.3a BUILTIN_ROOM_IDS、loadBuiltinBackendModules 与 MULTI_CLAIM_ORDER 均已将 yunxiao 注册在第四位',
+      {
+        BUILTIN_ROOM_IDS: builtinsMod.BUILTIN_ROOM_IDS,
+        loadedIds: builtinMods.map((m) => m.id),
+        MULTI_CLAIM_ORDER: decisionMod.MULTI_CLAIM_ORDER,
+      },
+    )
 
     const dTier1 = await decisionMod.decideBackend('/ws-d1', {
       fs: makeFakeFs({
@@ -2369,6 +2388,294 @@ async function main(): Promise<void> {
         learnedAfterInit?.codeupRepo?.pathWithNamespace === ORG_ID + '/Apple/new-deck-service',
       '11.2 initProject 完成属主自愈、本地 Git 初始化与首提交、CreateRepository（public->internal、namespaceId、避免 USER_GUIDE 冲突）、GetRepository 回查克隆地址、配置 origin 并推送 HEAD，同步更新 learnedYunxiaoContext',
       { initRes, createRepoUrl, createRepoBody, getRepoCalledWithId, gitCommands, learnedAfterInit },
+    )
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Slice 12：面板三阶段环境检查（yunxiao:configured / yunxiao:authed / yunxiao:repoAccess）、首开引导链与技能说明模板
+  // ══════════════════════════════════════════════════════════════════════════
+  console.log('\n== Slice 12：面板三阶段环境检查目录、宿主谓词求值、viewerOnce 后端透传、首开引导链与技能说明模板 ==')
+  {
+    const catDirsMod = await import('../src/shared/tracker/check-catalog-dirs.js')
+    const guideMod = await import('../src/shared/tracker/guide-steps.js')
+    const envMapMod = await import('../src/refresh/rooms/host/chain-env-map.js')
+    const chainEvalMod = await import('../src/refresh/rooms/host/check-chain-evaluation.js')
+    const skillDocMod = await import('../src/host/skillDoc.js')
+
+    const yxCat = catDirsMod.catalogFor('yunxiao' as any)
+    const yxBackendItems = catDirsMod.backendItemsOf('yunxiao' as any)
+    const yxGuideSteps = guideMod.guideStepsFor('yunxiao')
+
+    check(
+      yxCat.filter((c: any) => c.scope === 'generic').length === 5 &&
+        JSON.stringify(yxBackendItems.map((c: any) => c.id)) ===
+          JSON.stringify(['yunxiao:configured', 'yunxiao:authed', 'yunxiao:repoAccess']) &&
+        catDirsMod.scopeOf('yunxiao:configured') === 'backend' &&
+        catDirsMod.scopeOf('yunxiao:authed') === 'backend' &&
+        catDirsMod.scopeOf('yunxiao:repoAccess') === 'backend' &&
+        JSON.stringify(yxGuideSteps.map((s: any) => s.id)) ===
+          JSON.stringify([
+            'selection:backendSelected',
+            'yunxiao:configured',
+            'yunxiao:authed',
+            'yunxiao:repoAccess',
+            'tracker:initialized',
+            'skill:wayfinder',
+          ]),
+      '12.1 check-catalog-dirs 与 guide-steps 完整接入 yunxiao 三项环境检查与首开引导链顺序',
+      {
+        genericCount: yxCat.filter((c: any) => c.scope === 'generic').length,
+        backendIds: yxBackendItems.map((c: any) => c.id),
+        guideIds: yxGuideSteps.map((s: any) => s.id),
+      },
+    )
+
+    // 12.2 probeChainEnv.viewer() 将当前 backendId 传给 session.getCurrentUser（而非硬编码 github），且三项谓词在 check-chain-evaluation 中求值准确
+    let seenViewerBackend = ''
+    const probe = envMapMod.probeChainEnv(
+      {
+        getRepoKey: async () => null,
+        openSession: async () => ({
+          ok: true,
+          backendId: 'yunxiao',
+          call: async (fn: any) =>
+            fn(
+              {
+                preflight: async () => ({ ok: true }),
+                getRepoKey: async () => ({ owner: ORG_ID, name: PROJ_ID }),
+                getCurrentUser: async (repo: any) => {
+                  seenViewerBackend = String(repo?.backend || '')
+                  return { ok: true, data: { login: 'BryanShao' } }
+                },
+              },
+              { cwd: '/ws-yx-env' },
+            ),
+        }),
+      },
+      '/ws-yx-env',
+      { backendId: 'yunxiao' },
+    )
+    const viewerRes = await probe.viewer()
+
+    const detectChain = chainEvalMod.createDetectChain({
+      canonicalKey: async (raw: string) => String(raw || ''),
+      DEFAULT_CWD: '/ws-yx-env',
+      resetGhCache: () => {},
+      getDetectionService: async () => ({
+        detect: async () => ({ selection: { backendId: 'yunxiao', source: 'user-file' } }),
+      }),
+      getPlatform: async () => ({
+        os: 'darwin',
+        path: { join: (...a: string[]) => a.join('/') },
+        getHome: async () => '/Users/fake',
+        fs: makeFakeFs({ 'docs/agents/yunxiao.yaml': VALID_YUNXIAO_YAML }),
+        env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-valid-token-12345678' }),
+      }) as any,
+      getTrackerRegistry: async () => ({
+        modules: () => [{ id: 'yunxiao', fixes: roomMod.fixes, prompts: roomMod.prompts }],
+      }),
+      getRepoKey: async () => null,
+      timer: { timeout: (ms: number) => new Promise((r) => setTimeout(r, ms)) },
+      probeSkill: async () => ({ ok: true, level: 'ok', detail: 'ok' }),
+      mdPredicate: async () => ({ status: 'pass', detail: 'ok' }),
+      getChainCache: () => null,
+      setChainCache: () => {},
+      getChainBackoff: async () => ({
+        verdict: async () => ({ needed: true, reason: 'test', waitMs: 0, cached: null }),
+        note: async () => ({}),
+      }),
+      logCtx: null,
+      gate: null,
+      sandboxPolicyFor: async () => ({ policy: undefined, sessionId: 's1' }),
+      openSession: async () => ({
+        ok: true,
+        backendId: 'yunxiao',
+        call: async (fn: any) =>
+          fn(
+            {
+              preflight: async (h: any, c: any) => roomMod.yunxiaoBackend.create({} as any).preflight(h, c),
+              getRepoKey: async (cwd: string, c: any) => roomMod.yunxiaoBackend.create({} as any).getRepoKey(cwd, c),
+              getCurrentUser: async () => ({ ok: true, data: { login: 'BryanShao' } }),
+            },
+            {
+              cwd: '/ws-yx-env',
+              platform: {
+                fs: makeFakeFs({ 'docs/agents/yunxiao.yaml': VALID_YUNXIAO_YAML }),
+                env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-valid-token-12345678' }),
+              },
+              fetch: async (input: string | URL) => {
+                const u = String(input)
+                if (u.endsWith('/oapi/v1/platform/user')) {
+                  return new Response(
+                    JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao', lastOrganization: ORG_ID }),
+                    { status: 200 },
+                  )
+                }
+                if (u.includes('/projex/organizations/' + ORG_ID + '/projects/' + PROJ_ID)) {
+                  return new Response(
+                    JSON.stringify({ id: PROJ_ID, name: 'Deck Yunxiao', customCode: 'DCIAFS' }),
+                    { status: 200 },
+                  )
+                }
+                return new Response('{}', { status: 200 })
+              },
+            },
+          ),
+      }),
+    })
+    const chainOut: any = await detectChain.handleChain({
+      cwd: '/ws-yx-env',
+      backendId: 'yunxiao',
+      lang: 'zh',
+      force: true,
+    })
+    const yxResolved = chainOut?.backendChain?.resolved || {}
+
+    const docReader = skillDocMod.createSkillDoc({})
+    const chooseDoc = await docReader.readDoc({ name: 'setup-matt-pocock-skills', file: 'issue-tracker.md' })
+    const yxTemplateDoc = await docReader.readDoc({
+      name: 'setup-matt-pocock-skills',
+      file: 'issue-tracker-yunxiao.md',
+    })
+
+    check(
+      viewerRes.ok === true &&
+        seenViewerBackend === 'yunxiao' &&
+        yxResolved['yunxiao:configured']?.status === 'pass' &&
+        yxResolved['yunxiao:authed']?.status === 'pass' &&
+        yxResolved['yunxiao:repoAccess']?.status === 'pass' &&
+        chooseDoc.ok === true &&
+        chooseDoc.kind === 'choose' &&
+        Array.isArray(chooseDoc.options) &&
+        chooseDoc.options.some((o: any) => o.file === 'issue-tracker-yunxiao.md') &&
+        yxTemplateDoc.ok === true &&
+        typeof yxTemplateDoc.md === 'string' &&
+        yxTemplateDoc.md.includes('# Issue tracker: Yunxiao') &&
+        typeof yxTemplateDoc.mdZh === 'string' &&
+        yxTemplateDoc.mdZh.length > 0,
+      '12.2 viewerOnce 透传当前 backendId=yunxiao，宿主检查链三项云效谓词全部求值为 pass，且 skillDoc 支持 issue-tracker-yunxiao.md 英文与中文模板读取',
+      {
+        viewerRes,
+        seenViewerBackend,
+        yxResolved,
+        chooseOpts: chooseDoc.options,
+        yxTemplateOk: yxTemplateDoc.ok,
+        hasZh: Boolean(yxTemplateDoc.mdZh),
+      },
+    )
+
+    // 12.3 YUNXIAO_LIVE_VERIFY=1 环境变量门控的可选云效真机沙箱冒烟脚本（不设置或为 0 时安全跳过且不阻塞离线主链，开启时可通过注入 fetch 跑完探针与生命周期）
+    const sandboxMod = await imp('scripts/real-machine/commands/yunxiao-sandbox.mts')
+    const skippedRun = await sandboxMod.runYunxiaoLiveSmoke({
+      env: {},
+    })
+    let liveWriteCalls = 0
+    const liveRun = await sandboxMod.runYunxiaoLiveSmoke({
+      env: {
+        YUNXIAO_LIVE_VERIFY: '1',
+        YUNXIAO_ORGANIZATION_ID: ORG_ID,
+        YUNXIAO_PROJECT_ID: PROJ_ID,
+        YUNXIAO_TOKEN: 'pt-live-smoke-token-12345678',
+      },
+      writeLifecycle: true,
+      fetch: async (input: string | URL, init?: RequestInit) => {
+        const u = String(input)
+        const method = (init?.method || 'GET').toUpperCase()
+        if (u.endsWith('/oapi/v1/platform/user')) {
+          return new Response(
+            JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao', lastOrganization: ORG_ID }),
+            { status: 200 },
+          )
+        }
+        if (u.includes('/workflows') && method === 'GET') {
+          return new Response(
+            JSON.stringify({
+              statuses: [
+                { id: '100005', name: '待处理', stageId: '1' },
+                { id: '100014', name: '已完成', stageId: '4' },
+              ],
+            }),
+            { status: 200 },
+          )
+        }
+        if (u.includes('/workitemTypes') && method === 'GET') {
+          return new Response(
+            JSON.stringify([{ id: 'type-task-001', categoryId: 'Task', name: '任务', enable: true, defaultType: true }]),
+            { status: 200 },
+          )
+        }
+        if (u.includes('/projex/organizations/' + ORG_ID + '/projects/' + PROJ_ID) && method === 'GET') {
+          return new Response(
+            JSON.stringify({ id: PROJ_ID, name: 'Deck Yunxiao', customCode: 'DCIAFS' }),
+            { status: 200 },
+          )
+        }
+        if (u.includes('/workitems/deadbeef000000000000000999/comments') && method === 'POST') {
+          liveWriteCalls += 1
+          return new Response(JSON.stringify({ id: 'cmt-999', content: 'smoke comment' }), { status: 200 })
+        }
+        if (u.includes('/relationRecords') && method === 'GET') {
+          return new Response(JSON.stringify([]), { status: 200 })
+        }
+        if (u.endsWith('/workitems') && method === 'POST') {
+          liveWriteCalls += 1
+          return new Response(JSON.stringify({ id: 'deadbeef000000000000000999' }), { status: 200 })
+        }
+        if (u.includes('/workitems/deadbeef000000000000000999') && method === 'PUT') {
+          liveWriteCalls += 1
+          return new Response(null, { status: 204 })
+        }
+        if (u.includes('/workitems/') && method === 'GET') {
+          return new Response(
+            JSON.stringify({
+              id: 'deadbeef000000000000000999',
+              serialNumber: 'DCIAFS-999',
+              subject: '[dsh-sandbox] Yunxiao smoke ticket',
+              description: '<!-- DSH-ASSIGNEES: -->\nsmoke body',
+              statusStageId: liveWriteCalls >= 3 ? '4' : '1',
+              space: { id: PROJ_ID },
+              workitemType: { id: 'type-task-001' },
+            }),
+            { status: 200 },
+          )
+        }
+        if (u.endsWith('/workitems:search') && method === 'POST') {
+          return new Response(
+            JSON.stringify([
+              {
+                id: 'deadbeef000000000000000999',
+                serialNumber: 'DCIAFS-999',
+                subject: '[dsh-sandbox] Yunxiao smoke ticket',
+                description: '<!-- DSH-ASSIGNEES: -->\nsmoke body',
+                statusStageId: '1',
+              },
+            ]),
+            {
+              status: 200,
+              headers: { 'x-page': '1', 'x-per-page': '20', 'x-total': '1', 'x-total-pages': '1' },
+            },
+          )
+        }
+        return new Response('[]', { status: 200 })
+      },
+    })
+
+    check(
+      skippedRun.ok === true &&
+        skippedRun.skipped === true &&
+        skippedRun.reason === 'YUNXIAO_LIVE_VERIFY is not set to 1' &&
+        liveRun.ok === true &&
+        liveRun.skipped === false &&
+        liveRun.preflightOk === true &&
+        liveRun.currentUser?.login === 'BryanShao' &&
+        liveRun.permissions?.triage === true &&
+        liveRun.lifecycle?.createdKey === '999' &&
+        liveRun.lifecycle?.parentWired === true &&
+        liveRun.lifecycle?.blockedWired === true &&
+        liveRun.lifecycle?.closedState === 'closed' &&
+        liveWriteCalls >= 3,
+      '12.3 yunxiao-sandbox.mts 受 YUNXIAO_LIVE_VERIFY=1 严格门控：未设置时安全跳过（exit 0），开启时完整执行 preflight、权限核验与沙箱工作项生命周期冒烟',
+      { skippedRun, liveRun, liveWriteCalls },
     )
   }
 

@@ -38,8 +38,8 @@ export const YUNXIAO_CAPABILITY_REGISTER = {
   listSubIssues: { tier: 'provided' },
   initProject: { tier: 'provided' },
   ensureLabelColorsFile: { tier: 'unsupported-by-design', stubBy: 'registry' },
-  readBudget: { tier: 'provided' },
   listMaps: { tier: 'provided' },
+  readBudget: { tier: 'provided' },
 
   // —— 定位口 3 条：全部提供 ——
   getRepoKey: { tier: 'provided' },

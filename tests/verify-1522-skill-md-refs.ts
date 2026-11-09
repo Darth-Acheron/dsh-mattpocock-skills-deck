@@ -87,13 +87,13 @@ check(unique.ok === true && unique.kind === 'file' && unique.skill === 'triage' 
 const mechanics = await call({ name: 'writing-for-agents', file: 'SKILL-MECHANICS.md' })
 check(mechanics.ok === true && mechanics.skill === 'writing-for-agents', 'SKILL-MECHANICS.md 打开当前技能目录里的那一份')
 
-// ---- 第四段：issue-tracker.md → 三份模板先选一份 ----
+// ---- 第四段：issue-tracker.md → 四份模板先选一份 ----
 const tracker = await call({ name: 'setup-matt-pocock-skills', file: 'issue-tracker.md' })
-check(tracker.ok === true && tracker.kind === 'choose', 'issue-tracker.md：给三选一（kind=' + tracker.kind + '）')
+check(tracker.ok === true && tracker.kind === 'choose', 'issue-tracker.md：给四选一（kind=' + tracker.kind + '）')
 const trackerFiles = (Array.isArray(tracker.options) ? tracker.options : []).map((o: any) => String(o.file)).sort()
-check(trackerFiles.join(',') === 'issue-tracker-github.md,issue-tracker-gitlab.md,issue-tracker-local.md', '三份模板名字对得上（实得 ' + trackerFiles.join(',') + '）')
+check(trackerFiles.join(',') === 'issue-tracker-github.md,issue-tracker-gitlab.md,issue-tracker-local.md,issue-tracker-yunxiao.md', '四份模板名字对得上（实得 ' + trackerFiles.join(',') + '）')
 check((tracker.options || []).every((o: any) => typeof o.skill === 'string' && o.skill.length > 0), '每个选择项都带它所在的技能目录')
-check(tracker.format !== true, 'issue-tracker.md 的三份候选不是格式模板，不硬套格式说明')
+check(tracker.format !== true, 'issue-tracker.md 的四份候选不是格式模板，不硬套格式说明')
 
 // ---- 第五段：五个项目文件只给一句说明，不伪造原文 ----
 for (const name of ['AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md', 'CODING_STANDARDS.md', 'NOTES.md']) {

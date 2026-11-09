@@ -318,11 +318,11 @@ export interface DecidePureInput {
 }
 
 /**
- * 多个后端同时认领时的明文裁剪顺序（#1048·#1047 决策 3）：GitHub > Markdown > GitLab。
- * 名单里没有的房间排在这三个之后（保持它们自己的相对次序）。这条顺序由
+ * 多个后端同时认领时的明文裁剪顺序（#1048·#1047 决策 3，规格 #02 扩展云效）：GitHub > Markdown > GitLab > Yunxiao。
+ * 名单里没有的房间排在这四个之后（保持它们自己的相对次序）。这条顺序由
  * tests/verify-detection-evidence.ts 钉住，改这里必须同时改那条门禁。
  */
-export const MULTI_CLAIM_ORDER: readonly string[] = ['github', 'markdown', 'gitlab'];
+export const MULTI_CLAIM_ORDER: readonly string[] = ['github', 'markdown', 'gitlab', 'yunxiao'];
 
 /* ══════════════════════════════════════════════════════════════════════════════
  * 三、小工具

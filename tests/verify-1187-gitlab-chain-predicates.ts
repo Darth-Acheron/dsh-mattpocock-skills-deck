@@ -187,7 +187,7 @@ async function main() {
     let m = re.exec(src)
     while (m) { registered.add(m[1]); m = re.exec(src) }
     must(registered.size >= 8, '从求值文件里至少认出 8 条注册（解析失效时本节其余断言会假绿）', '只认出 ' + registered.size + ' 条')
-    const backends = ['github', 'markdown', 'gitlab']
+    const backends = ['github', 'markdown', 'gitlab', 'yunxiao']
     for (const backendId of backends) {
       const items = mods.catMod.catalogFor(backendId).filter(function (c) { return c.scope === 'backend' })
       must(items.length > 0, backendId + ' 的后端目录非空', '空目录')

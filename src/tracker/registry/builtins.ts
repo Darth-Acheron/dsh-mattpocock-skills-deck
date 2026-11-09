@@ -19,17 +19,17 @@
 import type { BackendModule } from '../contract/backend-module.js'
 
 /** 内置房间的编号。房间名是数据：依赖规则的起点判据不写房名，房间清单只有这里一处。 */
-export type BuiltinRoomId = 'github' | 'gitlab' | 'markdown'
+export type BuiltinRoomId = 'github' | 'gitlab' | 'markdown' | 'yunxiao'
 
 /**
- * 内置房间的名单与注册顺序：github → markdown → gitlab。
+ * 内置房间的名单与注册顺序：github → markdown → gitlab → yunxiao。
  *
  * 顺序有意义：注册表按注册序仲裁平局，而这个顺序必须与判定层那份明文裁剪顺序
- * （src/tracker/detection/backendDecision.ts 的 MULTI_CLAIM_ORDER，同样是 github → markdown → gitlab）
+ * （src/tracker/detection/backendDecision.ts 的 MULTI_CLAIM_ORDER，同样是 github → markdown → gitlab → yunxiao）
  * 逐位一致 —— 两处不一致时，同一组多命中会得出两种结论。门禁 tests/verify-detection-evidence.ts
  * 的 D 节读的就是这里，改名单就得同时看那两处。
  */
-export const BUILTIN_ROOM_IDS: readonly BuiltinRoomId[] = ['github', 'markdown', 'gitlab']
+export const BUILTIN_ROOM_IDS: readonly BuiltinRoomId[] = ['github', 'markdown', 'gitlab', 'yunxiao']
 
 /**
  * 挑出注册表要的那一份模块对象。
@@ -55,6 +55,10 @@ async function backendModuleOf(id: BuiltinRoomId): Promise<BackendModule> {
   if (id === 'gitlab') {
     const ns = await import('../rooms/gitlab/index.js')
     return ns.gitlabBackend
+  }
+  if (id === 'yunxiao') {
+    const ns = await import('../rooms/yunxiao/index.js')
+    return ns.yunxiaoBackend
   }
   const ns = await import('../rooms/markdown/index.js')
   return ns.markdownModule
@@ -138,6 +142,25 @@ export async function loadMarkdownHostExtras(): Promise<MarkdownHostExtras> {
   }
 }
 
+export type YunxiaoHostExtras = {
+  /** 云效议题跟踪器说明模板（issue-tracker-yunxiao.md 的英文原文与中文译文）。 */
+  YUNXIAO_ISSUE_TRACKER_TEMPLATE: typeof import('../rooms/yunxiao/room/prompts.js').YUNXIAO_ISSUE_TRACKER_TEMPLATE
+  /** 注入云效房间自定义 fetch 函数（供按需真机冒烟脚本或测试在不深引房间的情况下使用）。 */
+  setYunxiaoCustomFetch: typeof import('../rooms/yunxiao/client.js').setYunxiaoCustomFetch
+}
+
+/** 取出 Yunxiao 房的宿主实现。 */
+export async function loadYunxiaoHostExtras(): Promise<YunxiaoHostExtras> {
+  const [prompts, client] = await Promise.all([
+    import('../rooms/yunxiao/room/prompts.js'),
+    import('../rooms/yunxiao/client.js'),
+  ])
+  return {
+    YUNXIAO_ISSUE_TRACKER_TEMPLATE: prompts.YUNXIAO_ISSUE_TRACKER_TEMPLATE,
+    setYunxiaoCustomFetch: client.setYunxiaoCustomFetch,
+  }
+}
+
 // ── 房间形状的类型出口（#1161）────────────────────────────────────────────────────────
 // 契约能力的编译期断言（src/tracker/capability-assertions.ts）要用三个房间的「成员集合」与
 // 「工厂返回类型」。它同样不许直接 import 房间（规则 rooms-imported-only-by-assembly），
@@ -145,3 +168,4 @@ export async function loadMarkdownHostExtras(): Promise<MarkdownHostExtras> {
 export type { GithubBackendMembers, GithubBackendShape, createGithubBackend } from '../rooms/github/room/backend.js'
 export type { GitlabBackendMembers, GitlabBackendShape, createGitlabBackend } from '../rooms/gitlab/index.js'
 export type { MarkdownBackendMembers, MarkdownBackendShape, createMarkdownBackend } from '../rooms/markdown/index.js'
+export type { YunxiaoBackendMembers, YunxiaoBackendShape, createYunxiaoBackend } from '../rooms/yunxiao/index.js'

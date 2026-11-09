@@ -27,10 +27,11 @@ export const fixes = Object.freeze({
   },
   'yunxiao:repoAccess': {
     hint: {
-      zh: '无法访问目标 Yunxiao Projex 项目或关联的 Codeup 仓库，或尚未创建远端仓库。可点「创建并发布」新建 Codeup 仓库，或点「排查指引」核对项目坐标。',
-      en: 'Cannot access the target Yunxiao Projex project or associated Codeup repository. Click "Create & publish" to create a Codeup repo, or "Troubleshoot" to verify coordinates.',
+      zh: '无法访问目标 Yunxiao Projex 项目或关联的 Codeup 仓库。可点「排查指引」核对项目 ID 与仓库权限，或点「创建并发布」新建 Codeup 仓库。',
+      en: 'Cannot access the target Yunxiao Projex project or associated Codeup repository. Click "Troubleshoot" to verify project coordinates and repository access, or "Create & publish" to create a Codeup repo.',
     },
     actions: [
+      { type: 'inject-prompt', prompt: 'yunxiaoRepoFix', label: { zh: '排查指引', en: 'Troubleshoot' } },
       {
         type: 'wizard',
         label: { zh: '创建并发布', en: 'Create & publish' },
@@ -38,7 +39,7 @@ export const fixes = Object.freeze({
           {
             title: { zh: '仓库信息', en: 'Repository info' },
             schema: [
-              { name: 'name', type: 'text', required: true, label: { zh: '仓库名', en: 'Repo name' }, pattern: '^[A-Za-z0-9._-]{1,100}$', defaultFrom: 'cwd-basename', preview: { zh: '将创建 https://codeup.aliyun.com/{owner}/{name}', en: 'Will create https://codeup.aliyun.com/{owner}/{name}' } },
+              { name: 'name', type: 'text', required: true, label: { zh: '仓库名', en: 'Repo name' }, pattern: '^[A-Za-z0-9._-]{1,100}$', defaultFrom: 'cwd-basename', preview: { zh: '将在 Codeup 创建仓库 {name}', en: 'Will create Codeup repository {name}' } },
             ],
           },
           {
@@ -50,7 +51,6 @@ export const fixes = Object.freeze({
         ],
         submitAction: { type: 'contract-op', op: 'initProject', params: {} },
       },
-      { type: 'inject-prompt', prompt: 'yunxiaoRepoFix', label: { zh: '排查指引', en: 'Troubleshoot' } },
       { type: 'refresh', target: 'chain' },
     ],
   },

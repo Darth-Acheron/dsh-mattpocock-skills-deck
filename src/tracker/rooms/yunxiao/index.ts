@@ -54,12 +54,12 @@ import { setBlockedBy } from './graph/write.js'
 import { setParent, setAssignees } from './graph/membership.js'
 import { initProject } from './project/init-project.js'
 import { DEFAULT_YUNXIAO_WEB_ORIGIN, issueAddress, issueRefPattern, links, repoSearchAddress } from './room/links.js'
-import { prompts } from './room/prompts.js'
+import { prompts, YUNXIAO_ISSUE_TRACKER_TEMPLATE } from './room/prompts.js'
 import { fixes } from './room/fixes.js'
 
 export { issueAddress, repoSearchAddress, issueRefPattern, links }
 export { fixes }
-export { prompts }
+export { prompts, YUNXIAO_ISSUE_TRACKER_TEMPLATE }
 
 /** Yunxiao 房间工厂交出的成员集合（26 条提供能力 + id）。 */
 export type YunxiaoBackendMembers =

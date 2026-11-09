@@ -46,13 +46,15 @@ async function main() {
   }
   const wellFormed = (b: any): boolean => !!b && kinds.indexOf(b.kind) >= 0 &&
     typeof b.countsRequests === 'boolean' && typeof b.countsPoints === 'boolean' && typeof b.independentBuckets === 'boolean'
-  const gh = budgetOf('github'); const gl = budgetOf('gitlab'); const md = budgetOf('markdown')
+  const gh = budgetOf('github'); const gl = budgetOf('gitlab'); const md = budgetOf('markdown'); const yx = budgetOf('yunxiao')
   check(wellFormed(gh) && gh.kind === 'two-buckets' && gh.countsRequests && gh.countsPoints && gh.independentBuckets,
     'GitHub 声明两个互相独立的桶（数请求、数点数，两桶独立）：' + JSON.stringify(gh))
   check(wellFormed(gl) && gl.kind === 'requests-only' && gl.countsRequests && !gl.countsPoints && !gl.independentBuckets,
     'GitLab 声明只计请求数、不数点数、没有第二桶：' + JSON.stringify(gl))
   check(wellFormed(md) && md.kind === 'off-network' && !md.countsRequests && !md.countsPoints,
     '本地 Markdown 声明离网、不记请求数也不记点数：' + JSON.stringify(md))
+  check(wellFormed(yx) && yx.kind === 'requests-only' && yx.countsRequests && !yx.countsPoints && !yx.independentBuckets,
+    'Yunxiao 声明只计请求数、不数点数、没有第二桶：' + JSON.stringify(yx))
   check(mods.every((m: any) => wellFormed(m.budget)),
     '内置后端每一个都在模块上交了完整的口径声明（缺了注册表会当场拒绝）')
 

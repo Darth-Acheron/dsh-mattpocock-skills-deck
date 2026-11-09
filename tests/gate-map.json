@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-09T09:32:55.728Z",
+  "generatedAt": "2026-11-09T15:04:29.359Z",
   "generatedBy": "node scripts/gate-map.mts",
   "chainLength": 597,
   "gateCount": 597,
@@ -9982,20 +9982,22 @@
         "src/tracker/contract/capability-answer.ts",
         "src/tracker/rooms/github/support/capability-register.ts",
         "src/tracker/rooms/gitlab/support/capability-register.ts",
-        "src/tracker/rooms/markdown/capability-register.ts"
+        "src/tracker/rooms/markdown/capability-register.ts",
+        "src/tracker/rooms/yunxiao/support/capability-register.ts"
       ],
       "dirs": [
         "docs/tracker",
         "src/tracker/contract",
         "src/tracker/rooms/github/support",
         "src/tracker/rooms/gitlab/support",
-        "src/tracker/rooms/markdown"
+        "src/tracker/rooms/markdown",
+        "src/tracker/rooms/yunxiao/support"
       ],
       "unattributed": false,
       "buildOutputOnly": false,
       "completionRecord": false,
       "expectedAssertions": 0,
-      "reason": "归属来自 文件头 // 门禁归属: 注释（共 5 条）"
+      "reason": "归属来自 文件头 // 门禁归属: 注释（共 6 条）"
     },
     {
       "step": "node tests/verify-capsule-layout.ts",
@@ -13815,7 +13817,15 @@
       "step": "node tests/verify-yunxiao-room.ts",
       "file": "tests/verify-yunxiao-room.ts",
       "guards": [
+        "scripts/real-machine/commands/yunxiao-sandbox.mts",
+        "src/host/skillDoc.ts",
+        "src/refresh/rooms/host/chain-env-map.ts",
+        "src/refresh/rooms/host/check-chain-evaluation.ts",
+        "src/shared/tracker/check-catalog-dirs.ts",
+        "src/shared/tracker/guide-steps.ts",
+        "src/tracker/detection/backendDecision.ts",
         "src/tracker/kernel/issue-tracker-declaration.ts",
+        "src/tracker/registry/builtins.ts",
         "src/tracker/rooms/yunxiao/comments/write.ts",
         "src/tracker/rooms/yunxiao/graph/membership.ts",
         "src/tracker/rooms/yunxiao/graph/read.ts",
@@ -13845,7 +13855,13 @@
         "src/tracker/rooms/yunxiao/support/read-sources.ts"
       ],
       "dirs": [
+        "scripts/real-machine/commands",
+        "src/host",
+        "src/refresh/rooms/host",
+        "src/shared/tracker",
+        "src/tracker/detection",
         "src/tracker/kernel",
+        "src/tracker/registry",
         "src/tracker/rooms/yunxiao",
         "src/tracker/rooms/yunxiao/comments",
         "src/tracker/rooms/yunxiao/graph",
@@ -13860,8 +13876,8 @@
       "unattributed": false,
       "buildOutputOnly": false,
       "completionRecord": true,
-      "expectedAssertions": 34,
-      "reason": "归属来自 文件头 // 门禁归属: 注释（共 28 条）"
+      "expectedAssertions": 38,
+      "reason": "归属来自 文件头 // 门禁归属: 注释（共 36 条）"
     },
     {
       "step": "node tests/verify-1327-freshness-content.ts",
@@ -14481,7 +14497,8 @@
     ],
     "scripts/real-machine": [],
     "scripts/real-machine/commands": [
-      "node tests/verify-1709-deck-entry.ts"
+      "node tests/verify-1709-deck-entry.ts",
+      "node tests/verify-yunxiao-room.ts"
     ],
     "scripts/real-machine/lib": [
       "node tests/verify-1706-gitlab-project.ts",
@@ -15204,7 +15221,8 @@
       "node tests/verify-update-migration.ts",
       "node tests/verify-update-panel.ts",
       "node tests/verify-version-control-host.ts",
-      "node tests/verify-visible-truth.ts"
+      "node tests/verify-visible-truth.ts",
+      "node tests/verify-yunxiao-room.ts"
     ],
     "src/host/platform": [
       "node tests/verify-497-slash.ts",
@@ -15560,7 +15578,8 @@
       "node tests/verify-time-config.ts",
       "node tests/verify-tracker-session.ts",
       "node tests/verify-ui-description-single-source.ts",
-      "node tests/verify-yunxiao-config-and-remote.ts"
+      "node tests/verify-yunxiao-config-and-remote.ts",
+      "node tests/verify-yunxiao-room.ts"
     ],
     "src/seam": [
       "node tests/verify-chain-env-e2e.ts",
@@ -15701,7 +15720,8 @@
       "node tests/verify-generic-catalog.ts",
       "node tests/verify-issue232-sync.ts",
       "node tests/verify-subdir-first-frame.ts",
-      "node tests/verify-time-config.ts"
+      "node tests/verify-time-config.ts",
+      "node tests/verify-yunxiao-room.ts"
     ],
     "src/shared/ui": [
       "node tests/verify-deck-slots.ts"
@@ -15815,7 +15835,8 @@
       "node tests/verify-error-normalize-log.ts",
       "node tests/verify-github-label-colors.ts",
       "node tests/verify-issue297.ts",
-      "node tests/verify-time-config.ts"
+      "node tests/verify-time-config.ts",
+      "node tests/verify-yunxiao-room.ts"
     ],
     "src/tracker/kernel": [
       "node tests/verify-no-mixed-session.ts",
@@ -15888,7 +15909,8 @@
       "node tests/verify-refresh-workspace-key.ts",
       "node tests/verify-time-config.ts",
       "node tests/verify-tracker-contract.ts",
-      "node tests/verify-tracker-session.ts"
+      "node tests/verify-tracker-session.ts",
+      "node tests/verify-yunxiao-room.ts"
     ],
     "src/tracker/rooms": [
       "node tests/verify-no-mixed-session.ts",
@@ -16195,6 +16217,7 @@
       "node tests/verify-yunxiao-room.ts"
     ],
     "src/tracker/rooms/yunxiao/support": [
+      "node tests/verify-capability-register.ts",
       "node tests/verify-yunxiao-config-and-remote.ts",
       "node tests/verify-yunxiao-room.ts"
     ],
@@ -16558,9 +16581,9 @@
   },
   "coverage": {
     "sourceRoot": "src",
-    "fileCount": 1010,
+    "fileCount": 1012,
     "dirCount": 111,
-    "coveredFileCount": 1010,
+    "coveredFileCount": 1012,
     "ungatedFileCount": 0,
     "ungatedDirCount": 0,
     "dedicatedDirCount": 90,
@@ -17489,6 +17512,8 @@
       "src/tracker/rooms/markdown/write-queue.ts",
       "src/tracker/rooms/markdown/write-route.ts",
       "src/tracker/rooms/markdown/write.ts",
+      "src/tracker/rooms/yunxiao/README.md",
+      "src/tracker/rooms/yunxiao/SETUP-PROMPT.md",
       "src/tracker/rooms/yunxiao/budget.ts",
       "src/tracker/rooms/yunxiao/client.ts",
       "src/tracker/rooms/yunxiao/comments/write.ts",

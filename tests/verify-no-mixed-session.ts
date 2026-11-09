@@ -21,7 +21,7 @@ const child_process = require("child_process");
 const execSync = child_process.execSync;
 
 const root = path.resolve(__dirname, "..");
-const BACKENDS = ["github", "gitlab", "markdown"];
+const BACKENDS = ["github", "gitlab", "markdown", "yunxiao"];
 const BACKEND_ROOT_POSIX = "src/tracker/rooms";
 
 let failed = false;

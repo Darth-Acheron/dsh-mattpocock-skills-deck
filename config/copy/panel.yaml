@@ -105,6 +105,10 @@ zh:
 
     本次已选后端：GitLab — 请按 GitLab 模板生成 docs/agents/issue-tracker.md
   setup.gitlab.labelReqs: ，并确保仓库中技能所需标签齐全（triage 五角色 + wayfinder 标签 wayfinder:map / research / prototype / grilling / task），不要只建少数几个
+  setup.yunxiao.trackerLine: 本仓库为阿里云效（Yunxiao Projex + Codeup）→ 提议 Yunxiao Projex
+  setup.yunxiao.trackerChoice: Yunxiao Projex
+  setup.yunxiao.backendNote: "\n\n本次已选后端：Yunxiao — 请按云效模板（issue-tracker-yunxiao.md）生成 docs/agents/issue-tracker.md，并在 docs/agents/yunxiao.yaml 中记录 24 位 organizationId 与 26 位 Yunxiao Projex projectId（个人访问令牌仅通过环境变量或本机受保护文件提供，切勿写进仓库配置文件）"
+  setup.yunxiao.labelReqs: ，并确保 Yunxiao Projex 项目中技能所需标签齐全（triage 五角色 + wayfinder 标签 wayfinder:map / research / prototype / grilling / task），不要只建少数几个
   setup.default.trackerLine: 本仓库为 GitHub → 提议 GitHub Issues
   setup.default.trackerChoice: GitHub Issues
   setup.default.backendNote: |-
@@ -478,6 +482,10 @@ en:
 
     Selected backend: GitLab — please generate docs/agents/issue-tracker.md from the GitLab template.
   setup.gitlab.labelReqs: ", and ensure the repo has the complete label set the skills need (the five triage-role labels + the wayfinder labels wayfinder:map / research / prototype / grilling / task) — not just a few"
+  setup.yunxiao.trackerLine: this repo uses Aliyun Yunxiao (Yunxiao Projex + Codeup) → propose Yunxiao Projex
+  setup.yunxiao.trackerChoice: Yunxiao Projex
+  setup.yunxiao.backendNote: "\n\nSelected backend: Yunxiao — please generate docs/agents/issue-tracker.md from the Yunxiao template (issue-tracker-yunxiao.md), and record the 24-character organizationId and 26-character Yunxiao Projex projectId in docs/agents/yunxiao.yaml (provide personal access tokens only via environment variables or protected user-home files, never in repo config files)."
+  setup.yunxiao.labelReqs: ", and ensure the Yunxiao Projex project has the complete label set the skills need (the five triage-role labels + the wayfinder labels wayfinder:map / research / prototype / grilling / task) — not just a few"
   setup.default.trackerLine: this repo is on GitHub → propose GitHub Issues
   setup.default.trackerChoice: GitHub Issues
   setup.default.backendNote: |-

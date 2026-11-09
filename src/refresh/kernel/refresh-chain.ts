@@ -36,8 +36,8 @@
 // 留存量的两条线（30 天、2MB）在 chain-prune.ts：那里是数字的唯一住处；链的裁剪实现在
 // 旧链退役前由 src/host/refresh/workRoute.ts 用本文件的键与形状工具（#1271 已删；共享层文件之间不许互相引用）。
 
-/** 三个后端的字面（判据里要按后端分开：不同后端的票 key 不通用）。 */
-export const CHAIN_BACKENDS: readonly string[] = ['github', 'gitlab', 'markdown']
+/** 四个内置后端的字面（判据里要按后端分开：不同后端的票 key 不通用）。 */
+export const CHAIN_BACKENDS: readonly string[] = ['github', 'gitlab', 'markdown', 'yunxiao']
 
 /**
  * 动作类别（闭集合）。只回答「他在对这张票做什么」，一格一个词，不许出现自由文本

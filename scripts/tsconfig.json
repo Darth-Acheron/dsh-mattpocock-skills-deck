@@ -102,8 +102,9 @@
     "real-machine/lib/workspaces.mts",
     // 真机场景钩子只种工作区、不复制 profile：种子实现独立成这个文件（verify/hooks.ts 与场景门禁共用）。
     "real-machine/lib/workspace-seed.mts",
-    // 插件特有：GitLab 沙箱、种子票池、日志查询、报告索引、deck 直写与读回（真机批次仍在用）。
+    // 插件特有：GitLab 沙箱、云效沙箱冒烟、种子票池、日志查询、报告索引、deck 直写与读回（真机批次仍在用）。
     "real-machine/commands/log-query.mts",
+    "real-machine/commands/yunxiao-sandbox.mts",
     // 阶段 B1：真机界面断言迁进 base 的场景机制（钩子与场景各登记一次，漏登记就静默不检查）。
     "../verify/hooks.ts",
     // 发布门禁的票面适配器（GitHub/gh 版）；verification profile 里按相对模块声明。

@@ -23,6 +23,15 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 
 export type YunxiaoFetchFn = (input: string | URL, init?: RequestInit) => Promise<Response>
 
+/**
+ * 房间级自定义 fetch 槽位：供按需真机冒烟脚本或测试在不深引房间内部的情况下通过装配点注入传输层。
+ */
+let customYunxiaoFetch: YunxiaoFetchFn | null = null
+
+export function setYunxiaoCustomFetch(fn: YunxiaoFetchFn | null): void {
+  customYunxiaoFetch = fn
+}
+
 export type YunxiaoCtx = Partial<OpContext> & Partial<BackendContext> & {
   fetch?: YunxiaoFetchFn
   apiBaseUrl?: string
@@ -184,7 +193,7 @@ export function yunxiaoClient(ctx?: YunxiaoCtx | null): { request(pathOrUrl: str
     if (!token) return failEnvelope(401, 1, 'Missing Yunxiao token: set YUNXIAO_TOKEN or ~/.config/yunxiao/token', emptyHeaders)
 
     const fullUrl = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : apiBaseUrl.replace(/\/+$/, '') + '/' + pathOrUrl.replace(/^\/+/, '')
-    const fetchFn: YunxiaoFetchFn | undefined = opts.fetch || ctx?.fetch || (typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : undefined)
+    const fetchFn: YunxiaoFetchFn | undefined = opts.fetch || ctx?.fetch || customYunxiaoFetch || (typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : undefined)
     if (typeof fetchFn !== 'function') return failEnvelope(0, 127, 'fetch unavailable in current runtime', emptyHeaders)
 
     const outbound = getOutbound(ctx)

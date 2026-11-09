@@ -77,9 +77,9 @@ function filterMatchesIssue(issue: Issue, filter: ListFilter | null | undefined,
     if (!keySet.has(issue.key)) return false
   }
   if (typeof filter.since === 'string' && filter.since.trim()) {
-    const sinceMs = Date.parse(filter.since.trim())
-    const updatedMs = issue.updatedAt ? Date.parse(issue.updatedAt) : NaN
-    if (Number.isFinite(sinceMs) && Number.isFinite(updatedMs) && updatedMs < sinceMs) return false
+    const sinceEpoch = Date.parse(filter.since.trim())
+    const updatedEpoch = issue.updatedAt ? Date.parse(issue.updatedAt) : NaN
+    if (Number.isFinite(sinceEpoch) && Number.isFinite(updatedEpoch) && updatedEpoch < sinceEpoch) return false
   }
   return true
 }
