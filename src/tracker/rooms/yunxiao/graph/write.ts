@@ -66,6 +66,10 @@ async function buildCycleCheckGraph(
     const curKey = stack.pop()!
     if (seen.has(curKey)) continue
     seen.add(curKey)
+    if (graph.has(curKey)) {
+      for (const nextKey of graph.get(curKey) || []) { if (!seen.has(nextKey)) stack.push(nextKey) }
+      continue
+    }
     let raw = knownRaw.get(curKey)
     let workitemId = raw && typeof raw['id'] === 'string' ? raw['id'].trim() : ''
     if (!raw || !workitemId) {

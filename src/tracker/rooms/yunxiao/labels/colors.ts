@@ -24,6 +24,7 @@ import {
   errMsg,
   fetchProjectLabelNameMap,
   resolveProjectRef,
+  runWithLimit,
   type CtxLike,
   type RepoLike,
 } from '../issues/shared.js'
@@ -38,24 +39,6 @@ function writeConcurrency(ctx: OpContext): number {
   const raw = ctx && typeof bag.labelColorConcurrency === 'number' ? bag.labelColorConcurrency : WRITE_CONCURRENCY_DEFAULT
   if (!Number.isFinite(raw) || raw < 1) return WRITE_CONCURRENCY_DEFAULT
   return Math.min(Math.floor(raw), WRITE_CONCURRENCY_MAX)
-}
-
-async function runWithLimit<T, R>(items: T[], limit: number, worker: (item: T, index: number) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length)
-  let next = 0
-  const lanes = Math.max(1, Math.min(limit, items.length))
-  const runners: Promise<void>[] = []
-  for (let i = 0; i < lanes; i++) {
-    runners.push((async () => {
-      for (;;) {
-        const idx = next++
-        if (idx >= items.length) return
-        results[idx] = await worker(items[idx], idx)
-      }
-    })())
-  }
-  await Promise.all(runners)
-  return results
 }
 
 function changesProblem(changes: unknown): string {

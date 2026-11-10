@@ -1089,6 +1089,42 @@ async function main(): Promise<void> {
       '6.4 原生 parentId 优先于正文父票标记，父票补查失败时明确失败而非返回 parentKey:null',
       { nativeParentPreferred, unknownParent },
     )
+
+    // 6.5 listPage 在冷缓存下同样执行图谱富化（补齐 26 位原生 parentId 的父票号），且 listIssues 在分页头明确 xPage=1/xTotalPages=1 的满页结果下不误报 truncated:true
+    workitem4.parentId = workitem2.id
+    markersMod.clearYunxiaoIssueKeyCache()
+    const coldPageRes = await backend.listPage(repoRef, undefined, { limit: 4 }, readCtx)
+    const item4InColdPage = coldPageRes.ok ? coldPageRes.data.items.find((i: any) => i.key === '4') : null
+    workitem4.parentId = ''
+
+    const fullSinglePageCtx: any = {
+      ...readCtx,
+      fetch: async (input: string | URL, init?: RequestInit) => {
+        const u = String(input)
+        if (u.endsWith('/workitems:search')) {
+          const full100 = Array.from({ length: 100 }, (_, i) => ({
+            ...workitem1,
+            id: 'f7d327d50b8fca57a14697' + String(1000 + i),
+            serialNumber: 'DCIAFS-' + String(100 + i),
+          }))
+          return new Response(JSON.stringify(full100), {
+            status: 200,
+            headers: { 'x-page': '1', 'x-per-page': '100', 'x-total': '100', 'x-total-pages': '1', 'x-next-page': '2' },
+          })
+        }
+        return readCtx.fetch(input, init)
+      },
+    }
+    const fullSinglePageList = await backend.list(repoRef, undefined, fullSinglePageCtx)
+    check(
+      coldPageRes.ok === true &&
+        item4InColdPage?.parentKey === '2' &&
+        fullSinglePageList.ok === true &&
+        fullSinglePageList.data.length === 100 &&
+        fullSinglePageList.truncated !== true,
+      '6.5 listPage 在冷缓存下自动富化原生 parentKey 与依赖图谱，且 listIssues 在明确末页（xPage=1,xTotalPages=1）满 100 条时不误报 truncated',
+      { item4ParentKey: item4InColdPage?.parentKey, truncated: fullSinglePageList.truncated },
+    )
   }
 
   console.log('\n== Slice 7：六种位置建票映射（Req/Task/Bug 及 Bug 未启用时回退 Task+bug）、幂等防重与生命周期状态流转 ==')
@@ -2228,6 +2264,42 @@ async function main(): Promise<void> {
       '10.5 明确末页的满页结果只读一次并保持 blockingComplete:true，满页兜底不覆盖分页头',
       { dep1ExplicitLast, explicitLastSearchRequests },
     )
+
+    // 10.7 写前环检（buildCycleCheckGraph）对已在 scanProjectBlockingSnapshot 内的节点不重复发起 DEPEND_ON 探测，且单票写操作对非法票号统一返回 parse（input-refused）
+    let dependOnGetCountForW1 = 0
+    const dedupBlockCtx: any = {
+      ...blockCtx,
+      fetch: async (input: string | URL, init?: RequestInit) => {
+        const u = String(input)
+        const method = (init?.method || 'GET').toUpperCase()
+        if (method === 'GET' && u.includes('/workitems/' + w1.id + '/relationRecords') && u.includes('relationType=DEPEND_ON')) {
+          dependOnGetCountForW1 += 1
+        }
+        return blockCtx.fetch(input, init)
+      },
+    }
+    await backend.setBlockedBy(repoRef, '2', ['1'], undefined, dedupBlockCtx)
+    const badCloseKey = await backend.close(repoRef, '@@invalid-key@@', undefined, dedupBlockCtx)
+    const badAssignKey = await backend.setAssignees(repoRef, '@@invalid-key@@', ['lead'], undefined, dedupBlockCtx)
+    const badLabelKey = await backend.setLabels(repoRef, '@@invalid-key@@', ['bug'], undefined, dedupBlockCtx)
+    const badCommentKey = await backend.comment(repoRef, '@@invalid-key@@', 'hello', dedupBlockCtx)
+    check(
+      dependOnGetCountForW1 === 1 &&
+        badCloseKey.ok === false &&
+        badCloseKey.error.kind === 'parse' &&
+        badCloseKey.error.stage === 'input-refused' &&
+        badAssignKey.ok === false &&
+        badAssignKey.error.kind === 'parse' &&
+        badAssignKey.error.stage === 'input-refused' &&
+        badLabelKey.ok === false &&
+        badLabelKey.error.kind === 'parse' &&
+        badLabelKey.error.stage === 'input-refused' &&
+        badCommentKey.ok === false &&
+        badCommentKey.error.kind === 'parse' &&
+        badCommentKey.error.stage === 'input-refused',
+      '10.7 setBlockedBy 写前环检对已在项目快照中的节点不重复发起 DEPEND_ON 探测，且单票写操作对非法票号统一返回 parse（input-refused）',
+      { dependOnGetCountForW1, badCloseKey, badAssignKey, badLabelKey, badCommentKey },
+    )
   }
   console.log('\n== Slice 11：Codeup 一键开仓发布（initProject 仓库名校验、本地 Git 初始化与身份兜底、CreateRepository public->internal 与 namespaceId、GetRepository 回查克隆地址、配置 origin 并推送 HEAD） ==')
   {
@@ -2388,6 +2460,132 @@ async function main(): Promise<void> {
         learnedAfterInit?.codeupRepo?.pathWithNamespace === ORG_ID + '/Apple/new-deck-service',
       '11.2 initProject 完成属主自愈、本地 Git 初始化与首提交、CreateRepository（public->internal、namespaceId、避免 USER_GUIDE 冲突）、GetRepository 回查克隆地址、配置 origin 并推送 HEAD，同步更新 learnedYunxiaoContext',
       { initRes, createRepoUrl, createRepoBody, getRepoCalledWithId, gitCommands, learnedAfterInit },
+    )
+
+    // 11.3 零配置工作区一体化开仓（Yunxiao workspace provisioning）：无预置 yunxiao.yaml 时自动通过 lastOrganization -> ListProjectTemplates -> CreateProject（含 customCode 冲突递增重试）+ CreateRepository 创建 Projex 项目与 Codeup 代码库并写入 docs/agents/yunxiao.yaml
+    const writtenFiles: Record<string, string> = {}
+    let createProjectAttempts = 0
+    const createdProjectCodes: string[] = []
+    const zeroConfigProtectedProjId = '99aa88bb77cc66dd55ee44ff33'
+    const zeroConfigFs = {
+      resolve: async (rel: string, opts?: { cwd?: string }) => {
+        if (rel.startsWith('/')) return rel
+        const base = opts?.cwd ? opts.cwd.replace(/\/+$/, '') + '/' : ''
+        return base + rel
+      },
+      readText: async (target: unknown) => {
+        const k = String(target || '')
+        if (Object.prototype.hasOwnProperty.call(writtenFiles, k)) return writtenFiles[k]
+        const err = new Error('ENOENT: ' + k) as Error & { code?: string }
+        err.code = 'ENOENT'
+        throw err
+      },
+      writeText: async (target: unknown, content: string) => {
+        writtenFiles[String(target || '')] = content
+      },
+    }
+    const zeroConfigCtx: any = {
+      cwd: '/ws-zero-cfg',
+      fs: zeroConfigFs,
+      platform: {
+        fs: zeroConfigFs,
+        env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-zero-cfg-token-12345678' }),
+        resolveExecutable: async () => '/usr/bin/git',
+      },
+      exec: async (_cmd: string, args: string[]) => {
+        if (args[0] === 'rev-parse') return { code: 0, stdout: 'true\n', stderr: '' }
+        if (args[0] === 'remote' && args[1] === 'get-url') return { code: 2, stdout: '', stderr: 'No such remote' }
+        return { code: 0, stdout: '', stderr: '' }
+      },
+      fetch: async (input: string | URL, init?: RequestInit) => {
+        const u = String(input)
+        const method = (init?.method || 'GET').toUpperCase()
+        if (u.endsWith('/oapi/v1/platform/user')) {
+          return new Response(
+            JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao', lastOrganization: ORG_ID }),
+            { status: 200 },
+          )
+        }
+        if (u.endsWith('/projex/organizations/' + ORG_ID + '/projects:search') && method === 'POST') {
+          return new Response(JSON.stringify([]), {
+            status: 200,
+            headers: { 'x-page': '1', 'x-per-page': '20', 'x-total': '0', 'x-total-pages': '0' },
+          })
+        }
+        if (u.endsWith('/projex/organizations/' + ORG_ID + '/projectTemplates') && method === 'GET') {
+          return new Response(
+            JSON.stringify([
+              { id: 'tpl-custom-1', name: '普通模板', type: 4 },
+              { id: 'tpl-scrum-sys', name: 'Scrum 敏捷交付空间', type: 0 },
+            ]),
+            { status: 200 },
+          )
+        }
+        if (u.endsWith('/projex/organizations/' + ORG_ID + '/projects') && method === 'POST') {
+          createProjectAttempts += 1
+          const b = JSON.parse(String(init?.body || '{}'))
+          createdProjectCodes.push(String(b.customCode || ''))
+          if (createProjectAttempts === 1) {
+            return new Response(
+              JSON.stringify({ errorCode: 'InvalidParam.CustomCodeDuplicate', errorMessage: '项目编号已存在' }),
+              { status: 400 },
+            )
+          }
+          return new Response(JSON.stringify({ id: zeroConfigProtectedProjId }), { status: 200 })
+        }
+        if (u.includes('/codeup/organizations/' + ORG_ID + '/repositories') && method === 'POST') {
+          const b = JSON.parse(String(init?.body || '{}'))
+          return new Response(
+            JSON.stringify({
+              id: 9900112,
+              name: b.name,
+              path: b.path,
+              pathWithNamespace: ORG_ID + '/' + b.path,
+              webUrl: 'https://codeup.aliyun.com/' + ORG_ID + '/' + b.path,
+              httpUrlToRepo: 'https://codeup.aliyun.com/' + ORG_ID + '/' + b.path + '.git',
+              accessLevel: 40,
+              archived: false,
+            }),
+            { status: 200 },
+          )
+        }
+        if (u.endsWith('/codeup/organizations/' + ORG_ID + '/repositories/9900112') && method === 'GET') {
+          return new Response(
+            JSON.stringify({
+              id: 9900112,
+              name: 'zero-cfg-app',
+              path: 'zero-cfg-app',
+              pathWithNamespace: ORG_ID + '/zero-cfg-app',
+              webUrl: 'https://codeup.aliyun.com/' + ORG_ID + '/zero-cfg-app',
+              httpUrlToRepo: 'https://codeup.aliyun.com/' + ORG_ID + '/zero-cfg-app.git',
+              accessLevel: '40',
+              archived: false,
+            }),
+            { status: 200 },
+          )
+        }
+        return new Response('unexpected: ' + method + ' ' + u, { status: 500 })
+      },
+    }
+
+    const zeroRes = await backend.initProject(
+      { cwd: '/ws-zero-cfg' },
+      { name: 'zero-cfg-app', visibility: 'private', description: '零配置一体化创建测试' },
+      zeroConfigCtx,
+    )
+    const persistedYaml = writtenFiles['/ws-zero-cfg/docs/agents/yunxiao.yaml'] || writtenFiles['docs/agents/yunxiao.yaml'] || ''
+    check(
+      zeroRes.ok === true &&
+        zeroRes.data.refId === ORG_ID + '/' + zeroConfigProtectedProjId &&
+        createProjectAttempts === 2 &&
+        createdProjectCodes.length === 2 &&
+        createdProjectCodes[0] !== createdProjectCodes[1] &&
+        persistedYaml.includes('organizationId: ' + ORG_ID) &&
+        persistedYaml.includes('projectId: ' + zeroConfigProtectedProjId) &&
+        persistedYaml.includes('customCode: ' + createdProjectCodes[1]) &&
+        persistedYaml.includes('repositoryId: "9900112"'),
+      '11.3 零配置工作区 initProject 自动发现 lastOrganization、选取 Scrum 模板、在 customCode 冲突时递增重试创建 Projex 项目、创建 Codeup 仓库并落盘 docs/agents/yunxiao.yaml',
+      { zeroRes, createProjectAttempts, createdProjectCodes, persistedYaml },
     )
   }
 

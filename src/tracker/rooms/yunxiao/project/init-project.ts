@@ -1,17 +1,15 @@
 /**
- * src/tracker/rooms/yunxiao/project/init-project.ts —— Codeup 工作区一键开仓发布路由（规格 #04）。
+ * src/tracker/rooms/yunxiao/project/init-project.ts —— Yunxiao Projex + Codeup 工作区一体化置备路由（规格 #04 + 架构加深 Candidate 1）。
  *
- * 为什么需要这套开仓发布流程：
- *   1. 对齐 GitHub 与 GitLab 房间的 initProject 契约：先校验仓库名、本地环境与云效认证，再改动工作区，
- *      避免在未配置坐标或令牌无效时污染本地 Git 提交记录。
- *   2. 动手修改工作区前先执行 Git 属主可用性检查（#994），若检测到 dubious ownership 则自动补充
- *      `git config --global --add safe.directory <dir>` 自愈一次。
- *   3. Codeup 企业代码库的 CreateRepository 接口可见性枚举仅支持 `"private"`（私有）与 `"internal"`（企业内公开），
- *      因此将 `InitProjectInput.visibility === "public"` 映射为 `"internal"`，其余映射为 `"private"`，
- *      支持从工作区配置或环境变量透传可选 `namespaceId`（父代码组 ID），且不传 `readMeType: "USER_GUIDE"`，
- *      防止远端自动生成初始引导提交与本地首提交产生 non-fast-forward 推送冲突。
- *   4. CreateRepository 成功后用返回的 `id` 调用 `GetRepository` 回查权威克隆地址，配置 `origin` 并推送 `HEAD`，
- *      最后将新建的权威 `CodeupRepositoryIdentity` 写入 `learnedYunxiaoContext`。
+ * 为什么需要「Yunxiao Projex + Codeup + yunxiao.yaml」一体化开仓置备（Yunxiao workspace provisioning）：
+ *   1. 对齐 GitHub 与 GitLab 房间的零配置 initProject 体验：当用户在全新本地目录仅配置了云效令牌时，
+ *      自动通过 probeYunxiaoPlatformUser 获取用户身份与 lastOrganization（或经 ListOrganizations 兜底）锁定 organizationId。
+ *   2. 当工作区尚未配置 projectId 时，先通过 SearchProjects 查找同名未归档 Yunxiao Projex 项目复用；
+ *      若不存在则通过 ListProjectTemplates 自动选取 Scrum/敏捷默认模板（支持 templateId 覆盖），
+ *      从仓库名派生 4~6 位全大写字母 customCode（如遇编号冲突自动递增后缀重试），调用 CreateProject 创建同名 Projex 项目。
+ *   3. 完成本地 Git 属主自愈与首提交后，调用 Codeup CreateRepository（public 映射为 internal，避免 USER_GUIDE 冲突）
+ *      + GetRepository 回查克隆地址、配置 origin 并推送 HEAD。
+ *   4. 最后自动将 { organizationId, projectId, customCode, repositoryId } 写入 docs/agents/yunxiao.yaml 并更新 learnedYunxiaoContext。
  */
 
 import { ERROR_KIND } from '../../../contract/vocabulary.js'
@@ -19,7 +17,7 @@ import type { ErrorKind } from '../../../contract/identity.js'
 import type { OpContext, RepoHandle } from '../../../contract/contexts.js'
 import type { RepositoryRef } from '../../../contract/entities.js'
 import type { InitProjectInput } from '../../../contract/inputs.js'
-import { TRACKER_ERROR_STAGE, type OpResult } from '../../../contract/results.js'
+import { TRACKER_ERROR_STAGE, type OpResult, type TrackerError } from '../../../contract/results.js'
 import { fail } from '../../../kernel/preflight.js'
 import { isOwnershipMismatch, ownershipPathFrom, safeDirectoryCommand } from '../../../kernel/workspace-ownership.js'
 import {
@@ -32,9 +30,15 @@ import {
   formatYunxiaoRefId, getLearnedYunxiaoContext, learnYunxiaoContextFor,
   normalizeCodeupRepositoryIdentity, parseYunxiaoRefId, type CodeupRepositoryIdentity,
 } from '../model/repo-identity.js'
-import { DEFAULT_YUNXIAO_WEB_BASE_URL, loadYunxiaoToken, resolveYunxiaoCoordinates } from '../model/workspace-config.js'
 import {
-  requestCodeupRepositoryCreate, requestCodeupRepositoryGet, requestPlatformUser, type YunxiaoCreateRepoBody,
+  DEFAULT_YUNXIAO_API_BASE_URL, DEFAULT_YUNXIAO_WEB_BASE_URL, YUNXIAO_CONFIG_REL,
+  deriveProjectCustomCode, formatYunxiaoConfigYaml, isValidOrganizationId, isValidProjectId,
+  loadYunxiaoToken, resolveYunxiaoCoordinates,
+} from '../model/workspace-config.js'
+import { probeYunxiaoPlatformUser } from '../repo/current-user.js'
+import {
+  requestCodeupRepositoryCreate, requestCodeupRepositoryGet, requestPlatformOrganizations,
+  requestProjectCreate, requestProjectsSearch, requestProjectTemplatesList, type YunxiaoCreateRepoBody,
 } from '../requests.js'
 
 interface ProcResult { code: number; stdout: string; stderr: string }
@@ -47,35 +51,120 @@ function toProc(raw: unknown): ProcResult {
   return { code, stdout, stderr }
 }
 
-/** 解析当前工作区的云效组织、项目与可选 namespaceId 坐标。 */
-async function resolveInitCoordinates(
+interface PartialInitCoords {
+  organizationId: string
+  projectId: string
+  customCode: string
+  namespaceId?: number
+  templateId?: string
+  apiBaseUrl: string
+  webBaseUrl: string
+  hadValidFileCoords: boolean
+}
+
+/** 读取本地已有的部分或完整云效坐标（允许缺少 organizationId 或 projectId 以便后续自动发现/创建）。 */
+async function readPartialInitCoords(
   handle: RepoHandle, ctx: OpContext,
-): Promise<{ ok: true; organizationId: string; projectId: string; namespaceId?: number; webBaseUrl: string; refId: string } | { ok: false; message: string; raw: string }> {
+): Promise<{ ok: true; value: PartialInitCoords } | { ok: false; error: TrackerError }> {
   const cwd = String((handle && handle.cwd) || (ctx && ctx.cwd) || '').trim()
-  const platform = ctx && ctx.platform ? ctx.platform : null
-  const fs = (platform && platform.fs) || (ctx && ctx.fs) || null
-  const env = (platform && platform.env) || null
+  const platform = ctx?.platform || null
+  const fs = platform?.fs || ctx?.fs || null
+  const env = platform?.env || null
   const coordsRes = await resolveYunxiaoCoordinates({ cwd, fs, env })
   if (coordsRes.ok) {
     const v = coordsRes.value
     return {
-      ok: true, organizationId: v.organizationId, projectId: v.projectId,
-      ...(v.namespaceId ? { namespaceId: v.namespaceId } : {}),
-      webBaseUrl: v.webBaseUrl, refId: formatYunxiaoRefId(v.organizationId, v.projectId),
+      ok: true,
+      value: {
+        organizationId: v.organizationId, projectId: v.projectId, customCode: v.customCode || '',
+        ...(v.namespaceId ? { namespaceId: v.namespaceId } : {}),
+        ...(v.templateId ? { templateId: v.templateId } : {}),
+        apiBaseUrl: v.apiBaseUrl, webBaseUrl: v.webBaseUrl, hadValidFileCoords: true,
+      },
     }
+  }
+  if (coordsRes.reason !== 'bad-shape') {
+    return fail(ERROR_KIND.ENV as ErrorKind, coordsRes.message, JSON.stringify(coordsRes))
   }
   const fromHandle = parseYunxiaoRefId(handle?.refId)
   const learned = (cwd ? getLearnedYunxiaoContext(cwd) : null) || (handle?.refId ? getLearnedYunxiaoContext(handle.refId) : null)
-  const organizationId = fromHandle?.organizationId || learned?.organizationId || ''
-  const projectId = fromHandle?.projectId || learned?.projectId || ''
-  if (organizationId && projectId) {
-    return {
-      ok: true, organizationId, projectId,
-      webBaseUrl: learned?.webBaseUrl || DEFAULT_YUNXIAO_WEB_BASE_URL,
-      refId: formatYunxiaoRefId(organizationId, projectId),
+  const readEnv = (k: string): string => (env && typeof env.get === 'function' ? String(env.get(k) || '').trim() : '')
+  const nsRaw = readEnv('YUNXIAO_NAMESPACE_ID')
+  const nsNum = nsRaw && /^\d+$/.test(nsRaw) ? Number(nsRaw) : undefined
+  return {
+    ok: true,
+    value: {
+      organizationId: readEnv('YUNXIAO_ORGANIZATION_ID') || fromHandle?.organizationId || learned?.organizationId || '',
+      projectId: readEnv('YUNXIAO_PROJECT_ID') || fromHandle?.projectId || learned?.projectId || '',
+      customCode: readEnv('YUNXIAO_CUSTOM_CODE') || learned?.customCode || '',
+      ...(nsNum && nsNum > 0 ? { namespaceId: nsNum } : {}),
+      ...(readEnv('YUNXIAO_TEMPLATE_ID') ? { templateId: readEnv('YUNXIAO_TEMPLATE_ID') } : {}),
+      apiBaseUrl: readEnv('YUNXIAO_API_BASE_URL') || learned?.apiBaseUrl || DEFAULT_YUNXIAO_API_BASE_URL,
+      webBaseUrl: readEnv('YUNXIAO_WEB_BASE_URL') || learned?.webBaseUrl || DEFAULT_YUNXIAO_WEB_BASE_URL,
+      hadValidFileCoords: false,
+    },
+  }
+}
+
+/** 自动发现或新建 Yunxiao Projex 项目：优先复用同名未归档项目，不存在时通过模板自动创建并在 customCode 冲突时递增重试。 */
+async function ensureOrProvisionProjexProject(
+  reqCtx: YunxiaoCtx, organizationId: string, name: string, description: string,
+  visibility: 'public' | 'private', preferredTemplateId?: string, preferredCustomCode?: string,
+): Promise<{ ok: true; projectId: string; customCode: string; created: boolean } | { ok: false; error: TrackerError }> {
+  const searchConditions = JSON.stringify({
+    conditionGroups: [[{ fieldIdentifier: 'name', operator: 'CONTAINS', value: [name], toValue: null, className: 'string', format: 'input' }]],
+  })
+  const searchRes = await requestProjectsSearch(reqCtx, organizationId, { conditions: searchConditions, page: 1, perPage: 20 }, GITLAB_READ_TIMEOUT_MS)
+  if (searchRes.ok && Array.isArray(searchRes.data)) {
+    const matched = (searchRes.data as Record<string, unknown>[]).find(
+      (p) => p && typeof p['id'] === 'string' && String(p['name'] || '').trim().toLowerCase() === name.toLowerCase() && p['logicalStatus'] !== 'DELETED',
+    )
+    if (matched && typeof matched['id'] === 'string' && matched['id'].trim()) {
+      return {
+        ok: true,
+        projectId: matched['id'].trim(),
+        customCode: typeof matched['customCode'] === 'string' && matched['customCode'].trim() ? matched['customCode'].trim() : deriveProjectCustomCode(name, 0),
+        created: false,
+      }
     }
   }
-  return { ok: false, message: coordsRes.message || 'initProject: 未配置云效 organizationId 与 projectId', raw: JSON.stringify(coordsRes) }
+
+  let templateId = preferredTemplateId ? preferredTemplateId.trim() : ''
+  if (!templateId) {
+    const tplRes = await requestProjectTemplatesList(reqCtx, organizationId, GITLAB_READ_TIMEOUT_MS)
+    if (!tplRes.ok) return failYunxiao(tplRes, tplRes.stderr || tplRes.stdout || 'initProject: 获取 Yunxiao Projex 项目模板失败', tplRes, reqCtx)
+    const list = Array.isArray(tplRes.data) ? (tplRes.data as Record<string, unknown>[]) : []
+    const picked =
+      list.find((t) => t && typeof t['id'] === 'string' && /scrum|敏捷/i.test(String(t['name'] || ''))) ||
+      list.find((t) => t && typeof t['id'] === 'string' && t['type'] === 0) ||
+      list.find((t) => t && typeof t['id'] === 'string')
+    templateId = picked && typeof picked['id'] === 'string' ? picked['id'].trim() : ''
+    if (!templateId) return fail(ERROR_KIND.ENV as ErrorKind, 'initProject: 当前云效组织下未找到可用的 Yunxiao Projex 项目模板', tplRes.stdout)
+  }
+
+  const scope: 'public' | 'private' = visibility === 'public' ? 'public' : 'private'
+  let lastCreateRes = null
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const customCode = attempt === 0 && preferredCustomCode && /^[A-Z]{4,6}$/.test(preferredCustomCode)
+      ? preferredCustomCode
+      : deriveProjectCustomCode(name, attempt)
+    const createRes = await requestProjectCreate(
+      reqCtx, organizationId,
+      { name, customCode, scope, templateId, ...(description ? { description } : {}) },
+      GITLAB_CREATE_PROJECT_TIMEOUT_MS,
+    )
+    lastCreateRes = createRes
+    if (createRes.ok) {
+      const bag = asRecord(createRes.data)
+      const newId = bag && typeof bag['id'] === 'string' ? bag['id'].trim() : ''
+      if (!newId) return fail(ERROR_KIND.PARSE as ErrorKind, 'initProject: CreateProject 响应缺少有效的项目 id', createRes.stdout)
+      return { ok: true, projectId: newId, customCode, created: true }
+    }
+    const errText = (createRes.stderr + ' ' + createRes.stdout).toLowerCase()
+    const isCodeConflict = createRes.status === 400 && /customcode|编号|代号|duplicate|已存在|occupied/.test(errText)
+    if (!isCodeConflict) break
+  }
+  return failYunxiao(lastCreateRes, lastCreateRes?.stderr || lastCreateRes?.stdout || 'initProject: 创建 Yunxiao Projex 项目失败', lastCreateRes, reqCtx)
 }
 
 /** 提取并合并 CreateRepository 与 GetRepository 的权威 Codeup 仓库身份及远程克隆地址。 */
@@ -92,7 +181,7 @@ function buildCreatedRepoIdentity(createData: unknown, getData: unknown): { iden
   return httpClone ? { identity, cloneUrl: httpClone } : null
 }
 
-/** 初始化本地工作区并一键在云效 Codeup 创建远端代码库、配置 origin 并推送 HEAD（契约操作 initProject）。 */
+/** 初始化本地工作区并一键在云效置备 Yunxiao Projex 项目与 Codeup 代码库、配置 origin、推送 HEAD 并落盘 yunxiao.yaml（契约操作 initProject）。 */
 export async function initProject(handle: RepoHandle, input: InitProjectInput, ctx: OpContext): Promise<OpResult<RepositoryRef>> {
   const cwd = String((handle && typeof handle.cwd === 'string' && handle.cwd) || (ctx && ctx.cwd) || '').trim()
   const name = input && typeof input.name === 'string' ? input.name.trim() : ''
@@ -101,8 +190,11 @@ export async function initProject(handle: RepoHandle, input: InitProjectInput, c
     return fail(ERROR_KIND.PARSE as ErrorKind, 'initProject: 仓库名只支持字母、数字、点、下划线、连字符，最长 100 个字符', String(input.name), TRACKER_ERROR_STAGE.INPUT_REFUSED)
   }
   const description = input && typeof (input as { description?: unknown }).description === 'string' ? String((input as { description?: unknown }).description).trim() : ''
-  const codeupVisibility: 'private' | 'internal' = input && input.visibility === 'public' ? 'internal' : 'private'
-  const platform = ctx && ctx.platform ? ctx.platform : null
+  const projexVisibility: 'public' | 'private' = input && input.visibility === 'public' ? 'public' : 'private'
+  const codeupVisibility: 'private' | 'internal' = projexVisibility === 'public' ? 'internal' : 'private'
+  const platform = ctx?.platform || null
+  const fs = platform?.fs || ctx?.fs || null
+  const env = platform?.env || null
   const execFn = ctx && typeof ctx.exec === 'function' ? ctx.exec.bind(ctx) : platform && typeof platform.exec === 'function' ? platform.exec.bind(platform) : null
 
   async function git(args: string[], timeout: number): Promise<ProcResult> {
@@ -117,25 +209,53 @@ export async function initProject(handle: RepoHandle, input: InitProjectInput, c
     if (!gitExe) return fail(ERROR_KIND.ENV as ErrorKind, 'initProject: 未找到 git（请先安装 https://git-scm.com/）', '')
   }
 
-  const coords = await resolveInitCoordinates(handle, ctx)
-  if (!coords.ok) return fail(ERROR_KIND.ENV as ErrorKind, coords.message, coords.raw)
+  const partialRes = await readPartialInitCoords(handle, ctx)
+  if (!partialRes.ok) return partialRes
+  const partial = partialRes.value
 
   const homeDirRaw = platform && typeof (platform as unknown as { homeDir?: unknown }).homeDir === 'string' ? (platform as unknown as { homeDir: string }).homeDir : undefined
-  const tokenRes = await loadYunxiaoToken({
-    fs: (platform && platform.fs) || (ctx && ctx.fs) || null,
-    env: (platform && platform.env) || null,
-    homeDir: homeDirRaw,
-  })
+  const tokenRes = await loadYunxiaoToken({ fs, env, homeDir: homeDirRaw })
   if (!tokenRes.token && typeof (ctx as YunxiaoCtx)?.fetch !== 'function') {
     return fail(ERROR_KIND.AUTH as ErrorKind, 'initProject: 未检测到云效个人访问令牌（请配置环境变量 YUNXIAO_TOKEN 或 ~/.config/yunxiao/token）', '')
   }
 
-  const userRes = await requestPlatformUser(ctx as YunxiaoCtx, GITLAB_READ_TIMEOUT_MS)
-  if (!userRes.ok) return failYunxiao(userRes, userRes.stderr || userRes.stdout || 'initProject: 云效当前用户认证失败', userRes, ctx)
-  const userBag = asRecord(userRes.data)
-  const userId = userBag && typeof userBag['id'] === 'string' ? userBag['id'].trim() : ''
-  const userName = userBag && typeof userBag['name'] === 'string' ? userBag['name'].trim() : userId
-  if (!userId) return fail(ERROR_KIND.PARSE as ErrorKind, 'initProject: 平台用户响应缺少有效的 id 字段', userRes.stdout)
+  const reqCtx: YunxiaoCtx = { ...(ctx as YunxiaoCtx), cwd, apiBaseUrl: partial.apiBaseUrl, ...(tokenRes.token ? { token: tokenRes.token } : {}) }
+  const userProbed = await probeYunxiaoPlatformUser(reqCtx, GITLAB_READ_TIMEOUT_MS)
+  if (!userProbed.ok) {
+    if (userProbed.kind === 'transport') {
+      return failYunxiao(userProbed.response, userProbed.response.stderr || userProbed.response.stdout || 'initProject: 云效当前用户认证失败', userProbed.response, reqCtx)
+    }
+    return fail(ERROR_KIND.PARSE as ErrorKind, 'initProject: 平台用户响应缺少有效的 id 字段', userProbed.response.stdout)
+  }
+  const { id: userId, name: userName, lastOrganization } = userProbed.user
+
+  let organizationId = partial.organizationId
+  if (!isValidOrganizationId(organizationId, partial.apiBaseUrl)) {
+    if (lastOrganization && isValidOrganizationId(lastOrganization, partial.apiBaseUrl)) {
+      organizationId = lastOrganization
+    } else {
+      const orgsRes = await requestPlatformOrganizations(reqCtx, GITLAB_READ_TIMEOUT_MS)
+      if (orgsRes.ok && Array.isArray(orgsRes.data)) {
+        const firstOrg = (orgsRes.data as Record<string, unknown>[]).find((o) => o && typeof o['id'] === 'string' && isValidOrganizationId(String(o['id']), partial.apiBaseUrl))
+        if (firstOrg) organizationId = String(firstOrg['id']).trim()
+      }
+    }
+  }
+  if (!isValidOrganizationId(organizationId, partial.apiBaseUrl)) {
+    return fail(ERROR_KIND.ENV as ErrorKind, 'initProject: 未配置云效 organizationId 且无法从当前用户自动发现企业组织 ID', '')
+  }
+
+  let projectId = partial.projectId
+  let customCode = partial.customCode
+  let provisionedNewProject = false
+  if (!isValidProjectId(projectId)) {
+    const projProvisioned = await ensureOrProvisionProjexProject(reqCtx, organizationId, name, description, projexVisibility, partial.templateId, customCode)
+    if (!projProvisioned.ok) return projProvisioned
+    projectId = projProvisioned.projectId
+    customCode = projProvisioned.customCode
+    provisionedNewProject = true
+  }
+  const refId = formatYunxiaoRefId(organizationId, projectId)
 
   let probe = await git(['rev-parse', '--is-inside-work-tree'], VC_READ_CMD_TIMEOUT_MS)
   if (probe.code !== 0) {
@@ -173,17 +293,17 @@ export async function initProject(handle: RepoHandle, input: InitProjectInput, c
   const createBody: YunxiaoCreateRepoBody = {
     name, path: name, visibility: codeupVisibility,
     ...(description ? { description } : {}),
-    ...(coords.namespaceId ? { namespaceId: coords.namespaceId } : {}),
+    ...(partial.namespaceId ? { namespaceId: partial.namespaceId } : {}),
   }
-  const createRes = await requestCodeupRepositoryCreate(ctx as YunxiaoCtx, coords.organizationId, createBody, GITLAB_CREATE_PROJECT_TIMEOUT_MS)
-  if (!createRes.ok) return failYunxiao(createRes, createRes.stderr || createRes.stdout || 'initProject: Codeup CreateRepository 创建远端代码库失败', createRes, ctx)
+  const createRes = await requestCodeupRepositoryCreate(reqCtx, organizationId, createBody, GITLAB_CREATE_PROJECT_TIMEOUT_MS)
+  if (!createRes.ok) return failYunxiao(createRes, createRes.stderr || createRes.stdout || 'initProject: Codeup CreateRepository 创建远端代码库失败', createRes, reqCtx)
 
   const createdBag = asRecord(createRes.data)
   const createdIdRaw = createdBag ? createdBag['id'] : undefined
   const createdId = typeof createdIdRaw === 'number' ? createdIdRaw : typeof createdIdRaw === 'string' && /^\d+$/.test(createdIdRaw.trim()) ? Number(createdIdRaw.trim()) : 0
   let getRepoData: unknown = null
   if (createdId > 0) {
-    const getRes = await requestCodeupRepositoryGet(ctx as YunxiaoCtx, coords.organizationId, createdId, GITLAB_READ_TIMEOUT_MS)
+    const getRes = await requestCodeupRepositoryGet(reqCtx, organizationId, createdId, GITLAB_READ_TIMEOUT_MS)
     if (getRes.ok) getRepoData = getRes.data
   }
 
@@ -197,12 +317,32 @@ export async function initProject(handle: RepoHandle, input: InitProjectInput, c
   const pushRes = await git(['push', '-u', 'origin', 'HEAD'], VC_PUSH_TIMEOUT_MS)
   if (pushRes.code !== 0) return failYunxiao(pushRes, 'initProject: 远端代码库已创建且已配置 origin，但 git push 失败，修复权限或网络后重推即可', pushRes, ctx)
 
+  if ((!partial.hadValidFileCoords || provisionedNewProject) && fs && typeof fs.writeText === 'function') {
+    try {
+      const target = typeof fs.resolve === 'function' ? await fs.resolve(YUNXIAO_CONFIG_REL, cwd ? { cwd } : undefined) : (cwd ? cwd.replace(/\/+$/, '') + '/' : '') + YUNXIAO_CONFIG_REL
+      const yamlContent = formatYunxiaoConfigYaml({
+        organizationId, projectId, ...(customCode ? { customCode } : {}),
+        repositoryId: String(built.identity.id),
+        ...(partial.namespaceId ? { namespaceId: partial.namespaceId } : {}),
+        ...(partial.templateId ? { templateId: partial.templateId } : {}),
+        apiBaseUrl: partial.apiBaseUrl, webBaseUrl: partial.webBaseUrl,
+      })
+      await fs.writeText(target, yamlContent)
+    } catch { /* best-effort 写入 */ }
+  }
+
   learnYunxiaoContextFor(
-    { cwd, refId: coords.refId },
-    { organizationId: coords.organizationId, projectId: coords.projectId, webBaseUrl: coords.webBaseUrl, codeupRepo: built.identity, currentUser: { id: userId, name: userName } },
+    { cwd, refId },
+    {
+      organizationId, projectId, ...(customCode ? { customCode } : {}),
+      apiBaseUrl: partial.apiBaseUrl, webBaseUrl: partial.webBaseUrl,
+      ...(tokenRes.token ? { token: tokenRes.token } : {}),
+      codeupRepo: built.identity,
+      currentUser: { id: userId, name: userName, ...(lastOrganization ? { lastOrganization } : {}) },
+    },
   )
   const repoUrl = built.identity.webUrl || built.cloneUrl.replace(/\.git$/i, '').replace(/\/+$/, '')
-  return { ok: true, data: { backend: 'yunxiao', refId: coords.refId, name: built.identity.pathWithNamespace || name, url: repoUrl } }
+  return { ok: true, data: { backend: 'yunxiao', refId, name: built.identity.pathWithNamespace || name, url: repoUrl } }
 }
 
 export default initProject

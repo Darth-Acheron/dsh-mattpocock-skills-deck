@@ -20,7 +20,7 @@ import { PAGINATION } from '../../../contract/pagination.js'
 import { normalizeColor } from '../../../../shared/label-color/src/colors.js'
 import { fail } from '../../../kernel/preflight.js'
 import { GITLAB_READ_TIMEOUT_MS, GITLAB_PROBE_TIMEOUT_MS } from '../../../../shared/time-config/src/values.js'
-import { hasNextYunxiaoPage, type YunxiaoCtx, type YunxiaoHttpResult } from '../client.js'
+import { hasNextYunxiaoPage, type YunxiaoCtx, type YunxiaoHttpResult, type YunxiaoResponseHeaders } from '../client.js'
 import { asRecord, errMsg, failYunxiao } from '../errors.js'
 import {
   classifyYunxiaoIssueInput, getScopeCustomCode, rememberYunxiaoIssueIdentity,
@@ -28,13 +28,14 @@ import {
 } from '../model/description-markers.js'
 import { toIsoTimestamp } from '../model/normalize.js'
 import {
-  getLearnedYunxiaoContext, learnYunxiaoContextFor, parseYunxiaoProjectPayload,
+  getLearnedYunxiaoContext, learnYunxiaoContextFor,
   parseYunxiaoRefId, repoRefId,
 } from '../model/repo-identity.js'
 import { resolveYunxiaoCoordinates } from '../model/workspace-config.js'
+import { probeYunxiaoProjexProject } from '../repo/current-user.js'
 import { looksLikeYunxiaoProjectRef } from '../repo/identity.js'
 import {
-  requestProjectGet, requestProjectLabelCreate, requestProjectLabelsList,
+  requestProjectLabelCreate, requestProjectLabelsList,
   requestWorkitemCommentsList, requestWorkitemGet,
 } from '../requests.js'
 
@@ -111,7 +112,7 @@ export function normalizeLabelInputs(labels: unknown): Label[] {
   return out
 }
 
-/** 获取项目代号 customCode（优先读缓存与本地配置，未命中时调 GetProject）。 */
+/** 获取项目代号 customCode（优先读缓存与本地配置，未命中时调 probeYunxiaoProjexProject）。 */
 export async function ensureProjectCustomCode(opCtx: CtxLike | null | undefined, proj: ResolvedProjectRef): Promise<string> {
   const fromLearned = getLearnedYunxiaoContext(proj.refId)?.customCode || (opCtx?.cwd ? getLearnedYunxiaoContext(opCtx.cwd)?.customCode : '') || getScopeCustomCode(proj.refId) || ''
   if (fromLearned) return fromLearned
@@ -122,15 +123,8 @@ export async function ensureProjectCustomCode(opCtx: CtxLike | null | undefined,
       return coords.value.customCode
     }
   }
-  const res = await requestProjectGet(opCtx, proj.organizationId, proj.projectId, GITLAB_PROBE_TIMEOUT_MS)
-  if (res.ok) {
-    const parsed = parseYunxiaoProjectPayload(res.data)
-    if (parsed?.customCode) {
-      learnYunxiaoContextFor({ cwd: opCtx?.cwd, refId: proj.refId }, { organizationId: proj.organizationId, projectId: proj.projectId, customCode: parsed.customCode, ...(parsed.projectName ? { projectName: parsed.projectName } : {}) })
-      return parsed.customCode
-    }
-  }
-  return ''
+  const probed = await probeYunxiaoProjexProject(opCtx, proj.organizationId, proj.projectId, GITLAB_PROBE_TIMEOUT_MS, { cwd: opCtx?.cwd, refId: proj.refId })
+  return probed.ok ? probed.project.customCode : ''
 }
 
 /** 将调用方传入的票号（纯数字、DCIAFS-2 或 26 位 ID）转换为读接口可接受的路径参数。 */
@@ -182,6 +176,44 @@ export function needsDetailEnrichment(raw: RawBag): boolean {
   return typeof raw['description'] !== 'string' || (raw['formatType'] === null && raw['description'] === '')
 }
 
+/**
+ * 统一判定云效分页响应是否还有下一页：
+ *   - 当响应头明确带了 xPage 与 xTotalPages 时，严格以 hasNextYunxiaoPage（xPage < xTotalPages）为准（防止单页恰好等于 perPage 时误判还有下一页）；
+ *   - 仅当分页响应头缺失时，以返回行数是否填满 perPage（rowCount >= perPage）作为继续翻页的保守兜底。
+ */
+export function hasMoreYunxiaoPage(
+  headers: Partial<YunxiaoResponseHeaders> | null | undefined,
+  rowCount: number,
+  perPage: number,
+): boolean {
+  const hasHeaders = Boolean(headers && typeof headers.xPage === 'number' && typeof headers.xTotalPages === 'number')
+  return hasHeaders ? hasNextYunxiaoPage(headers) : rowCount >= perPage
+}
+
+/** 受控并发执行池：供列表详情补齐、原生依赖图探测与标签改色批量写共用。 */
+export async function runWithLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  if (items.length === 0) return results
+  let next = 0
+  const lanes = Math.max(1, Math.min(limit, items.length))
+  const runners: Promise<void>[] = []
+  for (let i = 0; i < lanes; i++) {
+    runners.push((async () => {
+      for (;;) {
+        const idx = next++
+        if (idx >= items.length) return
+        results[idx] = await worker(items[idx], idx)
+      }
+    })())
+  }
+  await Promise.all(runners)
+  return results
+}
+
 /** 为列表项按需并发补齐完整工作项详情（限制并发数为 PAGINATION.gitlab.labelWriteConcurrencyMax，确保文件头标记与标签不丢失）。 */
 export async function enrichWorkitemListDetails(opCtx: CtxLike | null | undefined, proj: ResolvedProjectRef, items: RawBag[]): Promise<RawBag[]> {
   const out = items.slice()
@@ -191,30 +223,19 @@ export async function enrichWorkitemListDetails(opCtx: CtxLike | null | undefine
     if (needsDetailEnrichment(out[i])) indices.push(i)
   }
   if (indices.length === 0) return out
-  const concurrency = Math.min(DETAIL_CONCURRENCY, indices.length)
-  let cursor = 0
-  const workers: Promise<void>[] = []
-  for (let w = 0; w < concurrency; w++) {
-    workers.push((async () => {
-      for (;;) {
-        const pos = cursor++
-        if (pos >= indices.length) return
-        const idx = indices[pos]
-        const item = out[idx]
-        const idOrSerial = (typeof item['id'] === 'string' && item['id'].trim()) || (typeof item['serialNumber'] === 'string' && item['serialNumber'].trim()) || ''
-        if (!idOrSerial) continue
-        try {
-          const res = await requestWorkitemGet(opCtx, proj.organizationId, idOrSerial, GITLAB_READ_TIMEOUT_MS)
-          const fullBag = res.ok ? asRecord(res.data) : null
-          if (fullBag) {
-            rememberYunxiaoIssueIdentity(proj.refId, { id: fullBag['id'] ?? item['id'], serialNumber: fullBag['serialNumber'] ?? item['serialNumber'] })
-            out[idx] = { ...item, ...fullBag }
-          }
-        } catch { /* best-effort */ }
+  await runWithLimit(indices, DETAIL_CONCURRENCY, async (idx) => {
+    const item = out[idx]
+    const idOrSerial = (typeof item['id'] === 'string' && item['id'].trim()) || (typeof item['serialNumber'] === 'string' && item['serialNumber'].trim()) || ''
+    if (!idOrSerial) return
+    try {
+      const res = await requestWorkitemGet(opCtx, proj.organizationId, idOrSerial, GITLAB_READ_TIMEOUT_MS)
+      const fullBag = res.ok ? asRecord(res.data) : null
+      if (fullBag) {
+        rememberYunxiaoIssueIdentity(proj.refId, { id: fullBag['id'] ?? item['id'], serialNumber: fullBag['serialNumber'] ?? item['serialNumber'] })
+        out[idx] = { ...item, ...fullBag }
       }
-    })())
-  }
-  await Promise.all(workers)
+    } catch { /* best-effort */ }
+  })
   return out
 }
 

@@ -20,7 +20,6 @@ import { LIST_TRUNCATED_REASON, TRACKER_ERROR_STAGE, type IssueDetailResult, typ
 import { PAGINATION } from '../../../contract/pagination.js'
 import { fail } from '../../../kernel/preflight.js'
 import { GITLAB_SLOW_READ_TIMEOUT_MS } from '../../../../shared/time-config/src/values.js'
-import { hasNextYunxiaoPage } from '../client.js'
 import { failYunxiao } from '../errors.js'
 import { classifyYunxiaoIssueInput, resolveYunxiaoIssueKey } from '../model/description-markers.js'
 import { enrichYunxiaoIssuesGraph } from '../graph/read.js'
@@ -33,6 +32,7 @@ import {
   enrichWorkitemListDetails,
   errMsg,
   fetchRawWorkitem,
+  hasMoreYunxiaoPage,
   resolveLabelFilterConditions,
   resolveProjectRef,
   type CtxLike,
@@ -144,7 +144,7 @@ export async function listIssues(
     await enrichYunxiaoIssuesGraph(effective, proj, enrichedRows, allIssues)
     const filtered = allIssues.filter((iss) => filterMatchesIssue(iss, filter, proj.refId))
 
-    const hasMore = hasNextYunxiaoPage(res.headers) || rawRows.length >= LIST_PER_PAGE
+    const hasMore = hasMoreYunxiaoPage(res.headers, rawRows.length, LIST_PER_PAGE)
     const out: IssueListResult = { ok: true, data: filtered }
     if (hasMore) {
       emitReadDegraded(effective, 'list', LIST_TRUNCATED_REASON, Date.now() - t0)

@@ -19,7 +19,7 @@ import type { SubIssueListResult } from '../../../contract/results.js'
 import { PAGINATION } from '../../../contract/pagination.js'
 import { fail } from '../../../kernel/preflight.js'
 import { GITLAB_READ_TIMEOUT_MS, GITLAB_SLOW_READ_TIMEOUT_MS } from '../../../../shared/time-config/src/values.js'
-import { hasNextYunxiaoPage, type YunxiaoHttpResult } from '../client.js'
+import type { YunxiaoHttpResult } from '../client.js'
 import { asRecord, classifyYunxiaoError, errMsg, failYunxiao } from '../errors.js'
 import {
   classifyYunxiaoIssueInput,
@@ -35,6 +35,7 @@ import {
   enrichWorkitemListDetails,
   extractRelationWorkitemId,
   fetchRawWorkitem,
+  hasMoreYunxiaoPage,
   resolveProjectRef,
   type CtxLike,
   type RawBag,
@@ -191,7 +192,7 @@ export async function listSubIssues(
       }
 
       if (capped) break
-      if (!hasNextYunxiaoPage(searchRes.headers) && rawPage.length < PAGE_SIZE) break
+      if (!hasMoreYunxiaoPage(searchRes.headers, rawPage.length, PAGE_SIZE)) break
     }
 
     // 4) 若原生 SUB 关系记录中有未出现在当前搜索列表中的子工作项，按 ID 逐张拉取补齐

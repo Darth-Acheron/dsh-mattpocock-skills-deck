@@ -19,6 +19,7 @@ import { fail } from '../../../kernel/preflight.js'
 import { GITLAB_SLOW_READ_TIMEOUT_MS } from '../../../../shared/time-config/src/values.js'
 import { hasNextYunxiaoPage } from '../client.js'
 import { failYunxiao } from '../errors.js'
+import { enrichYunxiaoIssuesGraph } from '../graph/read.js'
 import { normalizeYunxiaoIssue } from '../model/normalize.js'
 import { requestWorkitemsSearch } from '../requests.js'
 import { emitReadDegraded } from '../support/read-log.js'
@@ -130,6 +131,7 @@ export async function listPage(
 
     const enriched = await enrichWorkitemListDetails(effective, proj, rawRows)
     let items: Issue[] = enriched.map((r) => normalizeYunxiaoIssue(r, repo))
+    await enrichYunxiaoIssuesGraph(effective, proj, enriched, items)
     const wantState = filter && (filter.state === 'open' || filter.state === 'closed') ? filter.state : ''
     if (wantState) {
       items = items.filter((iss) => iss.state === wantState)

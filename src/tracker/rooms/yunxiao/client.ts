@@ -17,6 +17,7 @@ import type { OutboundBucket, OutboundControl } from '../../contract/outbound.js
 import type { OpResult } from '../../contract/results.js'
 import { maskSecrets } from '../../kernel/error-rules.js'
 import { READ_TIMEOUT_MS, WRITE_TIMEOUT_MS, outboundCooldownOf, outboundFollowUpAdvice, outboundQueueTimeoutOf, queueTimeoutForTier } from '../../kernel/outbound-tiers.js'
+import { getLearnedYunxiaoContext } from './model/repo-identity.js'
 import { DEFAULT_YUNXIAO_API_BASE_URL, loadYunxiaoToken, resolveYunxiaoCoordinates } from './model/workspace-config.js'
 // @ts-expect-error 本域 tsconfig 不加载 @types/node，运行时由 Node 24 内置 node:async_hooks 提供
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -170,12 +171,13 @@ export function yunxiaoClient(ctx?: YunxiaoCtx | null): { request(pathOrUrl: str
   async function request(pathOrUrl: string, opts: YunxiaoRequestOpts = {}): Promise<YunxiaoHttpResult> {
     const emptyHeaders = extractYunxiaoHeaders(null)
     const method = (opts.method || 'GET').toUpperCase() as 'GET' | 'POST' | 'PUT' | 'DELETE'
-    const isWrite = isWriteMethod(method, pathOrUrl)
-    const bucket: OutboundBucket = opts.bucket || (isWrite ? 'write' : 'read')
+    const bucket: OutboundBucket = opts.bucket || (isWriteMethod(method, pathOrUrl) ? 'write' : 'read')
+    const isWrite = bucket === 'write'
     const tierLimit = opts.timeoutMs && opts.timeoutMs > 0 ? opts.timeoutMs : isWrite ? WRITE_TIMEOUT_MS : READ_TIMEOUT_MS
     const cmdLabel = opts.cmd || 'yunxiao:' + method.toLowerCase()
 
-    let apiBaseUrl = opts.apiBaseUrl || (typeof ctx?.apiBaseUrl === 'string' ? ctx.apiBaseUrl.trim() : '')
+    const learned = ctx?.cwd ? getLearnedYunxiaoContext(ctx.cwd) : null
+    let apiBaseUrl = opts.apiBaseUrl || (typeof ctx?.apiBaseUrl === 'string' ? ctx.apiBaseUrl.trim() : '') || (learned?.apiBaseUrl ? learned.apiBaseUrl.trim() : '')
     if (!apiBaseUrl && ctx) {
       const coords = await resolveYunxiaoCoordinates({ cwd: ctx.cwd, fs: ctx.platform?.fs || ctx.fs || null, env: ctx.platform?.env || null })
       if (coords.ok) apiBaseUrl = coords.value.apiBaseUrl
@@ -185,7 +187,7 @@ export function yunxiaoClient(ctx?: YunxiaoCtx | null): { request(pathOrUrl: str
     }
     if (!apiBaseUrl) apiBaseUrl = DEFAULT_YUNXIAO_API_BASE_URL
 
-    let token = typeof opts.token === 'string' ? opts.token.trim() : (typeof ctx?.token === 'string' ? ctx.token.trim() : '')
+    let token = typeof opts.token === 'string' ? opts.token.trim() : (typeof ctx?.token === 'string' ? ctx.token.trim() : '') || (learned?.token ? learned.token.trim() : '')
     if (!token && ctx) {
       const loaded = await loadYunxiaoToken({ env: ctx.platform?.env || null, fs: ctx.platform?.fs || ctx.fs || null, platform: ctx.platform || null })
       token = loaded.token

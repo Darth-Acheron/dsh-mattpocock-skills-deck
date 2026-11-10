@@ -318,8 +318,8 @@ export async function setAssignees(
     return fail(ERROR_KIND.NOTFOUND as ErrorKind, 'setAssignees: repo.refId 缺失或格式不是 organizationId/projectId', '')
   }
   const k = String(key == null ? '' : key).trim()
-  if (!k) {
-    return fail(ERROR_KIND.PARSE as ErrorKind, 'setAssignees: 工作项编号不能为空', '', TRACKER_ERROR_STAGE.INPUT_REFUSED)
+  if (!k || !classifyYunxiaoIssueInput(k)) {
+    return fail(ERROR_KIND.PARSE as ErrorKind, 'setAssignees: 工作项编号不能为空或格式非法', k, TRACKER_ERROR_STAGE.INPUT_REFUSED)
   }
 
   const wanted = extractAssigneeLogins(assignees)

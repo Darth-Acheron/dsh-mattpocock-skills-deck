@@ -15,6 +15,7 @@ import { TRACKER_ERROR_STAGE, type OpResult } from '../../../contract/results.js
 import { fail } from '../../../kernel/preflight.js'
 import { GITLAB_READ_TIMEOUT_MS } from '../../../../shared/time-config/src/values.js'
 import { asRecord, failYunxiao } from '../errors.js'
+import { classifyYunxiaoIssueInput } from '../model/description-markers.js'
 import { normalizeYunxiaoComment } from '../model/normalize.js'
 import { requestWorkitemCommentCreate } from '../requests.js'
 import {
@@ -39,8 +40,8 @@ export async function addComment(
     return fail(ERROR_KIND.NOTFOUND as ErrorKind, 'comment: repo.refId 缺失或格式不是 organizationId/projectId', '')
   }
   const k = String(key == null ? '' : key).trim()
-  if (!k) {
-    return fail(ERROR_KIND.PARSE as ErrorKind, 'comment: 工作项编号不能为空', '', TRACKER_ERROR_STAGE.INPUT_REFUSED)
+  if (!k || !classifyYunxiaoIssueInput(k)) {
+    return fail(ERROR_KIND.PARSE as ErrorKind, 'comment: 工作项编号不能为空或格式非法', k, TRACKER_ERROR_STAGE.INPUT_REFUSED)
   }
   if (typeof body !== 'string' || !body.trim()) {
     return fail(ERROR_KIND.PARSE as ErrorKind, 'comment: 评论内容不能为空', '', TRACKER_ERROR_STAGE.INPUT_REFUSED)

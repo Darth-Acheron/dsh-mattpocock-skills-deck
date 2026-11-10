@@ -655,6 +655,46 @@ async function main(): Promise<void> {
     )
   }
 
+  // 4.8 一体化开仓配置底座：templateId 解析、deriveProjectCustomCode 4~6 位大写字母派生与冲突递增、formatYunxiaoConfigYaml 往返无损及 Projex 模板/建项目端点
+  {
+    const code1 = typeof cfgMod.deriveProjectCustomCode === 'function' ? cfgMod.deriveProjectCustomCode('my-cool-app', 0) : ''
+    const code2 = typeof cfgMod.deriveProjectCustomCode === 'function' ? cfgMod.deriveProjectCustomCode('my-cool-app', 1) : ''
+    const codeShort = typeof cfgMod.deriveProjectCustomCode === 'function' ? cfgMod.deriveProjectCustomCode('x', 0) : ''
+    const yamlText =
+      typeof cfgMod.formatYunxiaoConfigYaml === 'function'
+        ? cfgMod.formatYunxiaoConfigYaml({
+            organizationId: '673db5665c76405a332eebc4',
+            projectId: '8efcbccd3981cb23178fc66bd1',
+            customCode: code1,
+            repositoryId: '7360166',
+            namespaceId: 2076563,
+            templateId: 'tpl-scrum-001',
+          })
+        : ''
+    const reparsed = yamlText ? cfgMod.parseYunxiaoConfigText(yamlText) : { ok: false }
+    const tplPath = typeof queriesMod.projectTemplatesPath === 'function' ? queriesMod.projectTemplatesPath('673db5665c76405a332eebc4') : ''
+    const createProjPath = typeof queriesMod.projectsCreatePath === 'function' ? queriesMod.projectsCreatePath('673db5665c76405a332eebc4') : ''
+    check(
+      /^[A-Z]{4,6}$/.test(code1) &&
+        /^[A-Z]{4,6}$/.test(code2) &&
+        code1 !== code2 &&
+        /^[A-Z]{4,6}$/.test(codeShort) &&
+        reparsed.ok === true &&
+        reparsed.value.organizationId === '673db5665c76405a332eebc4' &&
+        reparsed.value.projectId === '8efcbccd3981cb23178fc66bd1' &&
+        reparsed.value.customCode === code1 &&
+        reparsed.value.repositoryId === '7360166' &&
+        reparsed.value.namespaceId === 2076563 &&
+        reparsed.value.templateId === 'tpl-scrum-001' &&
+        tplPath === '/oapi/v1/projex/organizations/673db5665c76405a332eebc4/projectTemplates' &&
+        createProjPath === '/oapi/v1/projex/organizations/673db5665c76405a332eebc4/projects' &&
+        typeof requestsMod.requestProjectTemplatesList === 'function' &&
+        typeof requestsMod.requestProjectCreate === 'function',
+      '4.8 支持 templateId 配置、deriveProjectCustomCode 4~6 位大写字母派生与冲突递增、formatYunxiaoConfigYaml 往返解析及 Projex 模板/建项目端点',
+      { code1, code2, codeShort, reparsed, tplPath, createProjPath },
+    )
+  }
+
   console.log('')
   console.log(failed ? '存在失败 — ' + GATE + ' 未通过' : '全部通过（' + total + ' 项断言）')
   printGateResult(GATE, total, failed)

@@ -13,9 +13,9 @@ import type { YunxiaoCtx, YunxiaoHttpResult } from './client.js'
 import {
   allWorkitemTypesPath, codeupRepositoriesCreatePath, codeupRepositoryPath,
   platformOrganizationsPath, platformUserPath, projectLabelItemPath, projectLabelsPath,
-  projectMembersPath, projectPath, projectsSearchPath, projectWorkitemTypesPath,
-  workitemCommentsPath, workitemFieldConfigPath, workitemPath, workitemRelationRecordsPath,
-  workitemRelationTypesPath, workitemsCreatePath, workitemsSearchPath,
+  projectMembersPath, projectPath, projectsCreatePath, projectsSearchPath, projectTemplatesPath,
+  projectWorkitemTypesPath, workitemCommentsPath, workitemFieldConfigPath, workitemPath,
+  workitemRelationRecordsPath, workitemRelationTypesPath, workitemsCreatePath, workitemsSearchPath,
   workitemWorkflowInfoPath, workitemWorkflowPath,
 } from './queries.js'
 
@@ -40,6 +40,20 @@ export function requestProjectGet(opCtx: MaybeCtx, organizationId: string, proje
 /** 搜索 Yunxiao Projex 项目列表：POST .../projects:search。 */
 export function requestProjectsSearch(opCtx: MaybeCtx, organizationId: string, body: Record<string, unknown>, timeoutMs: number): Promise<YunxiaoHttpResult> {
   return yunxiaoClient(opCtx).request(projectsSearchPath(organizationId), { method: 'POST', body, timeoutMs, cmd: 'projex:projects-search', bucket: 'read' })
+}
+
+/** 查询组织下可用的 Yunxiao Projex 项目模板列表：GET .../projectTemplates。 */
+export function requestProjectTemplatesList(opCtx: MaybeCtx, organizationId: string, timeoutMs: number): Promise<YunxiaoHttpResult> {
+  return yunxiaoClient(opCtx).request(projectTemplatesPath(organizationId), { method: 'GET', timeoutMs, cmd: 'projex:project-templates', bucket: 'read' })
+}
+
+export interface YunxiaoCreateProjectBody {
+  name: string; customCode: string; scope: 'public' | 'private'; templateId: string; description?: string; customFieldValues?: Record<string, unknown>
+}
+
+/** 创建 Yunxiao Projex 项目：POST .../projects。 */
+export function requestProjectCreate(opCtx: MaybeCtx, organizationId: string, body: YunxiaoCreateProjectBody, timeoutMs: number): Promise<YunxiaoHttpResult> {
+  return yunxiaoClient(opCtx).request(projectsCreatePath(organizationId), { method: 'POST', body, timeoutMs, cmd: 'projex:project-create', bucket: 'write' })
 }
 
 /** 查询 Yunxiao Projex 项目成员列表：GET .../projects/{projectId}/members。 */

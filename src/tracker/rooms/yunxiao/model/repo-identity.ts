@@ -71,6 +71,7 @@ export interface LearnedYunxiaoContext {
   projectName?: string
   apiBaseUrl?: string
   webBaseUrl?: string
+  token?: string
   codeupRepo?: CodeupRepositoryIdentity | null
   currentUser?: {
     id: string

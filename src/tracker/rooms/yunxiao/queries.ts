@@ -39,6 +39,16 @@ export function projectsSearchPath(organizationId: string): string {
   return '/oapi/v1/projex' + orgPrefix(organizationId) + '/projects:search'
 }
 
+/** Yunxiao Projex 项目创建路径：POST /oapi/v1/projex/organizations/{orgId}/projects。 */
+export function projectsCreatePath(organizationId: string): string {
+  return '/oapi/v1/projex' + orgPrefix(organizationId) + '/projects'
+}
+
+/** Yunxiao Projex 项目模板列表路径：GET /oapi/v1/projex/organizations/{orgId}/projectTemplates。 */
+export function projectTemplatesPath(organizationId: string): string {
+  return '/oapi/v1/projex' + orgPrefix(organizationId) + '/projectTemplates'
+}
+
 /** Yunxiao Projex 项目成员列表路径：GET .../projects/{projectId}/members。 */
 export function projectMembersPath(organizationId: string, projectId: string, query = ''): string {
   return appendQuery(projectPath(organizationId, projectId) + '/members', query)

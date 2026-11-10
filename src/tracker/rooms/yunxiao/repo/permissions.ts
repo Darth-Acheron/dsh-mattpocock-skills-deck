@@ -1,16 +1,13 @@
 /**
- * src/tracker/rooms/yunxiao/repo/permissions.ts —— Yunxiao backend 仓库与项目权限核验（规格 #02）。
+ * src/tracker/rooms/yunxiao/repo/permissions.ts —— Yunxiao backend 仓库与项目权限核验（规格 #02 + 架构加深 Candidate 1）。
  *
  * 为什么 Yunxiao backend 的 `triage` 与 `push` 必须分别依据 Yunxiao Projex 与 Codeup 的角色档位判定：
- *   1. 在云效中，工作项托管在 Yunxiao Projex 项目（`projectId`），代码托管在 Codeup 仓库（`repositoryId`）；
- *      只要 `GetProject` 成功返回项目对象（确认当前令牌对该 Projex 项目有访问权），即可整理与操作工作项（`triage: true`）。
- *   2. 真机实测（Wayfinder #10）证实：当用户按最小权限原则配置「代码仓库：只读」令牌时，即使该用户在
- *      Codeup 仓库中的真实角色为管理员（`accessLevel: "40"`），`GetRepository` 返回的 `allowPush`
- *      仍恒为 `false`，且 `permissions.groupAccess` 与 `permissions.projectAccess` 均为 `null`。
- *      因此判断用户是否具备代码推送角色（`push`），必须且只能依据 `archived !== true && Number(accessLevel) >= 30`
- *      （30=Developer，40=Master/Admin；20=Reporter 只读），绝不能被 `allowPush: false` 误导！
- *   3. 当工作区是无代码库的纯 Yunxiao Projex 规划工作区时，没有关联的 Codeup 仓库，直接返回
- *      `{ push: false, triage: true }`。
+ *   1. 工作项托管在 Yunxiao Projex 项目（`projectId`），只要 `probeYunxiaoProjexProject` 成功返回项目对象，
+ *      即可整理与操作工作项（`triage: true`）。
+ *   2. 真机实测（Wayfinder #10）证实：当用户配置「代码仓库：只读」令牌时，`GetRepository` 返回的 `allowPush`
+ *      仍恒为 `false`。因此判断用户是否具备代码推送角色（`push`），必须且只能依据
+ *      `archived !== true && Number(accessLevel) >= 30`。
+ *   3. 当工作区是无代码库的纯 Yunxiao Projex 规划工作区时，直接返回 `{ push: false, triage: true }`。
  */
 
 import { ERROR_KIND } from '../../../contract/vocabulary.js'
@@ -22,15 +19,10 @@ import { fail } from '../../../kernel/preflight.js'
 import { GITLAB_READ_TIMEOUT_MS } from '../../../../shared/time-config/src/values.js'
 import type { YunxiaoCtx } from '../client.js'
 import { errMsg, failYunxiao } from '../errors.js'
-import {
-  learnYunxiaoContextFor,
-  parseYunxiaoProjectPayload,
-  parseYunxiaoRefId,
-  repoRefId,
-} from '../model/repo-identity.js'
+import { parseYunxiaoRefId, repoRefId } from '../model/repo-identity.js'
 import { resolveYunxiaoCoordinates } from '../model/workspace-config.js'
-import { requestProjectGet } from '../requests.js'
 import { emitReadDegraded } from '../support/read-log.js'
+import { probeYunxiaoProjexProject } from './current-user.js'
 import { looksLikeYunxiaoProjectRef, resolveCodeupRepositoryIdentity } from './identity.js'
 
 /** Codeup 允许推送代码的最低角色档位：Developer (30)。 */
@@ -71,42 +63,27 @@ export async function getRepoPermissions(
         : (ctx as YunxiaoCtx)
 
     // 1) 校验 Yunxiao Projex 项目访问权限（决定 triage）
-    const projRes = await requestProjectGet(
+    const projProbed = await probeYunxiaoProjexProject(
       reqCtx,
       parsedRef.organizationId,
       parsedRef.projectId,
       GITLAB_READ_TIMEOUT_MS,
-    )
-    if (!projRes.ok) {
-      const failed = failYunxiao(
-        projRes,
-        projRes.stderr || projRes.stdout || 'getRepoPermissions: GetProject 请求失败',
-        projRes,
-        ctx,
-      )
-      emitReadDegraded(ctx, 'permissions', 'permissions:transport', Date.now() - t0, failed.error.kind)
-      return failed
-    }
-
-    const projParsed = parseYunxiaoProjectPayload(projRes.data)
-    if (!projParsed) {
-      emitReadDegraded(ctx, 'permissions', 'permissions:json', Date.now() - t0, ERROR_KIND.PARSE)
-      return fail(
-        ERROR_KIND.PARSE as ErrorKind,
-        'getRepoPermissions: GetProject 回包不是有效的项目对象',
-        projRes.stdout,
-      )
-    }
-
-    learnYunxiaoContextFor(
       { cwd, refId },
-      {
-        organizationId: parsedRef.organizationId,
-        projectId: parsedRef.projectId,
-        ...(projParsed.customCode ? { customCode: projParsed.customCode } : {}),
-        ...(projParsed.projectName ? { projectName: projParsed.projectName } : {}),
-      },
     )
+    if (!projProbed.ok) {
+      if (projProbed.kind === 'transport') {
+        const failed = failYunxiao(
+          projProbed.response,
+          projProbed.response.stderr || projProbed.response.stdout || 'getRepoPermissions: GetProject 请求失败',
+          projProbed.response,
+          ctx,
+        )
+        emitReadDegraded(ctx, 'permissions', 'permissions:transport', Date.now() - t0, failed.error.kind)
+        return failed
+      }
+      emitReadDegraded(ctx, 'permissions', 'permissions:json', Date.now() - t0, ERROR_KIND.PARSE)
+      return fail(ERROR_KIND.PARSE as ErrorKind, 'getRepoPermissions: GetProject 回包不是有效的项目对象', projProbed.response.stdout)
+    }
 
     // 2) 检查是否关联了 Codeup 仓库（决定 push）
     const codeupResolved = await resolveCodeupRepositoryIdentity({
@@ -119,14 +96,7 @@ export async function getRepoPermissions(
     })
 
     if (!codeupResolved.associated) {
-      // 无代码库的纯 Yunxiao Projex 规划工作区：triage=true, push=false
-      return {
-        ok: true,
-        data: {
-          push: false,
-          triage: true,
-        },
-      }
+      return { ok: true, data: { push: false, triage: true } }
     }
 
     if (!codeupResolved.ok) {
@@ -151,13 +121,7 @@ export async function getRepoPermissions(
     }
 
     const canPush = identity.archived !== true && identity.accessLevel >= CODEUP_PUSH_MIN_ACCESS_LEVEL
-    return {
-      ok: true,
-      data: {
-        push: canPush,
-        triage: true,
-      },
-    }
+    return { ok: true, data: { push: canPush, triage: true } }
   } catch (err: unknown) {
     const failed = failYunxiao(err, errMsg(err), err, ctx)
     emitReadDegraded(ctx, 'permissions', 'permissions:transport', Date.now() - t0, failed.error.kind)

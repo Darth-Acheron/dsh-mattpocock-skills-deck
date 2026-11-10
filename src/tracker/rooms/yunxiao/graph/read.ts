@@ -21,7 +21,6 @@ import { TRACKER_ERROR_STAGE, type DependenciesResult, type TrackerError } from 
 import { PAGINATION } from '../../../contract/pagination.js'
 import { fail } from '../../../kernel/preflight.js'
 import { GITLAB_READ_TIMEOUT_MS, GITLAB_SLOW_READ_TIMEOUT_MS } from '../../../../shared/time-config/src/values.js'
-import { hasNextYunxiaoPage } from '../client.js'
 import { errMsg, failYunxiao } from '../errors.js'
 import {
   classifyYunxiaoIssueInput,
@@ -42,7 +41,9 @@ import {
   enrichWorkitemListDetails,
   extractRelationWorkitemId,
   fetchRawWorkitem,
+  hasMoreYunxiaoPage,
   resolveProjectRef,
+  runWithLimit,
   type CtxLike,
   type RawBag,
   type RepoLike,
@@ -224,36 +225,25 @@ export async function enrichYunxiaoIssuesGraph(
   }
 
   // 2) 受控并发探测每张票的原生 DEPEND_ON 关系记录，并与正文阻塞标记合并后富化阻塞方的标题与 open/closed 状态
-  const concurrency = Math.min(GRAPH_CONCURRENCY, issues.length)
-  let cursor = 0
-  const workers: Promise<void>[] = []
-  for (let w = 0; w < concurrency; w++) {
-    workers.push((async () => {
-      for (;;) {
-        const idx = cursor++
-        if (idx >= issues.length) return
-        const iss = issues[idx]
-        const r = rawRows[idx]
-        if (!iss || !r) continue
-        const wid = (typeof r['id'] === 'string' && r['id'].trim()) || resolveYunxiaoWorkitemId(proj.refId, iss.key) || ''
-        let nativeTargets: string[] = []
-        if (wid) {
-          const probe = await probeNativeRelationTargets(opCtx, proj, wid, 'DEPEND_ON')
-          if (probe.probeFailed) throw probe.error || new Error('原生 DEPEND_ON 关系读取失败')
-          nativeTargets = probe.targetIds
-        }
-        const bodyTargets = (iss.blockedBy || []).map((b) => b.key).filter(Boolean)
-        const combined = [...nativeTargets]
-        for (const bt of bodyTargets) {
-          if (bt && !combined.includes(bt)) combined.push(bt)
-        }
-        if (combined.length > 0) {
-          iss.blockedBy = await resolveIssueRefsWithState(opCtx, proj, combined, knownRaw)
-        }
-      }
-    })())
-  }
-  await Promise.all(workers)
+  await runWithLimit(issues, GRAPH_CONCURRENCY, async (iss, idx) => {
+    const r = rawRows[idx]
+    if (!iss || !r) return
+    const wid = (typeof r['id'] === 'string' && r['id'].trim()) || resolveYunxiaoWorkitemId(proj.refId, iss.key) || ''
+    let nativeTargets: string[] = []
+    if (wid) {
+      const probe = await probeNativeRelationTargets(opCtx, proj, wid, 'DEPEND_ON')
+      if (probe.probeFailed) throw probe.error || new Error('原生 DEPEND_ON 关系读取失败')
+      nativeTargets = probe.targetIds
+    }
+    const bodyTargets = (iss.blockedBy || []).map((b) => b.key).filter(Boolean)
+    const combined = [...nativeTargets]
+    for (const bt of bodyTargets) {
+      if (bt && !combined.includes(bt)) combined.push(bt)
+    }
+    if (combined.length > 0) {
+      iss.blockedBy = await resolveIssueRefsWithState(opCtx, proj, combined, knownRaw)
+    }
+  })
   return issues
 }
 
@@ -296,10 +286,7 @@ export async function scanProjectBlockingSnapshot(
       if (rawRows.length === 0) break
       const enriched = await enrichWorkitemListDetails(opCtx, proj, rawRows)
       allEnriched.push(...enriched)
-      // 分页头齐全时严格按 xPage < xTotalPages；只有分页头缺失时，才用满页表示“可能还有”并继续读。
-      const hasPaginationHeaders = typeof res.headers.xPage === 'number' && typeof res.headers.xTotalPages === 'number'
-      const hasMore = hasPaginationHeaders ? hasNextYunxiaoPage(res.headers) : rawRows.length >= SCAN_PAGE_SIZE
-      if (!hasMore) break
+      if (!hasMoreYunxiaoPage(res.headers, rawRows.length, SCAN_PAGE_SIZE)) break
       if (page === SCAN_MAX_PAGES) complete = false
     }
 

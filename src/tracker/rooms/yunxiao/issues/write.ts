@@ -21,13 +21,14 @@ import { fail } from '../../../kernel/preflight.js'
 import { GITLAB_READ_TIMEOUT_MS } from '../../../../shared/time-config/src/values.js'
 import { asRecord, failYunxiao, isRelationMatrixConstraintError } from '../errors.js'
 import {
-  parseHiddenIssueKind, rememberYunxiaoIssueIdentity, rewriteDescriptionWithAssignees,
+  classifyYunxiaoIssueInput, parseHiddenIssueKind, rememberYunxiaoIssueIdentity, rewriteDescriptionWithAssignees,
   rewriteDescriptionWithHiddenParent, rewriteDescriptionWithIssueKind, withAnchor,
 } from '../model/description-markers.js'
-import { getLearnedYunxiaoContext, learnYunxiaoContextFor } from '../model/repo-identity.js'
+import { getLearnedYunxiaoContext } from '../model/repo-identity.js'
 import { normalizeYunxiaoIssue } from '../model/normalize.js'
+import { probeYunxiaoPlatformUser } from '../repo/current-user.js'
 import {
-  requestPlatformUser, requestProjectMembers, requestProjectWorkitemTypes,
+  requestProjectMembers, requestProjectWorkitemTypes,
   requestWorkitemCreate, requestWorkitemRelationRecordCreate, requestWorkitemUpdate,
   requestWorkitemWorkflow, requestWorkitemWorkflowInfo, type YunxiaoCreateWorkitemBody,
 } from '../requests.js'
@@ -39,20 +40,20 @@ import {
   type CtxLike, type RepoLike, type ResolvedProjectRef,
 } from './shared.js'
 
-/** 获取当前令牌用户的 24 位云效 userId（优先读缓存，未命中时调 GET /oapi/v1/platform/user）。 */
+/** 获取当前令牌用户的 24 位云效 userId（优先读缓存，未命中时调 probeYunxiaoPlatformUser）。 */
 export async function ensureCurrentUserId(
   opCtx: CtxLike | null | undefined, proj: ResolvedProjectRef,
 ): Promise<{ ok: true; userId: string; name: string } | { ok: false; error: TrackerError }> {
   const learned = getLearnedYunxiaoContext(proj.refId)?.currentUser || (opCtx?.cwd ? getLearnedYunxiaoContext(opCtx.cwd)?.currentUser : undefined)
   if (learned?.id) return { ok: true, userId: learned.id, name: learned.name || learned.id }
-  const res = await requestPlatformUser(opCtx, GITLAB_READ_TIMEOUT_MS)
-  if (!res.ok) return failYunxiao(res, res.stderr || res.stdout || '查询当前云效用户失败', res, opCtx ?? undefined)
-  const bag = asRecord(res.data)
-  const id = bag && typeof bag['id'] === 'string' ? bag['id'].trim() : ''
-  const name = bag && typeof bag['name'] === 'string' ? bag['name'].trim() : id
-  if (!id) return fail(ERROR_KIND.PARSE as ErrorKind, 'GET /oapi/v1/platform/user 响应缺少有效的用户 id', res.stdout)
-  learnYunxiaoContextFor({ cwd: opCtx?.cwd, refId: proj.refId }, { organizationId: proj.organizationId, projectId: proj.projectId, currentUser: { id, name } })
-  return { ok: true, userId: id, name }
+  const probed = await probeYunxiaoPlatformUser(opCtx, GITLAB_READ_TIMEOUT_MS, {
+    cwd: opCtx?.cwd, refId: proj.refId, organizationId: proj.organizationId, projectId: proj.projectId,
+  })
+  if (!probed.ok) {
+    if (probed.kind === 'transport') return failYunxiao(probed.response, probed.response.stderr || probed.response.stdout || '查询当前云效用户失败', probed.response, opCtx ?? undefined)
+    return fail(ERROR_KIND.PARSE as ErrorKind, 'GET /oapi/v1/platform/user 响应缺少有效的用户 id', probed.response.stdout)
+  }
+  return { ok: true, userId: probed.user.id, name: probed.user.name }
 }
 
 /** 查询项目下指定 category（Req / Task / Bug）启用的默认工作项类型 ID。 */
@@ -259,7 +260,7 @@ async function transitionWorkitemStage(
   const proj = resolveProjectRef(repo as RepoLike)
   if (!proj) return fail(ERROR_KIND.NOTFOUND as ErrorKind, opLabel + ': repo.refId 缺失或格式不是 organizationId/projectId', '')
   const k = String(key == null ? '' : key).trim()
-  if (!k) return fail(ERROR_KIND.PARSE as ErrorKind, opLabel + ': 工作项编号不能为空', '', TRACKER_ERROR_STAGE.INPUT_REFUSED)
+  if (!k || !classifyYunxiaoIssueInput(k)) return fail(ERROR_KIND.PARSE as ErrorKind, opLabel + ': 工作项编号不能为空或格式非法', k, TRACKER_ERROR_STAGE.INPUT_REFUSED)
   try {
     const fetched = await fetchRawWorkitem(effective, proj, k)
     if (!fetched.ok) return { ok: false, error: fetched.error }
@@ -293,7 +294,7 @@ export async function updateIssue(ctx: BackendContext, repo: RepositoryRef, key:
   const proj = resolveProjectRef(repo as RepoLike)
   if (!proj) return fail(ERROR_KIND.NOTFOUND as ErrorKind, 'update: repo.refId 缺失或格式不是 organizationId/projectId', '')
   const k = String(key == null ? '' : key).trim()
-  if (!k) return fail(ERROR_KIND.PARSE as ErrorKind, 'update: 工作项编号不能为空', '', TRACKER_ERROR_STAGE.INPUT_REFUSED)
+  if (!k || !classifyYunxiaoIssueInput(k)) return fail(ERROR_KIND.PARSE as ErrorKind, 'update: 工作项编号不能为空或格式非法', k, TRACKER_ERROR_STAGE.INPUT_REFUSED)
   if (!patch || typeof patch !== 'object') return fail(ERROR_KIND.PARSE as ErrorKind, 'update: patch 不能为空', '', TRACKER_ERROR_STAGE.INPUT_REFUSED)
   try {
     if ('milestone' in patch && patch.milestone !== undefined) return fail(ERROR_KIND.UNSUPPORTED as ErrorKind, 'Yunxiao Projex 暂不支持 milestone 字段更新', JSON.stringify(patch.milestone))
