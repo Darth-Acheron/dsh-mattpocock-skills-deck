@@ -23,13 +23,13 @@ const path = require('path')
 const fs = require('fs')
 const os = require('os')
 const { pathToFileURL } = require('url')
-const { makeScriptedGh, makeScriptedGlab } = require('./deck-tools-matrix-transports.js')
+const { makeScriptedGh, makeScriptedGlab } = require('./deck-tools-matrix-transports.ts')
 // #1299 T8：双轨链路要核对「首行 /implement 能用」，模板正文的真源是提示词配置（与 verify-1281 同一条读取路径）。
 const promptConfig = require('../scripts/lib/prompt-config.mts')
 // 夹具口（写法见 tests/lib/deck-decide-stub.js 开头）：#1138 之后「用户选过哪个后端」只剩工作区文件一份记录，
 // 注册表上那层绑定已经删了。下面用内存账本 chooseWorkspace 顶替工作区文件，用人选判定出口的夹具
 // makeDecideStub 顶替生产出口，壳读到的就还是「这个工作区用户亲手选过哪个后端」。
-const { makeDecideStub, chooseWorkspace } = require('./lib/deck-decide-stub.js')
+const { makeDecideStub, chooseWorkspace } = require('./lib/deck-decide-stub.ts')
 
 const ROOT = path.resolve(__dirname, '..')
 let failed = false

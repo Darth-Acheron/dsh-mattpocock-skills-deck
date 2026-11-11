@@ -18,7 +18,7 @@ const fs = require('fs')
 const os = require('os')
 const { pathToFileURL } = require('url')
 // 判定出口桩（#1003 单出口）：夹具照生产接法给上，工作区选过这句话记在桩的账本里。
-const { makeDecideStub, chooseWorkspace } = require('./lib/deck-decide-stub.js')
+const { makeDecideStub, chooseWorkspace } = require('./lib/deck-decide-stub.ts')
 
 const ROOT = path.resolve(__dirname, '..')
 let checks = 0
