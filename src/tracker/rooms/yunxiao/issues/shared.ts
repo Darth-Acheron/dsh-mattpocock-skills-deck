@@ -17,6 +17,7 @@ import type { Label, RepositoryRef } from '../../../contract/entities.js'
 import type { AssigneeInput, LabelInput, ListFilter, SetOpts } from '../../../contract/inputs.js'
 import type { TrackerError } from '../../../contract/results.js'
 import { PAGINATION } from '../../../contract/pagination.js'
+import { CANONICAL_LABELS } from '../../../contract/canonical-labels.js'
 import { normalizeColor } from '../../../../shared/label-color/src/colors.js'
 import { fail } from '../../../kernel/preflight.js'
 import { GITLAB_READ_TIMEOUT_MS, GITLAB_PROBE_TIMEOUT_MS } from '../../../../shared/time-config/src/values.js'
@@ -53,6 +54,8 @@ const DETAIL_CONCURRENCY = PAGINATION.gitlab.labelWriteConcurrencyMax
 const COMMENTS_MAX = PAGINATION.gitlab.limitMax
 const LABEL_LIST_PER_PAGE = PAGINATION.gitlab.labelListPerPage
 const LABEL_LIST_MAX_PAGES = PAGINATION.gitlab.labelListMaxPages
+/** 云效要求创建标签必须给色；非核心标签未显式给色时使用接口文档的示例色。 */
+const DEFAULT_PROJECT_LABEL_COLOR = '#A773E0'
 
 /** 解析后的云效组织与项目坐标。 */
 export interface ResolvedProjectRef { refId: string; organizationId: string; projectId: string }
@@ -330,6 +333,10 @@ export async function ensureProjectLabelIdsForWrite(
     if (!id) {
       const createBody: { name: string; color?: string } = { name: item.name }
       if (item.color) createBody.color = '#' + item.color
+      else {
+        const canonical = CANONICAL_LABELS.find((label) => label.name.toLowerCase() === item.name.toLowerCase())
+        createBody.color = canonical ? '#' + canonical.color : DEFAULT_PROJECT_LABEL_COLOR
+      }
       const created = await requestProjectLabelCreate(opCtx, proj.organizationId, proj.projectId, createBody, GITLAB_READ_TIMEOUT_MS)
       if (!created.ok) return failYunxiao(created, created.stderr || created.stdout || '创建项目标签「' + item.name + '」失败', created, opCtx ?? undefined)
       const cBag = asRecord(created.data)

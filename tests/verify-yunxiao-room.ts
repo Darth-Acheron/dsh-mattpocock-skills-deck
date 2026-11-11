@@ -101,12 +101,14 @@ async function main(): Promise<void> {
   const readSourcesMod = await imp('src/tracker/rooms/yunxiao/support/read-sources.ts')
   const catalogMod = await imp('src/tracker/contract/operations-catalog.ts')
   const encMod = await imp('src/tracker/contract/operations-encyclopedia.ts')
+  const canonicalLabelsMod = await imp('src/tracker/contract/canonical-labels.ts')
   const regCoreMod = await imp('src/tracker/registry/core.ts')
   const builtinsMod = await imp('src/tracker/registry/builtins.ts')
   const declMod = await imp('src/tracker/kernel/issue-tracker-declaration.ts')
   const decisionMod = await imp('src/tracker/detection/backendDecision.ts')
   const repoIdModelMod = await imp('src/tracker/rooms/yunxiao/model/repo-identity.ts')
   const markersMod = await imp('src/tracker/rooms/yunxiao/model/description-markers.ts')
+  const issuesSharedMod = await imp('src/tracker/rooms/yunxiao/issues/shared.ts')
   const repoIdentityMod = await imp('src/tracker/rooms/yunxiao/repo/identity.ts')
 
   console.log('== Slice 1：Yunxiao backend 模块骨架、27 项能力登记表与 3 个同步/异步定位器 ==')
@@ -1418,6 +1420,7 @@ async function main(): Promise<void> {
     }
     const putBodies: any[] = []
     const commentPostBodies: any[] = []
+    const labelCreateBodies: any[] = []
 
     const claimCtx: any = {
       cwd: '/ws-claim',
@@ -1459,10 +1462,14 @@ async function main(): Promise<void> {
         }
         if (u.endsWith('/labels') && method === 'POST') {
           const b = JSON.parse(String(init?.body || '{}'))
+          labelCreateBodies.push(b)
+          if (typeof b.color !== 'string' || b.color.trim() === '') {
+            return new Response(JSON.stringify({ errorCode: 'InvaildData.Failed', errorMessage: '颜色不能为空' }), { status: 400 })
+          }
           const newLbl = {
             id: 'lbl-' + String(projectLabels.length + 1),
             name: b.name,
-            color: b.color || '#10B981',
+            color: b.color,
           }
           projectLabels.push(newLbl)
           labelsEmpty204 = false
@@ -1559,7 +1566,7 @@ async function main(): Promise<void> {
     const assignLabelsRes = await backend.setLabels(
       repoRef,
       '3',
-      [{ name: 'wayfinder:task', color: '10B981' }, 'ready-for-agent'],
+      [{ name: 'wayfinder:task', color: '123456' }, 'ready-for-agent'],
       undefined,
       claimCtx,
     )
@@ -1581,7 +1588,11 @@ async function main(): Promise<void> {
         assignLabelsRes.data.labels.length === 2 &&
         listLabelsAfterCreate.ok === true &&
         listLabelsAfterCreate.data.length === 2 &&
-        listLabelsAfterCreate.data[0]?.color === '10b981' &&
+        listLabelsAfterCreate.data[0]?.color === '123456' &&
+        labelCreateBodies.length === 2 &&
+        labelCreateBodies[0]?.color === '#123456' &&
+        labelCreateBodies[1]?.name === 'ready-for-agent' &&
+        labelCreateBodies[1]?.color === '#' + canonicalLabelsMod.CANONICAL_LABELS.find((l: any) => l.name === 'ready-for-agent')?.color &&
         colorBatchRes.ok === true &&
         colorBatchRes.data.applied.length === 1 &&
         colorBatchRes.data.applied[0]?.name === 'wayfinder:task' &&
@@ -1595,7 +1606,66 @@ async function main(): Promise<void> {
       { emptyLabelsRes, assignLabelsRes, listLabelsAfterCreate, colorBatchRes, clearLabelsRes },
     )
 
-    // 8.4 代码评审回归断言：setLabels 采纳 GetWorkitemTypeFieldConfig 返回的自定义标签字段标识（如 tag）、fetchProjectLabelNameMap 支持跨页查找第 2 页标签、listMaps 在搜索摘要省略 labels/description 时自动调 GetWorkitem 补齐而不误丢探索地图
+    // 8.4 空项目首次创建标签：核心标签按唯一色表取色（忽略大小写），自定义标签使用云效示例默认色；已有标签只复用，不创建、不改色
+    const directProjectLabels: Array<{ id: string; name: string; color: string }> = []
+    const directLabelCreateBodies: any[] = []
+    let directLabelUpdateCalls = 0
+    const defaultColorCtx: any = {
+      platform: {
+        env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+      },
+      fetch: async (input: string | URL, init?: RequestInit) => {
+        const u = String(input)
+        const method = (init?.method || 'GET').toUpperCase()
+        if (u.includes('/labels') && method === 'GET') {
+          return new Response(JSON.stringify(directProjectLabels), { status: 200 })
+        }
+        if (u.endsWith('/labels') && method === 'POST') {
+          const b = JSON.parse(String(init?.body || '{}'))
+          directLabelCreateBodies.push(b)
+          if (typeof b.color !== 'string' || b.color.trim() === '') {
+            return new Response(JSON.stringify({ errorCode: 'InvaildData.Failed', errorMessage: '颜色不能为空' }), { status: 400 })
+          }
+          const created = { id: 'lbl-default-' + String(directProjectLabels.length + 1), name: b.name, color: b.color }
+          directProjectLabels.push(created)
+          return new Response(JSON.stringify({ id: created.id }), { status: 200 })
+        }
+        if (u.match(/\/labels\/[^/?]+$/) && method === 'PUT') {
+          directLabelUpdateCalls += 1
+          return new Response(null, { status: 204 })
+        }
+        return new Response('unexpected: ' + method + ' ' + u, { status: 500 })
+      },
+    }
+    const directProj = { refId: REF_ID, organizationId: ORG_ID, projectId: PROJ_ID }
+    const directDefaultsRes = await issuesSharedMod.ensureProjectLabelIdsForWrite(defaultColorCtx, directProj, [
+      'Wayfinder:Task',
+      'custom-label',
+      { name: 'bug', color: '123456' },
+    ])
+    const createCountAfterDefaults = directLabelCreateBodies.length
+    const directExistingRes = await issuesSharedMod.ensureProjectLabelIdsForWrite(defaultColorCtx, directProj, ['BUG'])
+    const canonicalTaskColor = canonicalLabelsMod.CANONICAL_LABELS.find((l: any) => l.name === 'wayfinder:task')?.color
+    check(
+      directDefaultsRes.ok === true &&
+        JSON.stringify(directDefaultsRes.labelIds) === JSON.stringify(['lbl-default-1', 'lbl-default-2', 'lbl-default-3']) &&
+        directLabelCreateBodies.length === 3 &&
+        directLabelCreateBodies[0]?.name === 'Wayfinder:Task' &&
+        directLabelCreateBodies[0]?.color === '#' + canonicalTaskColor &&
+        directLabelCreateBodies[1]?.name === 'custom-label' &&
+        directLabelCreateBodies[1]?.color === '#A773E0' &&
+        directLabelCreateBodies[2]?.name === 'bug' &&
+        directLabelCreateBodies[2]?.color === '#123456' &&
+        directExistingRes.ok === true &&
+        JSON.stringify(directExistingRes.labelIds) === JSON.stringify(['lbl-default-3']) &&
+        directLabelCreateBodies.length === createCountAfterDefaults &&
+        directLabelUpdateCalls === 0 &&
+        directProjectLabels.find((l) => l.name === 'bug')?.color === '#123456',
+      '8.4 ensureProjectLabelIdsForWrite 在空项目创建标签时逐条发送核心色、自定义默认色或显式色，已有标签不重复创建且不改色',
+      { directDefaultsRes, directExistingRes, directLabelCreateBodies, directProjectLabels, directLabelUpdateCalls },
+    )
+
+    // 8.5 代码评审回归断言：setLabels 采纳 GetWorkitemTypeFieldConfig 返回的自定义标签字段标识（如 tag）、fetchProjectLabelNameMap 支持跨页查找第 2 页标签、listMaps 在搜索摘要省略 labels/description 时自动调 GetWorkitem 补齐而不误丢探索地图
     const reviewPutBodies: any[] = []
     let labelPagesFetched = 0
     const reviewCtx: any = {
@@ -1686,7 +1756,7 @@ async function main(): Promise<void> {
         mapsFromOmittedSummary.ok === true &&
         mapsFromOmittedSummary.data.rows.length === 1 &&
         mapsFromOmittedSummary.data.rows[0]?.key === '2',
-      '8.4 setLabels 采纳字段配置返回的自定义标签字段名（tag），fetchProjectLabelNameMap 支持跨页查找标签，listMaps 在摘要省略 labels 时自动补齐详情',
+      '8.5 setLabels 采纳字段配置返回的自定义标签字段名（tag），fetchProjectLabelNameMap 支持跨页查找标签，listMaps 在摘要省略 labels 时自动补齐详情',
       { customFieldSetLabels, reviewPutBodies, labelPagesFetched, mapsFromOmittedSummary },
     )
   }

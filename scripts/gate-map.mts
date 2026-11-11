@@ -854,9 +854,10 @@ export const COMPLETION_RECORDED_GATES: Record<string, number> = {
   // 单跑实测 29 条。
   'verify-1926-flash-scope': 29,
   // 2026-11-10 #01–#05（规格 #00 + 架构加深）：两扇 Yunxiao 门禁分别覆盖配置与远端识别 33 条、房间与跨层接线契约 41 条；
+  // 2026-11-11 #01：新增空项目首次创建标签的核心色、自定义默认色、显式色与已有标签复用回归后，房间门禁单跑实测 42 条。
   // 房间门禁覆盖父票解析失败、分页头与满页边界、正反向原生关系探测失败后的诚实完整度、零配置 Projex+Codeup 一体化开仓、四后端注册与三阶段环境检查及沙箱冒烟门控，期望按单跑 GATE-RESULT 登记。
   'verify-yunxiao-config-and-remote': 33,
-  'verify-yunxiao-room': 41,
+  'verify-yunxiao-room': 42,
 }
 
 // 冒烟链（scripts.smoke）上已经开闸的门禁，写法与上面那张表一样：写在这里 = 已开闸，值 = 期望条数。
