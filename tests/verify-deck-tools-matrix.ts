@@ -26,7 +26,7 @@ const { pathToFileURL } = require('url')
 const { makeScriptedGh, makeScriptedGlab } = require('./deck-tools-matrix-transports.ts')
 // #1299 T8：双轨链路要核对「首行 /implement 能用」，模板正文的真源是提示词配置（与 verify-1281 同一条读取路径）。
 const promptConfig = require('../scripts/lib/prompt-config.mts')
-// 夹具口（写法见 tests/lib/deck-decide-stub.js 开头）：#1138 之后「用户选过哪个后端」只剩工作区文件一份记录，
+// 夹具口（写法见 tests/lib/deck-decide-stub.ts 开头）：#1138 之后「用户选过哪个后端」只剩工作区文件一份记录，
 // 注册表上那层绑定已经删了。下面用内存账本 chooseWorkspace 顶替工作区文件，用人选判定出口的夹具
 // makeDecideStub 顶替生产出口，壳读到的就还是「这个工作区用户亲手选过哪个后端」。
 const { makeDecideStub, chooseWorkspace } = require('./lib/deck-decide-stub.ts')
@@ -323,7 +323,8 @@ async function main() {
     // 失败时把「为什么」一并带出来（#726 收口时的教训：门禁红得让人能一眼看出是哪一步、哪一句），
     // 否则只剩一个 unsupported，谁也猜不出是闸推迟、后端抛错还是没选中后端。
     check(envelopeOk(create) && create.ok === true, '[' + lane.id + '] 建票：回 ok（实得 ' + create.status + (create && create.ok ? '' : '；reason=' + String((create && create.reason) || '') + '；text=' + String((create && create.text) || '').slice(0, 160)) + '）')
-    check(envelopeOk(plan) && plan.data && plan.data.mapKey && keys.length === 2, '[' + lane.id + '] 建整张地图骨架：地图票 ' + (plan.data && plan.data.mapKey) + '，子票 ' + keys.join('、') + '；没成的逐条：' + JSON.stringify(((plan && plan.items) || []).filter((i) => i.status !== 'ok').map((i) => i.planKey + ':' + String(i.reason || '').slice(0, 120))))
+    const planFailedItems = ((plan && plan.items) || []).filter((i) => i.status !== 'ok')
+    check(envelopeOk(plan) && plan.ok === true && plan.status === 'ok' && planFailedItems.length === 0 && plan.data && plan.data.mapKey && keys.length === 2, '[' + lane.id + '] 建整张地图骨架：整体 ok（实得 ' + (plan && plan.status) + '），地图票 ' + (plan.data && plan.data.mapKey) + '，子票 ' + keys.join('、') + '；没成的逐条：' + JSON.stringify(planFailedItems.map((i) => (i.planKey || i.role) + ':' + String(i.reason || '').slice(0, 120))))
     check(envelopeOk(rows.link) && edgesOfItems(rows.link).length === 2, '[' + lane.id + '] 补边：父子与阻塞两条边都逐项回了（' + JSON.stringify(edgesOfItems(rows.link).map((i) => i.landing)) + '）')
     check(envelopeOk(rows.patch), '[' + lane.id + '] 改票：回三态之一（' + rows.patch.status + '）')
     check(envelopeOk(rows.read) && rows.read.ok === true, '[' + lane.id + '] 读回：回 ok（票 ' + child2 + '）')

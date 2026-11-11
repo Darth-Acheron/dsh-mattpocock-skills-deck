@@ -8,9 +8,10 @@
 // 不能改的约定（改任何一条，回执就不诚实了）：
 //   1. 读不回来只说「这次没核对」，不判失败 —— 读不回来的原因可能是额度不够、网络不好或后端自己出错；
 //      把「没读到」说成「没写好」，会让一次本来建成功的地图被报成 partial。
-//   2. Type 行只在「读回来的正文像整份文件」时才核，判据是正文里有没有文件头注释（parentKey / created 那一行）。
+//   2. Type 行只在「读回来的正文像整份文件」时才核，判据是正文里有没有真正代表整份文件落盘的文件头注释
+//      （DSH-FORMAT / DSH-CREATED，或旧布局的 parentKey / created 裸名）。
 //      为什么不按后端身份分支：工具层不许拿后端 id 做判断（tests/verify-deck-tools.ts 的静态扫描就查这个）；
-//      而远端后端不把文件头注释落进正文，正文里本来就没有 Type 行可核，按形状判正好各走各的。
+//      而远端后端不把整份文件头注释落进正文，正文里本来就没有 Type 行可核，按形状判正好各走各的。
 //   3. 这里只往外返回 notes 与 items 两摞文字，自己不发写请求、不写游标、不碰预算账本。
 import { MAP_BLOCK_TITLES } from '../shell/minimal-spec.js'
 import { ensureLabels } from '../rules/minimal-spec.js'
@@ -95,12 +96,14 @@ export async function readbackMapPlan(args: MapPlanReadbackArgs): Promise<MapPla
   // 幂等锚还会多出 parentKey 与 created 两行注释、正文里有 Status/Labels/Type 字段行；远端房这两行
   // 文件头注释不会落进正文（父边走原生边），正文也就没有 Type 行可核。这里按读回数据的形状判断，
   // 不按后端身份分支 —— 工具层不许拿后端 id 做判断（verify-deck-tools 的静态扫描就查这个）。
-  // #1487 起本地后端写的是随包原文布局，文件头注释换成 DSH-FORMAT / DSH-PARENT / DSH-CREATED
-  // 三条隐藏注释；只认老写法（parentKey / created 裸名字）会让原文布局的子票永远跳过 Type 行核对，
+  // #1487 起本地后端写的是随包原文布局，文件头注释包含 DSH-FORMAT / DSH-CREATED 等隐藏注释；
+  // 只认老写法（parentKey / created 裸名字）会让原文布局的子票永远跳过 Type 行核对，
   // 回执里那句「核对通过」就成了没核过的假话。老写法保留：旧布局的票仍要能读回核对。
-  // 注意不能把 DSH-IDEMPOTENCY-KEY 算进判据：远端后端也把这个幂等锚注释写进正文，算进来会把远端票
-  // 误判成「整份原文文件」，去核它根本没有的 Type 行，回执就变成误报失败（#1487 提交时踩过这一脚）。
-  const looksLikeWholeFile = (text: string): boolean => /^\s*<!--\s*(?:parentKey|created|DSH-FORMAT|DSH-PARENT|DSH-CREATED)\s*:/m.test(text)
+  // 注意不能把 DSH-IDEMPOTENCY-KEY 与 DSH-PARENT 算进判据：远端后端也把幂等锚注释写进正文（#1487），
+  // 云效（父子关系双写兜底标记）与 GitLab（#1599 起父子归属的唯一真相）也会把 DSH-PARENT 写进远端票正文，
+  // 而远端后端从不写 Type 行；把这两项算进判据会把云效与 GitLab 的子票误判成「整份文件落盘」，
+  // 去核它们根本没有的 Type 行并报出假失败。本地新布局文件必带 DSH-FORMAT 与 DSH-CREATED，去掉 DSH-PARENT 对本地核对无损。
+  const looksLikeWholeFile = (text: string): boolean => /^\s*<!--\s*(?:parentKey|created|DSH-FORMAT|DSH-CREATED)\s*:/m.test(text)
   let checkedTypeLine = false
   for (const ch of children) {
     const planKey = String(ch.key)

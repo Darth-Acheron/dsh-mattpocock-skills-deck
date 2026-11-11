@@ -70,6 +70,7 @@ async function main() {
   ledger.ensureBackend('github', { kind: 'two-buckets' })
   ledger.syncServer('github', { rest: { limit: 5000, remaining: 5000, reset: clock + 3600000 }, graphql: { limit: 5000, remaining: 5000, reset: clock + 3600000 } }, clock)
 
+  const makePlanStore = () => { const t = new Map(); return { durable: true, load(id) { return t.get(id) || null }, save(id, s) { t.set(id, s) } } }
   const deps = {
     gate: gate, registry: registry, budget: budget,
     estimate: toolCost.estimateToolCost, costInputFrom: toolCost.toolCostInputFrom,
@@ -77,11 +78,142 @@ async function main() {
     log: { fire: () => {} }, now: () => clock,
     invalidate: () => {},
     decideBackend: makeDecideStub(registry),
-    planStore: (() => { const t = new Map(); return { durable: true, load(id) { return t.get(id) || null }, save(id, s) { t.set(id, s) } } })(),
+    planStore: makePlanStore(),
   }
+  const readbackMod = await imp('src/deck/tools/map-plan-readback.ts')
+  const kindRules = await imp('src/deck/rules/object-kind.ts')
   const planTool = planMod.createDeckMapPlanCreate(deps)
   const snapTool = snapMod.createDeckMapSnapshot(deps)
   const exec = { agent: { session: { id: 's-1487-plan', cwd: rootPosix } } }
+
+  // ⓪ 读回核对（readbackMapPlan）形状判据：远端票正文含 DSH-PARENT（云效双写兜底、GitLab 父子唯一真相）
+  // 但不含 DSH-FORMAT / DSH-CREATED 等整份文件标记时，不该误判成整份文件去核 Type 行；
+  // 本地整份文件（含 DSH-FORMAT）仍照常核对 Type 行。
+  {
+    const stubMapBody = '## Destination\n\n目标\n\n## Notes\n\n## Decisions so far\n\n## Not yet specified\n\n## Out of scope\n\n## 进度\n\n- 0%'
+    const childKinds = new Map([['c1', kindRules.resolveCreateKind({ kind: 'map-ticket', label: 'wayfinder:research', parentKey: '1' })]])
+    const runReadback = (childBody) => readbackMod.readbackMapPlan({
+      tracker: { get: async () => ({ ok: true, data: { key: '1', body: stubMapBody } }) },
+      repo: {}, opCtx: {}, mapKey: '1', outOfBudget: false, pickedNote: '',
+      liveRows: [{ key: '2', parentKey: '1', labels: ['wayfinder:research'], body: childBody }],
+      children: [{ key: 'c1', title: '子票一', kind: 'map-ticket', label: 'wayfinder:research' }],
+      childKinds: childKinds, keys: { c1: '2' },
+    })
+    const remoteParentOnly = await runReadback('<!-- DSH-IDEMPOTENCY-KEY: deck-123 -->\n<!-- DSH-PARENT: 1 -->\n\n远端正文\n\n## 进度\n\n- 0%')
+    const remoteTypeFails = (remoteParentOnly.items || []).filter((i) => String(i.reason || '').indexOf('Type 行') >= 0)
+    check(remoteParentOnly.items.length === 0 && remoteTypeFails.length === 0 && (remoteParentOnly.notes || []).some((n) => n.indexOf('建后读回核对通过') >= 0 && n.indexOf('与 Type 行') < 0),
+      '远端正文只含 DSH-PARENT 与幂等锚（云效/GitLab 形状）、无 Type 行时，不误判成整份文件、不报 Type 行失败：' + JSON.stringify(remoteParentOnly))
+
+    const localWholeOk = await runReadback('<!-- DSH-FORMAT: md-v1 -->\n<!-- DSH-PARENT: 1 -->\n<!-- DSH-CREATED: 2026-11-11T00:00:00.000Z -->\n# 02: 子票一\n\nType: research\n\n## Question\n\n正文\n\n## 进度\n\n- 0%')
+    check(localWholeOk.items.length === 0 && (localWholeOk.notes || []).some((n) => n.indexOf('与 Type 行') >= 0),
+      '本地整份文件（含 DSH-FORMAT + Type 行）仍触发并核对通过 Type 行：' + JSON.stringify(localWholeOk.notes))
+
+    const localWholeBad = await runReadback('<!-- DSH-FORMAT: md-v1 -->\n<!-- DSH-PARENT: 1 -->\n<!-- DSH-CREATED: 2026-11-11T00:00:00.000Z -->\n# 02: 子票一\n\nType: task\n\n## Question\n\n正文\n\n## 进度\n\n- 0%')
+    check(localWholeBad.items.length === 1 && String(localWholeBad.items[0].reason || '').indexOf('Type 行不是 research') >= 0,
+      '本地整份文件 Type 行写错时仍如实报出 verify 失败：' + JSON.stringify(localWholeBad.items))
+
+    const legacyWholeOk = await runReadback('<!-- parentKey: 1 -->\n<!-- created: 2026-10-01T00:00:00.000Z -->\n# 02: 旧布局子票\n\nType: research\n\n## Question\n\n正文\n\n## 进度\n\n- 0%')
+    check(legacyWholeOk.items.length === 0 && (legacyWholeOk.notes || []).some((n) => n.indexOf('与 Type 行') >= 0),
+      '本地旧布局整份文件（parentKey / created 裸名注释）仍触发并核对通过 Type 行：' + JSON.stringify(legacyWholeOk.notes))
+
+    const githubShape = await runReadback('<!-- DSH-IDEMPOTENCY-KEY: deck-123 -->\n\n远端正文\n\n## 进度\n\n- 0%')
+    check(githubShape.items.length === 0 && (githubShape.notes || []).some((n) => n.indexOf('建后读回核对通过') >= 0 && n.indexOf('与 Type 行') < 0),
+      '无任何文件头标记的远端形状（GitHub 形状）照旧跳过 Type 行核对并通过：' + JSON.stringify(githubShape.notes))
+  }
+
+  // ⓪b 车道级：云效（Yunxiao）房间上跑 deck_map_plan_create，子票正文带 DSH-PARENT 但不写 Type 行，
+  // 建后读回核对不报 Type 行假失败，整单结论为 ok。
+  {
+    const yxMod = await imp('src/tracker/rooms/yunxiao/index.ts')
+    const yxRepoIdMod = await imp('src/tracker/rooms/yunxiao/model/repo-identity.ts')
+    const yxMarkersMod = await imp('src/tracker/rooms/yunxiao/model/description-markers.ts')
+    const bridgeMod = await imp('src/refresh/registry/deck-tool-bridge.ts')
+    yxRepoIdMod.clearLearnedYunxiaoContexts()
+    yxMarkersMod.clearYunxiaoIssueKeyCache()
+    const orgId = '673db5665c76405a332eebc4'
+    const projId = '8efcbccd3981cb23178fc66bd1'
+    const refId = orgId + '/' + projId
+    const yxYaml = ['version: 1', 'organizationId: ' + orgId, 'projectId: ' + projId, 'customCode: DCIAFS'].join('\n')
+    const createdStore = new Map()
+    const projectLabels = [
+      { id: 'lbl-map', name: 'wayfinder:map', color: '#8B5CF6' },
+      { id: 'lbl-research', name: 'wayfinder:research', color: '#0EA5E9' },
+      { id: 'lbl-task', name: 'wayfinder:task', color: '#10B981' },
+    ]
+    let nextSerial = 1
+    const yxCtx = {
+      cwd: '/ws-1487-yx',
+      platform: {
+        fs: { resolve: async (rel) => '/ws-1487-yx/' + rel, readText: async () => yxYaml, writeText: async () => {} },
+        env: { get: (k) => (k === 'YUNXIAO_TOKEN' ? 'pt-validtoken12345678' : undefined), has: (k) => k === 'YUNXIAO_TOKEN' },
+      },
+      fetch: async (input, init) => {
+        const u = String(input)
+        const method = ((init && init.method) || 'GET').toUpperCase()
+        if (u.endsWith('/oapi/v1/platform/user')) return new Response(JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao', lastOrganization: orgId }), { status: 200 })
+        if (u.indexOf('/projex/organizations/' + orgId + '/projects/' + projId) >= 0 && method === 'GET' && u.indexOf('/workitemTypes') < 0 && u.indexOf('/labels') < 0) {
+          return new Response(JSON.stringify({ id: projId, name: 'Deck Yunxiao', customCode: 'DCIAFS' }), { status: 200 })
+        }
+        if (u.indexOf('/workitemTypes') >= 0 && method === 'GET') {
+          const isReq = u.indexOf('category=Req') >= 0
+          return new Response(JSON.stringify([{ id: isReq ? 'type-req-1' : 'type-task-1', categoryId: isReq ? 'Req' : 'Task', name: isReq ? '需求' : '任务', enable: true, defaultType: true }]), { status: 200 })
+        }
+        if (u.indexOf('/labels') >= 0 && method === 'GET') return new Response(JSON.stringify(projectLabels), { status: 200 })
+        if (u.endsWith('/workitems:search') && method === 'POST') {
+          const all = Array.from(new Set(createdStore.values()))
+          return new Response(JSON.stringify(all), { status: 200, headers: { 'x-page': '1', 'x-per-page': '100', 'x-total': String(all.length), 'x-total-pages': '1' } })
+        }
+        if (u.endsWith('/workitems') && method === 'POST') {
+          const b = JSON.parse(String((init && init.body) || '{}'))
+          const num = nextSerial++
+          const id = ('createditem00000000000000' + String(num)).slice(-26)
+          const lbls = (b.labels || []).map((lid) => projectLabels.find((l) => l.id === lid) || { id: lid, name: lid, color: '#000000' })
+          const rec = { id: id, serialNumber: 'DCIAFS-' + String(num), subject: b.subject, description: b.description || '', formatType: 'MARKDOWN', workitemType: { id: b.workitemTypeId }, statusStageId: '1', parentId: b.parentId || null, assignedTo: { id: b.assignedTo, name: 'BryanShao' }, labels: lbls }
+          createdStore.set(id, rec)
+          createdStore.set(rec.serialNumber, rec)
+          return new Response(JSON.stringify({ id: id }), { status: 200 })
+        }
+        if (u.indexOf('/relationRecords') >= 0 && method === 'GET') return new Response(JSON.stringify([]), { status: 200 })
+        if (u.indexOf('/comments') >= 0 && method === 'GET') return new Response(JSON.stringify([]), { status: 200 })
+        if (u.indexOf('/workitems/') >= 0 && method === 'GET') {
+          const keyOrId = decodeURIComponent(u.split('/workitems/')[1].split('?')[0])
+          const item = createdStore.get(keyOrId)
+          return item ? new Response(JSON.stringify(item), { status: 200 }) : new Response('{}', { status: 404 })
+        }
+        return new Response('[]', { status: 200 })
+      },
+    }
+    ledger.ensureBackend('yunxiao', { kind: 'requests-only' })
+    ledger.syncServer('yunxiao', { requests: { limit: 2000, remaining: 2000, reset: clock + 3600000 } }, clock)
+    const yxReg = registryMod.createRegistry({ logEvent: () => {}, isEnabled: () => false }, { matchesTimeout: 200 })
+    const yxDispose = yxReg.register(yxMod.yunxiaoBackend)
+    chooseWorkspace('/ws-1487-yx', 'yunxiao')
+    const yxPorts = bridgeMod.buildTrackerPorts({ ledger: ledger, registry: yxReg })
+    const yxPlanTool = planMod.createDeckMapPlanCreate({
+      gate: gate, registry: yxReg, budget: budget,
+      estimate: toolCost.estimateToolCost, costInputFrom: toolCost.toolCostInputFrom,
+      handleFor: () => ({ cwd: '/ws-1487-yx', refId: refId }),
+      backendCtx: () => yxCtx,
+      getCachedReading: yxPorts.getCachedReading, admit: yxPorts.admit, accountPort: yxPorts.account,
+      now: () => clock, log: { fire: () => {} }, decideBackend: makeDecideStub(yxReg),
+      planStore: makePlanStore(),
+      invalidate: () => {},
+    })
+    const yxPlan = await yxPlanTool.run({ agent: { session: { id: 's-1487-yx', cwd: '/ws-1487-yx' } } }, {
+      planId: '1487-yx-plan-1', title: '云效探索地图',
+      children: [
+        { key: 'c1', title: '云效调研子票', kind: 'map-ticket', label: 'wayfinder:research' },
+        { key: 'c2', title: '云效任务子票', kind: 'map-ticket', label: 'wayfinder:task' },
+      ],
+    })
+    const yxFailed = ((yxPlan && yxPlan.items) || []).filter((i) => i.status !== 'ok')
+    const yxChild1 = createdStore.get('DCIAFS-2')
+    check(!!yxChild1 && String(yxChild1.description || '').indexOf('<!-- DSH-PARENT: 1 -->') >= 0 && !/^\s*Type\s*[：:]/m.test(String(yxChild1.description || '')),
+      '云效建出的地图工单子票正文含 DSH-PARENT 且不含 Type 行：' + JSON.stringify(yxChild1 && yxChild1.description))
+    check(yxPlan && yxPlan.ok === true && yxPlan.status === 'ok' && yxFailed.length === 0 && ((yxPlan.notes || []).some((n) => n.indexOf('建后读回核对通过') >= 0 && n.indexOf('与 Type 行') < 0)),
+      '云效车道 deck_map_plan_create 建图读回核对通过、整体 status=ok、无 Type 行假失败：' + JSON.stringify({ status: yxPlan && yxPlan.status, notes: yxPlan && yxPlan.notes, failed: yxFailed }))
+    try { yxDispose.dispose() } catch (e) {}
+  }
 
   // ① 建整张地图：地图 + 两张地图子票，全部落在 .scratch/plan-effort 下。
   const plan = await planTool.run(exec, {
