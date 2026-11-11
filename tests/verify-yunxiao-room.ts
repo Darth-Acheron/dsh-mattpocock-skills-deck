@@ -1691,7 +1691,7 @@ async function main(): Promise<void> {
     )
   }
 
-  console.log('\n== Slice 9：父子关系图谱（setParent 原生 PARENT 优先、Bug 400 自动降级 DSH-PARENT + ASSOCIATED、解除父子、自环拦截与 listSubIssues 双源合并） ==')
+  console.log('\n== Slice 9：父子关系图谱（setParent 原生 PARENT 优先、Bug 400 自动降级 DSH-PARENT + ASSOCIATED、更新请求停发 parentId 与同父幂等跳过、解除父子、自环拦截、字段不存在 400 判档与回执、listSubIssues 双源合并） ==')
   {
     markersMod.clearYunxiaoIssueKeyCache()
     repoIdModelMod.clearLearnedYunxiaoContexts()
@@ -1703,6 +1703,8 @@ async function main(): Promise<void> {
       url: 'https://devops.aliyun.com/projex/project/' + PROJ_ID,
     }
     const edgeRulesMod = await imp('src/deck/rules/edge-landing.ts')
+    const yunxiaoErrorsMod = await imp('src/tracker/rooms/yunxiao/errors.ts')
+    const edgeLandingMod = await imp('src/deck/shell/edge-landing.ts')
 
     const mapItem: any = {
       id: '25ac2befde335fcc2218d7c8bb',
@@ -1752,6 +1754,8 @@ async function main(): Promise<void> {
     const relationCalls: Array<{ method: string; wid: string; relationType: string; targetId: string }> = []
     const subRelationRecords: Array<{ id: string; relationType: string; resourceType: string; resourceId: string }> = []
     const parentPutBodies: Array<{ wid: string; body: any }> = []
+    // 打开后，下一条 Task 更新请求会被桩以「字段不存在」400 拒绝（复刻 MattDemo——维护者用于真机核验的云效项目——实测的错误体），用来验证判档与回执。
+    let failNextTaskPutWithField400 = false
 
     const parentCtx: any = {
       cwd: '/ws-parent',
@@ -1787,9 +1791,10 @@ async function main(): Promise<void> {
             return new Response(JSON.stringify({ id: 'rel-' + wid }), { status: 200 })
           }
           if (method === 'DELETE') {
-            const urlObj = new URL(u)
-            const rType = urlObj.searchParams.get('relationType') || ''
-            const tId = urlObj.searchParams.get('workitemId') || ''
+            // 官方 DeleteWorkitemRelationRecord 把 relationType 与 workitemId 放在 JSON 请求体里（缺陷 02 真机核清）。
+            const b = JSON.parse(String(init?.body || '{}'))
+            const rType = String(b.relationType || '')
+            const tId = String(b.workitemId || '')
             relationCalls.push({ method: 'DELETE', wid, relationType: rType, targetId: tId })
             if (wid === taskItem.id && rType === 'PARENT') {
               taskItem.parentId = ''
@@ -1819,24 +1824,46 @@ async function main(): Promise<void> {
           const item = store.get(wid)
           const b = JSON.parse(String(init?.body || '{}'))
           parentPutBodies.push({ wid, body: b })
-          if (wid === bugItem.id && b.parentId === mapItem.id) {
+          // 缺陷 02 的真实故障形状（MattDemo 实测）：Task 的更新请求体一旦带 parentId 字段，
+          // 云效毫秒级返回 400「workitem does not contains field : ["parentId"]」；不带 parentId、只改 description 则 204。
+          if ('parentId' in b) {
             return new Response(
-              JSON.stringify({ errorCode: 'InvaildData.Failed', errorMessage: '无法创建此关系, 不满足关系对应的类型约束！' }),
+              JSON.stringify({ errorCode: '400', errorMessage: 'workitem does not contains field : ["parentId"]' }),
+              { status: 400 },
+            )
+          }
+          if (failNextTaskPutWithField400) {
+            failNextTaskPutWithField400 = false
+            return new Response(
+              JSON.stringify({ errorCode: '400', errorMessage: 'workitem does not contains field : ["parentId"]' }),
               { status: 400 },
             )
           }
           if (item && typeof b.description === 'string') item.description = b.description
-          if (item && ('parentId' in b) && wid !== bugItem.id) item.parentId = b.parentId
           return new Response(null, { status: 204 })
         }
         return new Response('unexpected: ' + method + ' ' + u, { status: 500 })
       },
     }
 
-    // 9.1 Task 设置父票：成对写入 DSH-PARENT 与原生 PARENT 关系，通过 edgeVerdict('parent') 写后读回核对
+    // 9.1 Task 设置父票：更新请求只写正文文件头 DSH-PARENT 标记（不带 parentId 字段），原生 PARENT 关系记录负责原生层，写后读回核对
     const setTaskParent = await backend.setParent(repoRef, '3', '2', undefined, parentCtx)
     const getTaskBack = await backend.get(repoRef, '3', {}, parentCtx)
     const taskVerdict = edgeRulesMod.edgeVerdict('parent', '2', { issue: getTaskBack.data, dependencies: null })
+    const taskParentPutBodies = parentPutBodies.filter((c) => c.wid === taskItem.id).map((c) => c.body)
+    const taskPutCountAfterFirstSet = parentPutBodies.filter((c) => c.wid === taskItem.id).length
+    const taskParentRelationCountAfterFirstSet = relationCalls.filter(
+      (c) => c.method === 'POST' && c.wid === taskItem.id,
+    ).length
+
+    // 9.1b 同父重复设置（缺陷 02 的现场：读回的原生 parentId 已等于目标父票）：不发出任何更新请求，也不重复创建关系记录。
+    // 计数快照必须紧跟这次调用取：后面的解除与字段拒绝步骤会合法地再发更新请求，那时再取就对不上幂等口径了。
+    const repeatSetTaskParent = await backend.setParent(repoRef, '3', '2', undefined, parentCtx)
+    const taskPutCountAfterRepeatSet = parentPutBodies.filter((c) => c.wid === taskItem.id).length
+    const taskParentRelationCountAfterRepeatSet = relationCalls.filter(
+      (c) => c.method === 'POST' && c.wid === taskItem.id,
+    ).length
+    const taskNativeParentIdAfterRepeatSet = taskItem.parentId
 
     // 9.2 Bug 设置父票：原生 PARENT 返回 400 时自动保留 DSH-PARENT 并建立 ASSOCIATED 关联，读回 parentKey 仍为 "2"
     const setBugParent = await backend.setParent(repoRef, '4', '2', undefined, parentCtx)
@@ -1854,32 +1881,62 @@ async function main(): Promise<void> {
     const getColdParent = await backend.get(repoRef, '3', {}, parentCtx)
     taskItem.description = '<!-- DSH-PARENT: 2 -->\n# Task 3\n'
 
-    // 9.4 解除父票（parentKey = null）与自环拦截（parentKey === key -> conflict）
+    // 9.4 解除父票（parentKey = null，更新请求同样不带 parentId）与自环拦截（parentKey === key -> conflict）
+    const taskPutCountBeforeClear = parentPutBodies.filter((c) => c.wid === taskItem.id).length
     const clearTaskParent = await backend.setParent(repoRef, '3', null, undefined, parentCtx)
+    const taskClearPutBodies = parentPutBodies
+      .filter((c) => c.wid === taskItem.id)
+      .slice(taskPutCountBeforeClear)
+      .map((c) => c.body)
     const clearBugParent = await backend.setParent(repoRef, '4', null, undefined, parentCtx)
     const selfParentRes = await backend.setParent(repoRef, '3', '3', undefined, parentCtx)
+
+    // 9.5 「字段不存在」400 的判档与回执（缺陷 02 的误报链路）：判成 unsupported、回执 backend-unsupported，不再是 network / backend-timeout
+    failNextTaskPutWithField400 = true
+    const fieldRejectedSet = await backend.setParent(repoRef, '3', '2', undefined, parentCtx)
+    const fieldRejectedReceipt = edgeLandingMod.failureFields(fieldRejectedSet, 'write')
+    const fieldRejectedVerdict = yunxiaoErrorsMod.classifyYunxiaoError({
+      status: 400,
+      stderr: JSON.stringify({ errorCode: '400', errorMessage: 'workitem does not contains field : ["parentId"]' }),
+    })
 
     const c1 =
       setTaskParent.ok === true &&
       setTaskParent.data.parentKey === '2' &&
       taskVerdict === 'landed' &&
-      parentPutBodies.some((p) => p.wid === taskItem.id && p.body.parentId === mapItem.id) &&
+      taskParentPutBodies.length === 1 &&
+      !('parentId' in (taskParentPutBodies[0] || {})) &&
+      taskParentPutBodies[0]?.description.includes('DSH-PARENT: 2') &&
+      relationCalls.some((c) => c.method === 'POST' && c.wid === taskItem.id && c.relationType === 'PARENT' && c.targetId === mapItem.id) &&
       getColdParent.ok === true &&
       getColdParent.data.parentKey === '2'
+    const c1b =
+      repeatSetTaskParent.ok === true &&
+      repeatSetTaskParent.data.parentKey === '2' &&
+      taskPutCountAfterRepeatSet === taskPutCountAfterFirstSet &&
+      taskParentRelationCountAfterRepeatSet === taskParentRelationCountAfterFirstSet &&
+      taskNativeParentIdAfterRepeatSet === mapItem.id
     const c2 = setBugParent.ok === true && setBugParent.data.parentKey === '2' && bugVerdict === 'landed' &&
-      bugParentPutBodies.length === 2 &&
-      bugParentPutBodies[0]?.parentId === mapItem.id &&
+      bugParentPutBodies.length === 1 &&
+      !('parentId' in (bugParentPutBodies[0] || {})) &&
       bugParentPutBodies[0]?.description.includes('DSH-PARENT: 2') &&
-      !('parentId' in (bugParentPutBodies[1] || {})) &&
-      bugParentPutBodies[1]?.description.includes('DSH-PARENT: 2') &&
       relationCalls.some((c) => c.method === 'POST' && c.wid === bugItem.id && c.relationType === 'ASSOCIATED' && c.targetId === mapItem.id)
     const c3 = subIssuesRes.ok === true && JSON.stringify(subKeys) === JSON.stringify(['3', '4']) && subIssuesRes.data.total === 2 && subIssuesRes.data.fetched === 2
-    const c4 = clearTaskParent.ok === true && clearTaskParent.data.parentKey === null && clearBugParent.ok === true && clearBugParent.data.parentKey === null && !taskItem.description.includes('DSH-PARENT') && !bugItem.description.includes('DSH-PARENT')
+    const c4 = clearTaskParent.ok === true && clearTaskParent.data.parentKey === null && clearBugParent.ok === true && clearBugParent.data.parentKey === null && !taskItem.description.includes('DSH-PARENT') && !bugItem.description.includes('DSH-PARENT') &&
+      taskClearPutBodies.length === 1 && !('parentId' in (taskClearPutBodies[0] || {})) && taskItem.parentId === ''
     const c5 = selfParentRes.ok === false && selfParentRes.error.kind === 'conflict'
+    const c6 =
+      fieldRejectedSet.ok === false &&
+      fieldRejectedSet.error.kind === 'unsupported' &&
+      String(fieldRejectedSet.error.raw || '').includes('workitem does not contains field') &&
+      fieldRejectedReceipt.code === 'backend-unsupported' &&
+      fieldRejectedReceipt.errorKind === 'unsupported' &&
+      fieldRejectedVerdict.kind === 'unsupported' &&
+      fieldRejectedVerdict.fallback === false
     check(
-      c1 && c2 && c3 && c4 && c5,
-      '9.1 setParent 成对双写 DSH-PARENT 与原生 PARENT（Bug 400 自动降级 ASSOCIATED）、解除父子与自环拦截，listSubIssues 合并原生 SUB 与 DSH-PARENT 扫描结果',
-      { c1, c2, c3, c4, c5, taskVerdict, bugVerdict, bugParentPutBodies, subKeys },
+      c1 && c1b && c2 && c3 && c4 && c5 && c6,
+      '9.1 setParent 写 DSH-PARENT 与原生 PARENT（更新请求停发 parentId）、同父重复设置幂等跳过、解除父子与自环拦截、字段不存在 400 判成 unsupported 且回执不再误报 backend-timeout、listSubIssues 合并原生 SUB 与 DSH-PARENT 扫描结果',
+      { c1, c1b, c2, c3, c4, c5, c6, taskVerdict, bugVerdict, taskParentPutBodies, bugParentPutBodies, taskClearPutBodies, subKeys, fieldRejectedReceipt, fieldRejectedVerdict, repeatSetTaskParent },
     )
   }
 
@@ -2021,9 +2078,10 @@ async function main(): Promise<void> {
             return new Response(JSON.stringify({ id: 'rel-ok' }), { status: 200 })
           }
           if (method === 'DELETE') {
-            const urlObj = new URL(u)
-            const rType = urlObj.searchParams.get('relationType') || ''
-            const tId = urlObj.searchParams.get('workitemId') || ''
+            // 官方 DeleteWorkitemRelationRecord 把 relationType 与 workitemId 放在 JSON 请求体里（缺陷 02 真机核清）。
+            const b = JSON.parse(String(init?.body || '{}'))
+            const rType = String(b.relationType || '')
+            const tId = String(b.workitemId || '')
             relWriteCalls.push({ method: 'DELETE', wid: realWid, relationType: rType, targetId: tId })
             const list = getRelList(realWid)
             const idx = list.findIndex((r) => r.relationType === rType && r.resourceId === tId)

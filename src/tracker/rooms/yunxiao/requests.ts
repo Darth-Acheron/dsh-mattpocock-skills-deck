@@ -140,10 +140,20 @@ export function requestWorkitemRelationRecordCreate(opCtx: MaybeCtx, organizatio
   return yunxiaoClient(opCtx).request(workitemRelationRecordsPath(organizationId, workitemId), { method: 'POST', body: { relationType, workitemId: targetWorkitemId }, timeoutMs, cmd: 'projex:relation-create', bucket: 'write' })
 }
 
-/** 删除工作项关联关系记录：DELETE .../workitems/{workitemId}/relationRecords（返回 204）。 */
+/**
+ * 删除工作项关联关系记录：DELETE .../workitems/{workitemId}/relationRecords（返回 204）。
+ * relationType 与目标 workitemId 按 DeleteWorkitemRelationRecord 官方文档放在 JSON 请求体里；
+ * 真机实测（缺陷 02）把二者放进查询串时服务端返回 400「Request parameters are invalid」，
+ * 而这条 400 此前会被上层尽力删除的容错吞掉，导致解除父子时原生 parentId 一直清不掉。
+ */
 export function requestWorkitemRelationRecordDelete(opCtx: MaybeCtx, organizationId: string, workitemId: string, relationType: YunxiaoRelationType, targetWorkitemId: string, timeoutMs: number): Promise<YunxiaoHttpResult> {
-  const q = 'relationType=' + encodeURIComponent(relationType) + '&workitemId=' + encodeURIComponent(targetWorkitemId)
-  return yunxiaoClient(opCtx).request(workitemRelationRecordsPath(organizationId, workitemId, q), { method: 'DELETE', timeoutMs, cmd: 'projex:relation-delete', bucket: 'write' })
+  return yunxiaoClient(opCtx).request(workitemRelationRecordsPath(organizationId, workitemId), {
+    method: 'DELETE',
+    body: { relationType, workitemId: targetWorkitemId },
+    timeoutMs,
+    cmd: 'projex:relation-delete',
+    bucket: 'write',
+  })
 }
 
 /** 查询项目标签列表：GET .../projects/{projectId}/labels（无标签时返回 204）。 */

@@ -9,6 +9,10 @@
  *      CreateWorkitemRelationRecord(PARENT) 建立原生父子关系；若因企业默认矩阵限制返回 400，
  *      自动保留文件头 DSH-PARENT 并调用 CreateWorkitemRelationRecord(ASSOCIATED) 建立原生关联，
  *      使写后读回（edge-landing）与 listSubIssues 100% 成立。
+ *   3. 更新工作项（UpdateWorkitem）的请求体永不携带 parentId 字段：真机实测（缺陷 02，MattDemo——维护者用于真机核验的云效项目——的 Task）
+ *      对带 parentId 的更新毫秒级返回 400「workitem does not contains field : ["parentId"]」，
+ *      而父子关系的原生写入由创建工作项（CreateWorkitem.parentId）与关系记录负责，更新里发它属冗余；
+ *      这类被服务端明确拒绝的 400 由错误规则表归入 unsupported（回执 backend-unsupported），不再误报成超时。
  *
  * 为什么 setAssignees 以正文文件头 <!-- DSH-ASSIGNEES: ... --> 为契约真源：
  *   1. 真机实测证实 Yunxiao Projex 的 assignedTo 必填且不可清空（传 ""/null/"EMPTY_VALUE" 均报 400），
@@ -124,9 +128,13 @@ async function removeNativeParentRelations(
  * 规则：
  *   1. 自环校验：parentKey 与 key 指向同一张票时立即返回 conflict（INPUT_REFUSED）；
  *   2. 绑定父项时：先验证父工作项存在并拿到其纯数字 key 与 26 位 workitemId，
- *      成对写入文件头 <!-- DSH-PARENT: <key> --> 与原生 PARENT 关系记录；
+ *      写入文件头 <!-- DSH-PARENT: <key> --> 并建立原生 PARENT 关系记录；
  *      若企业默认关系矩阵拒绝原生 PARENT（如 Bug 类型返回 400），自动保留 DSH-PARENT 并建立 ASSOCIATED 关联；
- *   3. 解除父项（parentKey === null）时：移除文件头 DSH-PARENT，并清理原生 PARENT / ASSOCIATED 关系；
+ *      更新请求体永不携带 parentId 字段（真机实测缺陷 02：UpdateWorkitem 对 Task 拒绝该字段），
+ *      原生父子关系由创建工作项时的 parentId 与关系记录负责；读回的原生 parentId 已等于目标父票、
+ *      且正文标记无需改写时（同父重复设置），更新请求与关系创建都跳过；
+ *   3. 解除父项（parentKey === null）时：移除文件头 DSH-PARENT，并清理原生 PARENT / ASSOCIATED 关系，
+ *      解除用的更新请求同样不带 parentId 字段；
  *   4. 写后读回核对：读回归一化后的 Issue.parentKey 必须与期望值一致，否则返回 conflict。
  */
 export async function setParent(
@@ -167,20 +175,30 @@ export async function setParent(
     const oldParentIds = await collectCurrentParentWorkitemIds(effective, proj, childFetched.raw)
     const oldBody = bodyOfWorkitem(childFetched.raw)
 
+    /** 把正文文件头 DSH-PARENT 标记的改写落盘。请求体只有 description 与 formatType，永不带 parentId：
+     * 真机实测（缺陷 02）UpdateWorkitem 对 Task 类工作项毫秒级拒绝 parentId 字段，原生父子关系由创建工作项
+     * 与关系记录负责，更新里发它属冗余（见文件头第 3 条）。正文无需改写时调用方自行跳过本函数；
+     * 失败按云效判档返回该失败，成功返回 null。 */
+    const putDescriptionMarker = async (newBody: string, failureMessage: string): Promise<OpResult<Issue> | null> => {
+      const updRes = await requestWorkitemUpdate(
+        effective,
+        proj.organizationId,
+        childFetched.workitemId,
+        { description: newBody, formatType: 'MARKDOWN' },
+        GITLAB_READ_TIMEOUT_MS,
+      )
+      return updRes.ok ? null : failYunxiao(updRes, updRes.stderr || updRes.stdout || failureMessage, updRes, effective)
+    }
+
     if (rawParentInput === '') {
       const newBody = rewriteDescriptionWithHiddenParent(oldBody, null)
+      // 原生父子关系的解除由下方关系记录删除负责，这条更新请求只负责移除正文文件头 DSH-PARENT 标记
+      // （请求体不带 parentId 的不变式见 putDescriptionMarker 与文件头第 3 条）。
+      // 正文标记本就干净的幂等解除连这条更新请求也不发。
       await removeNativeParentRelations(effective, proj, childFetched.workitemId, oldParentIds)
-      if (newBody !== oldBody || normalizeYunxiaoParentId(childFetched.raw['parentId']) !== null) {
-        const updRes = await requestWorkitemUpdate(
-          effective,
-          proj.organizationId,
-          childFetched.workitemId,
-          { description: newBody, formatType: 'MARKDOWN', parentId: '' },
-          GITLAB_READ_TIMEOUT_MS,
-        )
-        if (!updRes.ok) {
-          return failYunxiao(updRes, updRes.stderr || updRes.stdout || '解除父工作项失败', updRes, effective)
-        }
+      if (newBody !== oldBody) {
+        const putFailure = await putDescriptionMarker(newBody, '解除父工作项失败')
+        if (putFailure) return putFailure
       }
       const afterClear = await fetchRawWorkitem(effective, proj, childFetched.workitemId)
       const clearRaw: RawBag = afterClear.ok
@@ -235,58 +253,54 @@ export async function setParent(
       await removeNativeParentRelations(effective, proj, childFetched.workitemId, staleOldParents)
     }
 
-    // 1) 成对更新正文文件头 DSH-PARENT 标记与原生 parentId 字段（若该类型不支持原生 parentId 字段写入则自动回退仅写正文标记）
-    let bodyUpdRes = await requestWorkitemUpdate(
-      effective,
-      proj.organizationId,
-      childFetched.workitemId,
-      { description: newBody, formatType: 'MARKDOWN', parentId: wantParentId },
-      GITLAB_READ_TIMEOUT_MS,
-    )
-    if (!bodyUpdRes.ok && isRelationMatrixConstraintError(bodyUpdRes)) {
-      bodyUpdRes = await requestWorkitemUpdate(
+    // 1) 更新正文文件头 DSH-PARENT 标记（请求体不带 parentId 的不变式见 putDescriptionMarker）。
+    //    正文标记无需改写时（同父重复设置的幂等场景）连这条更新请求也不发。
+    if (newBody !== oldBody) {
+      const putFailure = await putDescriptionMarker(newBody, '写入父工作项标记失败')
+      if (putFailure) return putFailure
+    }
+
+    // 2) 优先尝试建立原生 PARENT 关系记录；若因企业默认矩阵限制返回 400，则自动降级建立原生 ASSOCIATED 关联。
+    //    读回的原生 parentId 已等于目标父票时原生父子关系已经成立（重复补写正是缺陷 02 的现场），
+    //    不再重复创建关系记录，避免同一条 PARENT 关系被写第二遍。
+    const nativeParentId = normalizeYunxiaoParentId(childFetched.raw['parentId'])
+    const parentAlreadyNative = nativeParentId !== null && nativeParentId.toLowerCase() === wantParentId.toLowerCase()
+    // 原生父关系最终是否指向目标父票（只在读回失败拼兜底 raw 时用）：同父跳过补写视为已成立，
+    // 新建 PARENT 关系成功时成立，矩阵约束降级成 ASSOCIATED 时不成立（原生 parentId 未被这次写入改动）。
+    let nativeParentEstablished = parentAlreadyNative
+    if (!parentAlreadyNative) {
+      const relRes = await requestWorkitemRelationRecordCreate(
         effective,
         proj.organizationId,
         childFetched.workitemId,
-        { description: newBody, formatType: 'MARKDOWN' },
+        'PARENT',
+        wantParentId,
         GITLAB_READ_TIMEOUT_MS,
       )
-    }
-    if (!bodyUpdRes.ok) {
-      return failYunxiao(bodyUpdRes, bodyUpdRes.stderr || bodyUpdRes.stdout || '写入父工作项标记失败', bodyUpdRes, effective)
-    }
-
-    // 2) 优先尝试建立原生 PARENT 关系记录；若因企业默认矩阵限制返回 400，则自动降级建立原生 ASSOCIATED 关联
-    const relRes = await requestWorkitemRelationRecordCreate(
-      effective,
-      proj.organizationId,
-      childFetched.workitemId,
-      'PARENT',
-      wantParentId,
-      GITLAB_READ_TIMEOUT_MS,
-    )
-    if (!relRes.ok) {
-      if (isRelationMatrixConstraintError(relRes)) {
-        const assocRes = await requestWorkitemRelationRecordCreate(
-          effective,
-          proj.organizationId,
-          childFetched.workitemId,
-          'ASSOCIATED',
-          wantParentId,
-          GITLAB_READ_TIMEOUT_MS,
-        )
-        if (!assocRes.ok && !isRelationMatrixConstraintError(assocRes)) {
-          return failYunxiao(assocRes, assocRes.stderr || assocRes.stdout || '建立父子降级关联关系失败', assocRes, effective)
+      if (!relRes.ok) {
+        if (isRelationMatrixConstraintError(relRes)) {
+          const assocRes = await requestWorkitemRelationRecordCreate(
+            effective,
+            proj.organizationId,
+            childFetched.workitemId,
+            'ASSOCIATED',
+            wantParentId,
+            GITLAB_READ_TIMEOUT_MS,
+          )
+          if (!assocRes.ok && !isRelationMatrixConstraintError(assocRes)) {
+            return failYunxiao(assocRes, assocRes.stderr || assocRes.stdout || '建立父子降级关联关系失败', assocRes, effective)
+          }
+        } else {
+          return failYunxiao(relRes, relRes.stderr || relRes.stdout || '建立原生父子关系失败', relRes, effective)
         }
-      } else {
-        return failYunxiao(relRes, relRes.stderr || relRes.stdout || '建立原生父子关系失败', relRes, effective)
       }
+      nativeParentEstablished = relRes.ok
     }
 
     const afterSet = await fetchRawWorkitem(effective, proj, childFetched.workitemId)
     const finalRaw: RawBag = afterSet.ok
       ? afterSet.raw
-      : { ...childFetched.raw, description: newBody, parentId: relRes.ok ? wantParentId : childFetched.raw['parentId'] }
+      : { ...childFetched.raw, description: newBody, parentId: nativeParentEstablished ? wantParentId : childFetched.raw['parentId'] }
     const updatedIssue = normalizeYunxiaoIssue(finalRaw, repo)
     if (updatedIssue.parentKey !== wantParentKey) {
       return fail(

@@ -260,6 +260,19 @@ const ERROR_SAMPLES = [
     traceFile: 'src/tracker/kernel/error-rules.ts',
     trace: 'zsh: segmentation fault (core dumped)',
   },
+  {
+    id: 'yunxiao-workitem-field-not-exist-400',
+    note: '实测错例（缺陷 02）：云效 UpdateWorkitem 对 Task 类工作项带 parentId 的更新毫秒级返回这种 400，必须判成后端不支持而不是网络超时',
+    source: SAMPLE_SOURCES.BACKEND_SAMPLE,
+    text: '{"errorCode":"400","errorMessage":"workitem does not contains field : [\\"parentId\\"]"}',
+    status: 400,
+    expectKind: 'unsupported',
+    expectLayer: 'fact',
+    expectVia: 'extension',
+    via: 'yunxiao',
+    traceFile: 'src/tracker/rooms/yunxiao/errors.ts',
+    trace: 'workitem does not contains field',
+  },
 ]
 
 /** 票面点名、必须一直留在这张表里的两条实测错例（门禁按 id 点名，删了或改名都算红）。 */
