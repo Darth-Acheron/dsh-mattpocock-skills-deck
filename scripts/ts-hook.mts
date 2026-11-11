@@ -86,4 +86,17 @@ registerHooks({
     if (url) return { url, shortCircuit: true }
     return nextResolve(specifier, context)
   },
+  // 为什么还要挂同步 load 钩子：在 Node v24.17.0 中，命令行带 --import 会让所有入口都经 ESM 装载器进入，
+  // 不含顶层 import/export 的 .ts 文件被判为 format='commonjs-typescript'，而 Node v24.17.0 的
+  // defaultLoadSync 只对 format==='commonjs' 标记 shouldBeReloadedByCJSLoader=true，导致
+  // commonjs-typescript 落入重造 requireFn、直接调 CJSModule._resolveFilename 绕过上面的 resolve 钩子。
+  // 这里显式补上 shouldBeReloadedByCJSLoader: true，让它改走真实的 CommonJS Module._load；
+  // 在已改用 isSourceLoadedSynchronously 的更新版 Node（如 v26+）中，该附加字段是无害的空操作。
+  load(url: string, context: unknown, nextLoad: (url: string, context: unknown) => unknown): unknown {
+    const result = nextLoad(url, context) as { format?: unknown; shouldBeReloadedByCJSLoader?: boolean } | null
+    if (result && typeof result === 'object' && result.format === 'commonjs-typescript') {
+      return { ...result, shouldBeReloadedByCJSLoader: true }
+    }
+    return result
+  },
 })

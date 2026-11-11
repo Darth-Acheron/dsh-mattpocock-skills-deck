@@ -3,6 +3,7 @@
 //
 // 门禁归属: src/tracker/contract
 // 门禁归属: src/tracker/contract/index.ts
+// 门禁归属: scripts/ts-hook.mts
 // 为什么显式写这两条：契约目录的路径是 resolveInRoot(process.env.DSH_CONTRACT_DIR || 'src/tracker/contract')
 // 拼出来的，归属表按字面量路径认不出它，会把这些契约文件算成「没人守」。这两条把归属钉死。
 //
@@ -49,6 +50,10 @@
 //       5b、运行时反面证明：真建一个注册表，残模块试注册必须被拒（理由是形状），
 //       有效最小模块试注册必须能进（正控）。这条验的是「入口断言没被拿掉」——
 //       `register` 里调 `validateMod` 是运行时唯一的形状入口，删了它编译不会说话。（#1192 新加。）
+//       5c、装载钩子 CommonJS .ts 入口回归证明：起子进程挂 `--import ./scripts/ts-hook.mts`
+//       跑一份不含顶层 import/export 的 CommonJS 形态 `.ts` 入口，里面裸 `require('./sibling.js')`
+//       必须命中同目录下的 `./sibling.ts`（防止 Node v24.17.0 把 `commonjs-typescript` 送进
+//       绕过 `registerHooks` 的重造 `requireFn`）。
 //
 // 再撤四项（2026-10-14 #1147 决策 8：类型检查接管后撤掉。顺序是先立后撤——
 //   跟踪器配置落地、三条断言写好、三种错故意造出确认变红之后，才动手删）：
@@ -633,6 +638,48 @@ function main(): void {
             (got.noBudgetRejected === true ? '' : '：缺预算竟然通过了——预算必填这道口可能被拿掉，速查'),
         )
       }
+    }
+  }
+
+  // ---- 5c) 装载钩子 CommonJS .ts 入口回归证明：--import 下 commonjs-typescript 入口裸 require('./sibling.js') 必过钩子 ----
+  // 为什么有这一项：在 Node v24.17.0 中，命令行传了 --import 会让所有入口都经 ESM 装载器进入，
+  // 不含顶层 import/export 的 .ts 入口被判定为 format='commonjs-typescript'，而 Node v24.17.0 的
+  // defaultLoadSync 只对 format==='commonjs' 标记 shouldBeReloadedByCJSLoader=true，导致
+  // commonjs-typescript 落入重造 requireFn、直接调 CJSModule._resolveFilename 绕过 registerHooks。
+  // scripts/ts-hook.mts 用同步 load 钩子给 commonjs-typescript 补上 shouldBeReloadedByCJSLoader: true，
+  // 这里用真实子进程钉死这条路径。
+  {
+    const hookAbs = path.join(ROOT, 'scripts', 'ts-hook.mts')
+    const hookUrl = pathToFileURL(hookAbs).href
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-cjs-ts-hook-'))
+    try {
+      const siblingTs = path.join(tmpDir, 'sibling.ts')
+      const entryTs = path.join(tmpDir, 'entry.ts')
+      fs.writeFileSync(siblingTs, 'const tag: string = "cjs-ts-sibling-ok";\nmodule.exports = { tag };\n', 'utf8')
+      fs.writeFileSync(
+        entryTs,
+        'const sib: { tag: string } = require("./sibling.js");\nconsole.log(JSON.stringify({ ok: sib.tag === "cjs-ts-sibling-ok", tag: sib.tag }));\n',
+        'utf8',
+      )
+      const cr = spawnSync(process.execPath, ['--import', hookUrl, entryTs], { encoding: 'utf8', timeout: 30000 })
+      if (cr.error) {
+        check(false, 'CommonJS .ts 入口装载探针能跑起来（起进程失败）：' + (cr.error.message || String(cr.error)))
+      } else {
+        let parsed: { ok?: boolean; tag?: string } | null = null
+        try {
+          parsed = JSON.parse(String(cr.stdout || '').trim().split(/\r?\n/).pop() || '')
+        } catch {
+          parsed = null
+        }
+        const ok = cr.status === 0 && !!parsed && parsed.ok === true
+        check(
+          ok,
+          'CommonJS 形态 .ts 入口在 --import 挂载 ts-hook 下裸 require("./sibling.js") 命中同名 .ts（退出码 0）' +
+            (ok ? '' : '（退出码 ' + cr.status + '，stderr=' + String(cr.stderr || '').trim().slice(-240) + '）'),
+        )
+      }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
     }
   }
 
