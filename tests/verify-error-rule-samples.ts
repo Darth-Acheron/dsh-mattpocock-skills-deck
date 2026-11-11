@@ -226,7 +226,9 @@ function discoverExtensionTables(dirRel) {
 async function main() {
   const rulesMod = await imp('src/tracker/kernel/error-rules.ts')
   const { COMMON_RULES, RULE_LAYERS, matchRule, judgeFactsDetailed, rateLimitClassOf } = rulesMod
-  const samples = require('./fixtures/error-samples.js')
+  // 夹具已迁成 .ts：这行原来是 require('./fixtures/error-samples.js')，裸 require 在本文件的装载路径下
+  // 不经装载钩子的同名解析，迁移后当场红（Cannot find module）；改走本门禁既有的 imp() 装载夹具。
+  const samples = await imp('tests/fixtures/error-samples.ts')
 
   // ── A 规则表自证 ──────────────────────────────────────────────────────────
   console.log('\nA 规则表自证（每条规则拿自带的样本跑判档，命中的必须是它自己）')
