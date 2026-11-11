@@ -1742,20 +1742,55 @@ async function main(): Promise<void> {
       gmtCreate: 1788777500000,
       gmtModified: 1788778500000,
     }
+    const mapItemB: any = {
+      id: 'daf74b58fe12a19443cae19b4b',
+      serialNumber: 'DCIAFS-5',
+      subject: '探索地图 5（换父目标父 B）',
+      description: '# Map 5\n',
+      formatType: 'MARKDOWN',
+      statusStageId: '2',
+      parentId: 'EMPTY_VALUE',
+      labels: [{ id: 'lbl-map', name: 'wayfinder:map', color: '#8B5CF6' }],
+      gmtCreate: 1788776500000,
+      gmtModified: 1788779500000,
+    }
 
     const store = new Map<string, any>([
       [mapItem.id, mapItem],
       [mapItem.serialNumber, mapItem],
+      [mapItemB.id, mapItemB],
+      [mapItemB.serialNumber, mapItemB],
       [taskItem.id, taskItem],
       [taskItem.serialNumber, taskItem],
       [bugItem.id, bugItem],
       [bugItem.serialNumber, bugItem],
     ])
     const relationCalls: Array<{ method: string; wid: string; relationType: string; targetId: string }> = []
-    const subRelationRecords: Array<{ id: string; relationType: string; resourceType: string; resourceId: string }> = []
+    type RelStubRow = { id: string; relationType: string; resourceType: string; resourceId: string }
+    const subRelationRecordsByParent = new Map<string, RelStubRow[]>([
+      [mapItem.id, []],
+      [mapItemB.id, []],
+    ])
+    const parentRelationRecordsByChild = new Map<string, RelStubRow[]>()
+    const upsertStubRel = (bucketMap: Map<string, RelStubRow[]>, ownerId: string, row: RelStubRow) => {
+      const list = bucketMap.get(ownerId) || []
+      if (!list.some((r) => r.resourceId === row.resourceId)) {
+        list.push(row)
+        bucketMap.set(ownerId, list)
+      }
+    }
+    const removeStubRel = (bucketMap: Map<string, RelStubRow[]>, ownerId: string, resourceId: string) => {
+      const list = bucketMap.get(ownerId) || []
+      const idx = list.findIndex((r) => r.resourceId === resourceId)
+      if (idx >= 0) list.splice(idx, 1)
+    }
     const parentPutBodies: Array<{ wid: string; body: any }> = []
     // 打开后，下一条 Task 更新请求会被桩以「字段不存在」400 拒绝（复刻 MattDemo——维护者用于真机核验的云效项目——实测的错误体），用来验证判档与回执。
     let failNextTaskPutWithField400 = false
+    // 打开后，POST relationRecords(PARENT) 返回 200 但故意不同步更新或强制覆写 taskItem.parentId，用来验证写后读回直核原生 parentId。
+    let overrideNextPostParentId: string | null = null
+    // 打开后，下一条 POST relationRecords(PARENT) 返回 MattDemo 真机实测的单父冲突 400（{"errorCode":"InvaildData.Failed","errorMessage":"工作项已存在父项"}），验证不被误降级为 ASSOCIATED。
+    let failNextPostParentWithExistingParent400 = false
 
     const parentCtx: any = {
       cwd: '/ws-parent',
@@ -1770,7 +1805,10 @@ async function main(): Promise<void> {
         if (relMatch) {
           const wid = decodeURIComponent(relMatch[1])
           if (method === 'GET' && u.includes('relationType=SUB')) {
-            return new Response(JSON.stringify(subRelationRecords), { status: 200 })
+            return new Response(JSON.stringify(subRelationRecordsByParent.get(wid) || []), { status: 200 })
+          }
+          if (method === 'GET' && u.includes('relationType=PARENT')) {
+            return new Response(JSON.stringify(parentRelationRecordsByChild.get(wid) || []), { status: 200 })
           }
           if (method === 'GET') {
             return new Response(JSON.stringify([]), { status: 200 })
@@ -1785,8 +1823,36 @@ async function main(): Promise<void> {
               )
             }
             if (wid === taskItem.id && b.relationType === 'PARENT') {
-              taskItem.parentId = b.workitemId
-              subRelationRecords.push({ id: 'rel-sub-3', relationType: 'SUB', resourceType: 'Task', resourceId: taskItem.id })
+              if (failNextPostParentWithExistingParent400) {
+                failNextPostParentWithExistingParent400 = false
+                return new Response(
+                  JSON.stringify({
+                    errorCode: 'InvaildData.Failed',
+                    errorMessage: '工作项已存在父项',
+                    errorMsg: '工作项已存在父项',
+                    success: false,
+                  }),
+                  { status: 400 },
+                )
+              }
+              if (overrideNextPostParentId !== null) {
+                taskItem.parentId = overrideNextPostParentId
+                overrideNextPostParentId = null
+              } else {
+                taskItem.parentId = b.workitemId
+                upsertStubRel(subRelationRecordsByParent, b.workitemId, {
+                  id: 'rel-sub-' + b.workitemId + '-3',
+                  relationType: 'SUB',
+                  resourceType: 'Task',
+                  resourceId: taskItem.id,
+                })
+                upsertStubRel(parentRelationRecordsByChild, taskItem.id, {
+                  id: 'rel-parent-3-' + b.workitemId,
+                  relationType: 'PARENT',
+                  resourceType: 'Req',
+                  resourceId: b.workitemId,
+                })
+              }
             }
             return new Response(JSON.stringify({ id: 'rel-' + wid }), { status: 200 })
           }
@@ -1797,17 +1863,17 @@ async function main(): Promise<void> {
             const tId = String(b.workitemId || '')
             relationCalls.push({ method: 'DELETE', wid, relationType: rType, targetId: tId })
             if (wid === taskItem.id && rType === 'PARENT') {
-              taskItem.parentId = ''
-              const idx = subRelationRecords.findIndex((r) => r.resourceId === taskItem.id)
-              if (idx >= 0) subRelationRecords.splice(idx, 1)
+              if (!tId || taskItem.parentId === tId) taskItem.parentId = ''
+              removeStubRel(subRelationRecordsByParent, tId, taskItem.id)
+              removeStubRel(parentRelationRecordsByChild, taskItem.id, tId)
             }
             return new Response(null, { status: 204 })
           }
         }
         if (u.endsWith('/workitems:search')) {
-          return new Response(JSON.stringify([mapItem, taskItem, bugItem]), {
+          return new Response(JSON.stringify([mapItem, mapItemB, taskItem, bugItem]), {
             status: 200,
-            headers: { 'x-page': '1', 'x-per-page': '100', 'x-total': '3', 'x-total-pages': '1', 'x-next-page': '2' },
+            headers: { 'x-page': '1', 'x-per-page': '100', 'x-total': '4', 'x-total-pages': '1', 'x-next-page': '2' },
           })
         }
         if (u.includes('/comments')) {
@@ -1881,6 +1947,64 @@ async function main(): Promise<void> {
     const getColdParent = await backend.get(repoRef, '3', {}, parentCtx)
     taskItem.description = '<!-- DSH-PARENT: 2 -->\n# Task 3\n'
 
+    // 9.3c 换父场景（父 A #2 -> 父 B #5）：删除旧父 A 的 PARENT 关系、更新 DSH-PARENT: 5（不带 parentId）、创建新父 B 的 PARENT 关系，且新旧父 listSubIssues 同步更新
+    const reparentToB = await backend.setParent(repoRef, '3', '5', undefined, parentCtx)
+    const subIssuesMapAAfterReparent = await backend.listSubIssues(repoRef, '2', {}, parentCtx)
+    const subKeysMapAAfterReparent = subIssuesMapAAfterReparent.ok ? subIssuesMapAAfterReparent.data.items.map((i: any) => i.key).sort() : []
+    const subIssuesMapBAfterReparent = await backend.listSubIssues(repoRef, '5', {}, parentCtx)
+    const subKeysMapBAfterReparent = subIssuesMapBAfterReparent.ok ? subIssuesMapBAfterReparent.data.items.map((i: any) => i.key).sort() : []
+
+    // 9.3d 写后读回直核原生 parentId（防 DSH-PARENT 回退假阴性）：
+    // (1) 原生 PARENT 关系创建返回 200 但读回的 raw.parentId 为空串 ""；
+    // (2) 原生 PARENT 关系创建返回 200 但读回的 raw.parentId 仍滞留在未缓存的旧父 ID；
+    // (3) Bug 降级 ASSOCIATED 但此前残留了未清除的旧原生 parentId。
+    overrideNextPostParentId = ''
+    const reparentDesyncEmptyRes = await backend.setParent(repoRef, '3', '2', undefined, parentCtx)
+    // 恢复到父 B #5，并模拟冷缓存下残留未缓存的旧父 ID
+    taskItem.parentId = '99999999999999999999999999'
+    taskItem.description = '# Task 3 native old parent only\n'
+    markersMod.clearYunxiaoIssueKeyCache()
+    overrideNextPostParentId = '99999999999999999999999999'
+    const reparentDesyncUncachedOldRes = await backend.setParent(repoRef, '3', '5', undefined, parentCtx)
+    // Bug 降级 ASSOCIATED 时若读回仍残留旧原生 parentId，同样必须报 conflict
+    bugItem.parentId = mapItem.id
+    const bugReparentStaleNativeRes = await backend.setParent(repoRef, '4', '5', undefined, parentCtx)
+    bugItem.parentId = null
+    // 单父冲突 400（真机实测「工作项已存在父项」，同为 InvaildData.Failed）：isRelationMatrixConstraintError 判为 false，setParent 不误发 ASSOCIATED 而是直接返回 conflict
+    const assocCountBeforeSingleParent400 = relationCalls.filter(
+      (c) => c.method === 'POST' && c.wid === taskItem.id && c.relationType === 'ASSOCIATED',
+    ).length
+    failNextPostParentWithExistingParent400 = true
+    const singleParentConflictRes = await backend.setParent(repoRef, '3', '2', undefined, parentCtx)
+    const assocCountAfterSingleParent400 = relationCalls.filter(
+      (c) => c.method === 'POST' && c.wid === taskItem.id && c.relationType === 'ASSOCIATED',
+    ).length
+    const isMatrixOnTypeConstraint = yunxiaoErrorsMod.isRelationMatrixConstraintError({
+      ok: false,
+      status: 400,
+      stderr: JSON.stringify({ errorCode: 'InvaildData.Failed', errorMessage: '无法创建此关系, 不满足关系对应的类型约束！' }),
+      stdout: '',
+    })
+    const isMatrixOnSingleParentConflict = yunxiaoErrorsMod.isRelationMatrixConstraintError({
+      ok: false,
+      status: 400,
+      stderr: JSON.stringify({ errorCode: 'InvaildData.Failed', errorMessage: '工作项已存在父项' }),
+      stdout: '',
+    })
+    // 9.3e 当子票上残留了 raw.parentId 与 DSH-PARENT 均未体现的孤立 PARENT 关系记录（指向 mapItemB #5）时，切换到 #2 仍能通过 ListWorkitemRelationRecords(PARENT) 收集并清理该残留记录
+    taskItem.parentId = null
+    taskItem.description = '# Task 3 with orphan PARENT relation record\n'
+    parentRelationRecordsByChild.set(taskItem.id, [
+      { id: 'rel-orphan-parent-5', relationType: 'PARENT', resourceType: 'Req', resourceId: mapItemB.id },
+    ])
+    const relCallCountBeforeOrphan = relationCalls.length
+    const reparentFromOrphanRelRes = await backend.setParent(repoRef, '3', '2', undefined, parentCtx)
+    const orphanParentDeleted = relationCalls
+      .slice(relCallCountBeforeOrphan)
+      .some((c) => c.method === 'DELETE' && c.wid === taskItem.id && c.relationType === 'PARENT' && c.targetId === mapItemB.id)
+    // 恢复正常状态供后续 9.4 解除测试使用
+    await backend.setParent(repoRef, '4', '2', undefined, parentCtx)
+
     // 9.4 解除父票（parentKey = null，更新请求同样不带 parentId）与自环拦截（parentKey === key -> conflict）
     const taskPutCountBeforeClear = parentPutBodies.filter((c) => c.wid === taskItem.id).length
     const clearTaskParent = await backend.setParent(repoRef, '3', null, undefined, parentCtx)
@@ -1933,10 +2057,31 @@ async function main(): Promise<void> {
       fieldRejectedReceipt.errorKind === 'unsupported' &&
       fieldRejectedVerdict.kind === 'unsupported' &&
       fieldRejectedVerdict.fallback === false
+    const c7Reparent =
+      reparentToB.ok === true &&
+      reparentToB.data.parentKey === '5' &&
+      relationCalls.some((c) => c.method === 'DELETE' && c.wid === taskItem.id && c.relationType === 'PARENT' && c.targetId === mapItem.id) &&
+      relationCalls.some((c) => c.method === 'POST' && c.wid === taskItem.id && c.relationType === 'PARENT' && c.targetId === mapItemB.id) &&
+      JSON.stringify(subKeysMapAAfterReparent) === JSON.stringify(['4']) &&
+      JSON.stringify(subKeysMapBAfterReparent) === JSON.stringify(['3']) &&
+      reparentDesyncEmptyRes.ok === false &&
+      reparentDesyncEmptyRes.error.kind === 'conflict' &&
+      reparentDesyncUncachedOldRes.ok === false &&
+      reparentDesyncUncachedOldRes.error.kind === 'conflict' &&
+      bugReparentStaleNativeRes.ok === false &&
+      bugReparentStaleNativeRes.error.kind === 'conflict' &&
+      isMatrixOnTypeConstraint === true &&
+      isMatrixOnSingleParentConflict === false &&
+      singleParentConflictRes.ok === false &&
+      singleParentConflictRes.error.kind === 'conflict' &&
+      assocCountAfterSingleParent400 === assocCountBeforeSingleParent400 &&
+      reparentFromOrphanRelRes.ok === true &&
+      reparentFromOrphanRelRes.data.parentKey === '2' &&
+      orphanParentDeleted === true
     check(
-      c1 && c1b && c2 && c3 && c4 && c5 && c6,
-      '9.1 setParent 写 DSH-PARENT 与原生 PARENT（更新请求停发 parentId）、同父重复设置幂等跳过、解除父子与自环拦截、字段不存在 400 判成 unsupported 且回执不再误报 backend-timeout、listSubIssues 合并原生 SUB 与 DSH-PARENT 扫描结果',
-      { c1, c1b, c2, c3, c4, c5, c6, taskVerdict, bugVerdict, taskParentPutBodies, bugParentPutBodies, taskClearPutBodies, subKeys, fieldRejectedReceipt, fieldRejectedVerdict, repeatSetTaskParent },
+      c1 && c1b && c2 && c3 && c4 && c5 && c6 && c7Reparent,
+      '9.1 setParent 写 DSH-PARENT 与原生 PARENT（更新请求停发 parentId）、换父（父 A -> 父 B）三处同步与写后读回原生 parentId 直核、同父重复设置幂等跳过、解除父子与自环拦截、字段不存在 400 判成 unsupported 且回执不再误报 backend-timeout、listSubIssues 合并原生 SUB 与 DSH-PARENT 扫描结果',
+      { c1, c1b, c2, c3, c4, c5, c6, c7Reparent, reparentToB, subKeysMapAAfterReparent, subKeysMapBAfterReparent, reparentDesyncEmptyRes, reparentDesyncUncachedOldRes, bugReparentStaleNativeRes },
     )
   }
 
