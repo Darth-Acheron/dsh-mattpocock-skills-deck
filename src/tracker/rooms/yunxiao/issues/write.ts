@@ -26,8 +26,8 @@ import {
 } from '../model/description-markers.js'
 import { getLearnedYunxiaoContext } from '../model/repo-identity.js'
 import {
-  isYunxiaoCanceledStatus, isYunxiaoCompletedStatus, isYunxiaoReopenStatus,
-  normalizeYunxiaoIssue, readYunxiaoStatusId,
+  extractStatusStageId, isYunxiaoCanceledStatus, isYunxiaoCompletedStatus, isYunxiaoReopenStatus,
+  normalizeYunxiaoIssue, readYunxiaoStatusId, YUNXIAO_STAGE_COMPLETED, YUNXIAO_STAGE_IN_PROGRESS, YUNXIAO_STAGE_TODO,
 } from '../model/normalize.js'
 import { probeYunxiaoPlatformUser } from '../repo/current-user.js'
 import {
@@ -87,16 +87,14 @@ export async function findWorkflowStatusIdByStage(
   opCtx: CtxLike | null | undefined, proj: ResolvedProjectRef, workitemId: string, workitemTypeId: string, targetStages: readonly string[],
 ): Promise<{ ok: true; statusId: string } | { ok: false; error: TrackerError }> {
   const stageSet = new Set(targetStages.map((s) => s.trim()))
-  const wantCompleted = stageSet.has('4')
-  const wantReopen = stageSet.has('1') || stageSet.has('2')
+  const wantCompleted = stageSet.has(YUNXIAO_STAGE_COMPLETED)
+  const wantReopen = stageSet.has(YUNXIAO_STAGE_TODO) || stageSet.has(YUNXIAO_STAGE_IN_PROGRESS)
   const extractFromPayload = (data: unknown): string => {
     const bag = asRecord(data)
     const statuses = bag && Array.isArray(bag['statuses']) ? bag['statuses'] : bag && Array.isArray(bag['workflowStatuses']) ? bag['workflowStatuses'] : Array.isArray(data) ? data : []
     for (const st of statuses) {
-      const sb = asRecord(st)
-      if (!sb) continue
-      const stage = String(sb['statusStageId'] ?? sb['stageId'] ?? sb['stage'] ?? sb['workflowStageIdentifier'] ?? '').trim()
-      const id = readYunxiaoStatusId(sb)
+      const stage = extractStatusStageId(st)
+      const id = readYunxiaoStatusId(st)
       if (id && stageSet.has(stage)) return id
     }
     if (wantCompleted) {
@@ -116,6 +114,7 @@ export async function findWorkflowStatusIdByStage(
         const id = readYunxiaoStatusId(st)
         if (id && isYunxiaoReopenStatus(st)) return id
       }
+      if (defaultId && !statuses.some((st) => readYunxiaoStatusId(st) === defaultId)) return defaultId
     }
     return ''
   }

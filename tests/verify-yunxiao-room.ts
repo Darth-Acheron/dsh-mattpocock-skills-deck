@@ -1398,7 +1398,7 @@ async function main(): Promise<void> {
       { createPayloadsCount: createPayloads.length, cBugFallbackLabels: cBugFallback.data?.labels },
     )
 
-    // 7.3 DSH-IDEMPOTENCY-KEY 幂等防重：重复提交相同 idempotencyKey 直接复用已有 open 工作项，不发第二次 POST
+    // 7.2 DSH-IDEMPOTENCY-KEY 幂等防重：重复提交相同 idempotencyKey 直接复用已有 open 工作项，不发第二次 POST
     const countBeforeRetry = createPayloads.length
     const cMapRetry = await backend.create(
       repoRef,
@@ -1413,7 +1413,7 @@ async function main(): Promise<void> {
       { firstKey: cMap.data.key, retryKey: cMapRetry.data?.key, createPayloadsCount: createPayloads.length },
     )
 
-    // 7.4 updateIssue（Markdown 正文与标题更新）、closeIssue（自动查询并流转至阶段 4 状态）与 reopenIssue
+    // 7.3 updateIssue（Markdown 正文与标题更新）、closeIssue（无 stage 字段工作流下兜底流转至已完成）与 reopenIssue
     const updatedRes = await backend.update(
       repoRef,
       cPlainIssue.data.key,
@@ -1437,7 +1437,7 @@ async function main(): Promise<void> {
       { updatedRes, closedRes, reopenedRes, updatePayloads },
     )
 
-    // 7.5 当工作流 statuses[] 既无阶段字段、状态名与 ID 也不匹配任何完成/重开语义时，返回 unsupported（写回执映射为 backend-unsupported）
+    // 7.4 当工作流 statuses[] 既无阶段字段、状态名与 ID 也不匹配任何完成/重开语义时，返回 unsupported（写回执映射为 backend-unsupported）
     const receiptMod = await imp('src/deck/shell/receipt-reason.ts')
     const wfCountAfterFallbackHit = workflowUrls.length
     customUnmatchedWorkflow = true
