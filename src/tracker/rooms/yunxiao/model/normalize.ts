@@ -96,6 +96,60 @@ export function deriveYunxiaoIssueType(raw: unknown, labels?: readonly Label[]):
   return ISSUE_TYPE.ISSUE as IssueType
 }
 
+const COMPLETED_STATUS_NAME_ENS = new Set(['done', 'completed', 'closed'])
+const COMPLETED_STATUS_NAMES = new Set(['已完成', '已关闭', '完成'])
+const CANCELED_STATUS_NAME_ENS = new Set(['canceled', 'cancelled'])
+const CANCELED_STATUS_NAMES = new Set(['已取消'])
+const REOPEN_STATUS_NAME_ENS = new Set(['to do', 'todo', 'open', 'in progress', 'doing'])
+const REOPEN_STATUS_NAMES = new Set(['待处理', '待办', '处理中', '进行中'])
+
+/** 提取状态对象（statuses[] 元素或工作项嵌套 status 对象）的唯一标识。 */
+export function readYunxiaoStatusId(statusItem: unknown): string {
+  const sb = asBag(statusItem)
+  if (!sb) return ''
+  if (typeof sb['id'] === 'string') return sb['id'].trim()
+  if (typeof sb['statusId'] === 'string') return sb['statusId'].trim()
+  if (typeof sb['identifier'] === 'string') return sb['identifier'].trim()
+  return ''
+}
+
+/** 判断状态对象是否表示已完成/已关闭终态（兼容 nameEn、name、displayName 与内置完成状态 ID 100014）。 */
+export function isYunxiaoCompletedStatus(statusItem: unknown): boolean {
+  const sb = asBag(statusItem)
+  if (!sb) return false
+  if (readYunxiaoStatusId(sb) === '100014') return true
+  const nameEn = typeof sb['nameEn'] === 'string' ? sb['nameEn'].trim().toLowerCase() : ''
+  if (nameEn && COMPLETED_STATUS_NAME_ENS.has(nameEn)) return true
+  const name = typeof sb['name'] === 'string' ? sb['name'].trim() : ''
+  const displayName = typeof sb['displayName'] === 'string' ? sb['displayName'].trim() : ''
+  return (name !== '' && COMPLETED_STATUS_NAMES.has(name)) || (displayName !== '' && COMPLETED_STATUS_NAMES.has(displayName))
+}
+
+/** 判断状态对象是否表示已取消终态（兼容 nameEn、name、displayName 与内置取消状态 ID 141230）。 */
+export function isYunxiaoCanceledStatus(statusItem: unknown): boolean {
+  const sb = asBag(statusItem)
+  if (!sb) return false
+  if (readYunxiaoStatusId(sb) === '141230') return true
+  const nameEn = typeof sb['nameEn'] === 'string' ? sb['nameEn'].trim().toLowerCase() : ''
+  if (nameEn && CANCELED_STATUS_NAME_ENS.has(nameEn)) return true
+  const name = typeof sb['name'] === 'string' ? sb['name'].trim() : ''
+  const displayName = typeof sb['displayName'] === 'string' ? sb['displayName'].trim() : ''
+  return (name !== '' && CANCELED_STATUS_NAMES.has(name)) || (displayName !== '' && CANCELED_STATUS_NAMES.has(displayName))
+}
+
+/** 判断状态对象是否表示初始或进行中状态（供重开工作项兜底匹配使用）。 */
+export function isYunxiaoReopenStatus(statusItem: unknown): boolean {
+  const sb = asBag(statusItem)
+  if (!sb) return false
+  const id = readYunxiaoStatusId(sb)
+  if (id === '100005' || id === '100010') return true
+  const nameEn = typeof sb['nameEn'] === 'string' ? sb['nameEn'].trim().toLowerCase() : ''
+  if (nameEn && REOPEN_STATUS_NAME_ENS.has(nameEn)) return true
+  const name = typeof sb['name'] === 'string' ? sb['name'].trim() : ''
+  const displayName = typeof sb['displayName'] === 'string' ? sb['displayName'].trim() : ''
+  return (name !== '' && REOPEN_STATUS_NAMES.has(name)) || (displayName !== '' && REOPEN_STATUS_NAMES.has(displayName))
+}
+
 /** 提取工作流阶段标识 statusStageId（兼容顶层 statusStageId 与嵌套 status.statusStageId / status.stageId）。 */
 export function extractStatusStageId(raw: unknown): string {
   const bag = asBag(raw)
@@ -107,12 +161,25 @@ export function extractStatusStageId(raw: unknown): string {
   return ''
 }
 
-/** 将工作流阶段映射为契约两态 state 与关闭原因 reason（阶段 4 已完成、阶段 5 已取消映射为 closed，其余为 open）。 */
+/**
+ * 将工作流阶段或嵌套 status 对象映射为契约两态 state 与关闭原因 reason：
+ *   1. 优先按阶段标识判定（阶段 4 -> closed/completed，阶段 5 -> closed/not_planned，其余非空阶段 -> open）；
+ *   2. 当顶层 statusStageId 缺失为空时，检查嵌套 status 对象的名称、英文名与状态 ID 进行兜底推导。
+ */
 export function deriveYunxiaoStateAndReason(raw: unknown): { state: State; reason: ClosedReason } {
   const stageId = extractStatusStageId(raw)
   if (stageId === '4') return { state: STATE.CLOSED as State, reason: CLOSED_REASON.COMPLETED as ClosedReason }
   if (stageId === '5') return { state: STATE.CLOSED as State, reason: 'not_planned' as ClosedReason }
   const bag = asBag(raw)
+  if (!stageId && bag) {
+    const statusObj = bag['status']
+    if (isYunxiaoCompletedStatus(statusObj)) {
+      return { state: STATE.CLOSED as State, reason: CLOSED_REASON.COMPLETED as ClosedReason }
+    }
+    if (isYunxiaoCanceledStatus(statusObj)) {
+      return { state: STATE.CLOSED as State, reason: 'not_planned' as ClosedReason }
+    }
+  }
   const rawState = bag && typeof bag['state'] === 'string' ? bag['state'].trim().toLowerCase() : ''
   if (rawState === 'closed' || rawState === 'close') {
     return { state: STATE.CLOSED as State, reason: (bag && typeof bag['reason'] === 'string' ? bag['reason'].trim() : CLOSED_REASON.COMPLETED) as ClosedReason }

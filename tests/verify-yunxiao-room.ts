@@ -894,26 +894,28 @@ async function main(): Promise<void> {
       assignedTo: { id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao' },
       labels: [{ id: 'lbl-map', name: 'wayfinder:map', color: '#8B5CF6' }],
     }
-    const workitem3 = {
+    const workitem3: any = {
       id: '268aa8ac348507516359714df3',
       serialNumber: 'DCIAFS-3',
       subject: '已完成子票',
       description: '<!-- DSH-PARENT: 2 -->\n# 子票 3\n',
       formatType: 'MARKDOWN',
-      statusStageId: '4',
+      statusStageId: undefined,
+      status: { id: '100014', name: '已完成', displayName: '已完成', nameEn: 'Done' },
       parentId: '25ac2befde335fcc2218d7c8bb',
       gmtCreate: 1788777000000,
       gmtModified: 1788778000000,
       assignedTo: { id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao' },
       labels: [{ id: 'lbl-task', name: 'wayfinder:task', color: '#10B981' }],
     }
-    const workitem4 = {
+    const workitem4: any = {
       id: '87db091efc8fa4189e507ea93b',
       serialNumber: 'DCIAFS-4',
       subject: '已取消工单',
       description: '# 已取消\n',
       formatType: 'MARKDOWN',
-      statusStageId: '5',
+      statusStageId: '',
+      status: { id: '141230', name: '已取消', displayName: '已取消', nameEn: 'Canceled' },
       parentId: '',
       gmtCreate: 1788777500000,
       gmtModified: 1788778500000,
@@ -1125,6 +1127,34 @@ async function main(): Promise<void> {
       '6.5 listPage 在冷缓存下自动富化原生 parentKey 与依赖图谱，且 listIssues 在明确末页（xPage=1,xTotalPages=1）满 100 条时不误报 truncated',
       { item4ParentKey: item4InColdPage?.parentKey, truncated: fullSinglePageList.truncated },
     )
+
+    // 6.6 deriveYunxiaoStateAndReason：当顶层 statusStageId 缺失时，按 status 子对象的 nameEn / name / displayName / id 兜底推导 closed 与 reason
+    const normMod = await imp('src/tracker/rooms/yunxiao/model/normalize.ts')
+    const byNameEnDone = normMod.deriveYunxiaoStateAndReason({ status: { id: 'custom-1', nameEn: 'Completed' } })
+    const byNameCnDone = normMod.deriveYunxiaoStateAndReason({ status: { id: 'custom-2', displayName: '已关闭' } })
+    const byIdDone = normMod.deriveYunxiaoStateAndReason({ status: { id: '100014' } })
+    const byNameEnCancel = normMod.deriveYunxiaoStateAndReason({ status: { id: 'custom-3', nameEn: 'Cancelled' } })
+    const byNameCnCancel = normMod.deriveYunxiaoStateAndReason({ status: { id: 'custom-4', name: '已取消' } })
+    const byIdCancel = normMod.deriveYunxiaoStateAndReason({ status: { id: '141230' } })
+    const byTodo = normMod.deriveYunxiaoStateAndReason({ status: { id: '100005', name: '待处理', nameEn: 'To Do' } })
+    check(
+      byNameEnDone.state === 'closed' &&
+        byNameEnDone.reason === 'completed' &&
+        byNameCnDone.state === 'closed' &&
+        byNameCnDone.reason === 'completed' &&
+        byIdDone.state === 'closed' &&
+        byIdDone.reason === 'completed' &&
+        byNameEnCancel.state === 'closed' &&
+        byNameEnCancel.reason === 'not_planned' &&
+        byNameCnCancel.state === 'closed' &&
+        byNameCnCancel.reason === 'not_planned' &&
+        byIdCancel.state === 'closed' &&
+        byIdCancel.reason === 'not_planned' &&
+        byTodo.state === 'open' &&
+        byTodo.reason === '',
+      '6.6 deriveYunxiaoStateAndReason 在顶层 statusStageId 缺失时支持按 status 子对象（nameEn/name/displayName/id）推导 closed（completed / not_planned）与 open',
+      { byNameEnDone, byNameCnDone, byIdDone, byNameEnCancel, byNameCnCancel, byIdCancel, byTodo },
+    )
   }
 
   console.log('\n== Slice 7：六种位置建票映射（Req/Task/Bug 及 Bug 未启用时回退 Task+bug）、幂等防重与生命周期状态流转 ==')
@@ -1140,6 +1170,8 @@ async function main(): Promise<void> {
     }
 
     let bugEnabled = true
+    let customUnmatchedWorkflow = false
+    const workflowUrls: string[] = []
     const createdStore = new Map<string, any>()
     let nextSerial = 10
     const createPayloads: any[] = []
@@ -1238,14 +1270,27 @@ async function main(): Promise<void> {
           return new Response(JSON.stringify({ id }), { status: 200 })
         }
         if (u.includes('/workflow')) {
+          workflowUrls.push(u)
+          if (customUnmatchedWorkflow) {
+            return new Response(
+              JSON.stringify({
+                defaultStatusId: '',
+                statuses: [
+                  { id: '900001', name: '评审排期', displayName: '评审排期', nameEn: 'Scheduling' },
+                  { id: '900002', name: '灰度观察', displayName: '灰度观察', nameEn: 'Canary' },
+                ],
+              }),
+              { status: 200 },
+            )
+          }
           return new Response(
             JSON.stringify({
               defaultStatusId: '100005',
               statuses: [
-                { id: '100005', name: '待处理', statusStageId: '1' },
-                { id: '100010', name: '处理中', statusStageId: '2' },
-                { id: '100014', name: '已完成', statusStageId: '4' },
-                { id: '141230', name: '已取消', statusStageId: '5' },
+                { id: '100005', name: '待处理', displayName: '待处理', nameEn: 'To Do' },
+                { id: '100010', name: '处理中', displayName: '处理中', nameEn: 'In Progress' },
+                { id: '100014', name: '已完成', displayName: '已完成', nameEn: 'Done' },
+                { id: '141230', name: '已取消', displayName: '已取消', nameEn: 'Canceled' },
               ],
             }),
             { status: 200 },
@@ -1269,7 +1314,13 @@ async function main(): Promise<void> {
             if (typeof body.subject === 'string') item.subject = body.subject
             if (typeof body.description === 'string') item.description = body.description
             if (typeof body.status === 'string') {
-              item.statusStageId = body.status === '100014' ? '4' : body.status === '141230' ? '5' : '1'
+              item.statusStageId = undefined
+              item.status =
+                body.status === '100014'
+                  ? { id: '100014', name: '已完成', displayName: '已完成', nameEn: 'Done' }
+                  : body.status === '141230'
+                    ? { id: '141230', name: '已取消', displayName: '已取消', nameEn: 'Canceled' }
+                    : { id: body.status, name: '待处理', displayName: '待处理', nameEn: 'To Do' }
             }
           }
           return new Response(null, { status: 204 })
@@ -1382,8 +1433,31 @@ async function main(): Promise<void> {
         reopenedRes.ok === true &&
         reopenedRes.data.state === 'open' &&
         updatePayloads.some((p) => p.body.status === '100005'),
-      '7.3 updateIssue 以 MARKDOWN 格式更新标题正文，closeIssue 自动查询阶段 4 状态（100014）流转关闭，reopenIssue 流转回阶段 1（100005）',
+      '7.3 updateIssue 以 MARKDOWN 格式更新标题正文，closeIssue 在无 stage 字段工作流下兜底命中 100014（已完成/Done）流转关闭，reopenIssue 兜底命中 100005（defaultStatusId/待处理）流转重开',
       { updatedRes, closedRes, reopenedRes, updatePayloads },
+    )
+
+    // 7.5 当工作流 statuses[] 既无阶段字段、状态名与 ID 也不匹配任何完成/重开语义时，返回 unsupported（写回执映射为 backend-unsupported）
+    const receiptMod = await imp('src/deck/shell/receipt-reason.ts')
+    const wfCountAfterFallbackHit = workflowUrls.length
+    customUnmatchedWorkflow = true
+    const unmatchedClose = await backend.close(repoRef, cPlainIssue.data.key, { reason: 'completed' }, writeCtx)
+    const unmatchedReopen = await backend.reopen(repoRef, cPlainIssue.data.key, writeCtx)
+    customUnmatchedWorkflow = false
+    const closeEv = receiptMod.failureOf(unmatchedClose, 'write')
+    const reopenEv = receiptMod.failureOf(unmatchedReopen, 'write')
+    check(
+      wfCountAfterFallbackHit === 2 &&
+        unmatchedClose.ok === false &&
+        unmatchedClose.error.kind === 'unsupported' &&
+        unmatchedClose.error.message.includes('不支持按阶段自动关闭') &&
+        closeEv.code === 'backend-unsupported' &&
+        unmatchedReopen.ok === false &&
+        unmatchedReopen.error.kind === 'unsupported' &&
+        unmatchedReopen.error.message.includes('不支持按阶段自动') &&
+        reopenEv.code === 'backend-unsupported',
+      '7.4 无 stage 字段工作流在单次 GetWorkitemWorkflowInfo 命中后不发冗余请求；当阶段与状态名/ID 兜底均未命中时，closeIssue/reopenIssue 返回 unsupported（回执 backend-unsupported）并写明不支持按阶段自动关闭/重开',
+      { wfCountAfterFallbackHit, unmatchedClose, unmatchedReopen, closeEv, reopenEv },
     )
   }
 

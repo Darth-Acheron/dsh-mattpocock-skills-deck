@@ -25,7 +25,10 @@ import {
   rewriteDescriptionWithHiddenParent, rewriteDescriptionWithIssueKind, withAnchor,
 } from '../model/description-markers.js'
 import { getLearnedYunxiaoContext } from '../model/repo-identity.js'
-import { normalizeYunxiaoIssue } from '../model/normalize.js'
+import {
+  isYunxiaoCanceledStatus, isYunxiaoCompletedStatus, isYunxiaoReopenStatus,
+  normalizeYunxiaoIssue, readYunxiaoStatusId,
+} from '../model/normalize.js'
 import { probeYunxiaoPlatformUser } from '../repo/current-user.js'
 import {
   requestProjectMembers, requestProjectWorkitemTypes,
@@ -72,20 +75,47 @@ export async function resolveCategoryWorkitemTypeId(
   return { ok: true, workitemTypeId: typeId }
 }
 
-/** 查询工作流中目标阶段（如阶段 4 已完成或阶段 1 待处理）对应的状态 ID。 */
+/**
+ * 查询工作流中目标阶段（如阶段 4 已完成或阶段 1/2 待处理/处理中）对应的状态 ID。
+ *
+ * 为什么必须包含无 stage 字段的状态名/默认状态 ID 兜底：
+ *   云效 GetWorkitemWorkflowInfo 与 GetWorkitemWorkflow 的官方返回合同中，statuses[] 元素仅含
+ *   { id, name, displayName, nameEn }（以及顶层 defaultStatusId），并不返回 statusStageId。
+ *   因此优先保留按阶段字段匹配；若工作流未返回阶段字段，则按完成态/重开态的语义与 defaultStatusId 兜底。
+ */
 export async function findWorkflowStatusIdByStage(
   opCtx: CtxLike | null | undefined, proj: ResolvedProjectRef, workitemId: string, workitemTypeId: string, targetStages: readonly string[],
 ): Promise<{ ok: true; statusId: string } | { ok: false; error: TrackerError }> {
   const stageSet = new Set(targetStages.map((s) => s.trim()))
+  const wantCompleted = stageSet.has('4')
+  const wantReopen = stageSet.has('1') || stageSet.has('2')
   const extractFromPayload = (data: unknown): string => {
     const bag = asRecord(data)
     const statuses = bag && Array.isArray(bag['statuses']) ? bag['statuses'] : bag && Array.isArray(bag['workflowStatuses']) ? bag['workflowStatuses'] : Array.isArray(data) ? data : []
     for (const st of statuses) {
       const sb = asRecord(st)
       if (!sb) continue
-      const stage = String(sb['statusStageId'] ?? sb['stageId'] ?? sb['stage'] ?? '').trim()
-      const id = typeof sb['id'] === 'string' ? sb['id'].trim() : typeof sb['statusId'] === 'string' ? sb['statusId'].trim() : ''
+      const stage = String(sb['statusStageId'] ?? sb['stageId'] ?? sb['stage'] ?? sb['workflowStageIdentifier'] ?? '').trim()
+      const id = readYunxiaoStatusId(sb)
       if (id && stageSet.has(stage)) return id
+    }
+    if (wantCompleted) {
+      for (const st of statuses) {
+        const id = readYunxiaoStatusId(st)
+        if (id && isYunxiaoCompletedStatus(st)) return id
+      }
+    }
+    if (wantReopen) {
+      const defaultId = bag && typeof bag['defaultStatusId'] === 'string' ? bag['defaultStatusId'].trim() : bag && typeof bag['defaultStatusIdentifier'] === 'string' ? bag['defaultStatusIdentifier'].trim() : ''
+      if (defaultId) {
+        const matchedDefault = statuses.find((st) => readYunxiaoStatusId(st) === defaultId)
+        if (matchedDefault && !isYunxiaoCompletedStatus(matchedDefault) && !isYunxiaoCanceledStatus(matchedDefault)) return defaultId
+        if (statuses.length === 0) return defaultId
+      }
+      for (const st of statuses) {
+        const id = readYunxiaoStatusId(st)
+        if (id && isYunxiaoReopenStatus(st)) return id
+      }
     }
     return ''
   }
@@ -95,7 +125,12 @@ export async function findWorkflowStatusIdByStage(
     const wfTypeRes = await requestWorkitemWorkflow(opCtx, proj.organizationId, proj.projectId, workitemTypeId, GITLAB_READ_TIMEOUT_MS)
     if (wfTypeRes.ok) { const found = extractFromPayload(wfTypeRes.data); if (found) return { ok: true, statusId: found } }
   }
-  return fail(ERROR_KIND.NOTFOUND as ErrorKind, '未在云效工作流中找到目标阶段（statusStageId=' + targetStages.join('/') + '）对应的状态 ID', wfInfoRes.stdout || wfInfoRes.stderr)
+  const actionLabel = wantCompleted ? '关闭' : wantReopen ? '重开' : '关闭/重开'
+  return fail(
+    ERROR_KIND.UNSUPPORTED as ErrorKind,
+    '该工作流不支持按阶段自动' + actionLabel + '（未在云效工作流中找到目标阶段 statusStageId=' + targetStages.join('/') + ' 或对应的完成/待处理状态 ID）',
+    wfInfoRes.stdout || wfInfoRes.stderr,
+  )
 }
 
 /** 将认领人标识解析为云效原生用户 ID（未认领或逻辑名回退使用当前 PAT 用户 ID）。 */
