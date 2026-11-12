@@ -360,16 +360,54 @@ async function main(): Promise<void> {
     )
   }
 
-  console.log('\n== Slice 3：四步递进式 Preflight（本地坐标 -> 平台认证 -> Projex 项目 -> 按需 Codeup 仓库） ==')
+  console.log('\n== Slice 3：认证先行的四步 Preflight（平台认证 -> 本地坐标 -> Projex 项目 -> 按需 Codeup 仓库） ==')
   {
-    // 3.1 第 1 步失败：缺少或写错本地坐标（不发任何 HTTP 请求，直接返回 env）
+    // 3.1 本机令牌有效但没有工作区坐标：先调平台用户探针，再在第 2 关返回 env；自定义接入点必须在无坐标时也生效。
     let fetchCalls = 0
+    let firstRequestUrl = ''
     const rStep1 = await roomMod.yunxiaoBackend.create({} as any).preflight(
       { cwd: '/ws-pf-1' },
       {
         cwd: '/ws-pf-1',
-        fetch: async () => {
+        fetch: async (input: string | URL) => {
           fetchCalls += 1
+          firstRequestUrl = String(input)
+          return new Response(
+            JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao', lastOrganization: ORG_ID }),
+            { status: 200 },
+          )
+        },
+        platform: {
+          fs: makeFakeFs({
+            'docs/agents/yunxiao.yaml': 'version: 1\napiBaseUrl: https://yunxiao.example.test/\nwebBaseUrl: https://devops.example.test/',
+          }),
+          env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+        },
+      } as any,
+    )
+    const learnedStep1 = repoIdModelMod.getLearnedYunxiaoContext('/ws-pf-1')
+    check(
+      rStep1.ok === false &&
+        rStep1.error?.kind === 'env' &&
+        rStep1.stage === 'gh' &&
+        fetchCalls === 1 &&
+        firstRequestUrl === 'https://yunxiao.example.test/oapi/v1/platform/user' &&
+        learnedStep1?.currentUser?.id === '6a86ddf4dfcb465c20f193e2' &&
+        learnedStep1?.currentUser?.name === 'BryanShao' &&
+        learnedStep1?.currentUser?.lastOrganization === ORG_ID &&
+        Object.prototype.hasOwnProperty.call(learnedStep1 || {}, 'token') === false,
+      '3.1 令牌有效但组织与项目坐标缺失：用户探针仅一次，返回 gh/env，并立即缓存不含令牌的当前用户',
+      { rStep1, fetchCalls, firstRequestUrl, learnedStep1 },
+    )
+
+    // 3.2 认证必须先于坐标：即使没有任何本地坐标，缺令牌与 401 也都返回 auth；缺令牌不得发网络请求。
+    let noTokenFetchCalls = 0
+    const rStep2NoToken = await roomMod.yunxiaoBackend.create({} as any).preflight(
+      { cwd: '/ws-pf-2a' },
+      {
+        cwd: '/ws-pf-2a',
+        fetch: async () => {
+          noTokenFetchCalls += 1
           return new Response('{}', { status: 200 })
         },
         platform: {
@@ -378,33 +416,19 @@ async function main(): Promise<void> {
         },
       } as any,
     )
-    check(
-      rStep1.ok === false && rStep1.error?.kind === 'env' && fetchCalls === 0,
-      '3.1 Preflight 第 1 步：本地组织与项目坐标缺失时直接返回 env 档且零网络请求',
-      rStep1,
-    )
-
-    // 3.2 第 2 步失败：缺少令牌或 GET /oapi/v1/platform/user 返回 401 InvalidToken -> auth
-    const rStep2NoToken = await roomMod.yunxiaoBackend.create({} as any).preflight(
-      { cwd: '/ws-pf-2a' },
-      {
-        cwd: '/ws-pf-2a',
-        platform: {
-          fs: makeFakeFs({ 'docs/agents/yunxiao.yaml': VALID_YUNXIAO_YAML }),
-          env: makeFakeEnv({}),
-        },
-      } as any,
-    )
+    let invalidTokenFetchCalls = 0
     const rStep2InvalidToken = await roomMod.yunxiaoBackend.create({} as any).preflight(
       { cwd: '/ws-pf-2b' },
       {
         cwd: '/ws-pf-2b',
-        fetch: async () =>
-          new Response(JSON.stringify({ errorCode: 'InvalidToken', errorMessage: 'Invalid token.' }), {
+        fetch: async () => {
+          invalidTokenFetchCalls += 1
+          return new Response(JSON.stringify({ errorCode: 'InvalidToken', errorMessage: 'Invalid token.' }), {
             status: 401,
-          }),
+          })
+        },
         platform: {
-          fs: makeFakeFs({ 'docs/agents/yunxiao.yaml': VALID_YUNXIAO_YAML }),
+          fs: makeFakeFs({}),
           env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-expiredtoken123456' }),
         },
       } as any,
@@ -412,10 +436,91 @@ async function main(): Promise<void> {
     check(
       rStep2NoToken.ok === false &&
         rStep2NoToken.error?.kind === 'auth' &&
+        rStep2NoToken.stage === 'auth' &&
+        noTokenFetchCalls === 0 &&
         rStep2InvalidToken.ok === false &&
-        rStep2InvalidToken.error?.kind === 'auth',
-      '3.2 Preflight 第 2 步：缺失令牌或平台用户探针返回 401 InvalidToken 时准确归为 auth 档',
-      { rStep2NoToken, rStep2InvalidToken },
+        rStep2InvalidToken.error?.kind === 'auth' &&
+        rStep2InvalidToken.stage === 'auth' &&
+        invalidTokenFetchCalls === 1,
+      '3.2 无坐标时仍先判认证：缺令牌零网络请求并返回 auth/auth，平台用户探针 401 也返回 auth/auth',
+      { rStep2NoToken, noTokenFetchCalls, rStep2InvalidToken, invalidTokenFetchCalls },
+    )
+
+    // 3.2b 配置语法与内联明文凭证在任何网络请求前拒绝；坐标是否缺失不影响这条安全闸。
+    const rejectedConfigs = [
+      ['yaml-error', 'version: 1\napiBaseUrl: "https://unterminated.example.test'],
+      ['inline-secret', 'version: 1\npat: pt-not-allowed-in-workspace'],
+    ] as const
+    const rejectedResults: Array<{ reason: string; result: any; calls: number }> = []
+    for (const [reason, text] of rejectedConfigs) {
+      let calls = 0
+      const result = await roomMod.yunxiaoBackend.create({} as any).preflight(
+        { cwd: '/ws-pf-config-' + reason },
+        {
+          cwd: '/ws-pf-config-' + reason,
+          fetch: async () => {
+            calls += 1
+            return new Response('{}', { status: 200 })
+          },
+          platform: {
+            fs: makeFakeFs({ 'docs/agents/yunxiao.yaml': text }),
+            env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+          },
+        } as any,
+      )
+      rejectedResults.push({ reason, result, calls })
+    }
+    check(
+      rejectedResults.every((r) => r.result.ok === false && r.result.error?.kind === 'env' && r.result.stage === 'auth' && r.calls === 0),
+      '3.2b YAML 语法错误与 token/pat 等内联凭证键均在任何网络请求前返回 auth/env',
+      rejectedResults,
+    )
+
+    // 3.2c 用户探针的网络未知不得伪装成确定认证失败，也不得被缺坐标掩盖。
+    const rStep2Network = await roomMod.yunxiaoBackend.create({} as any).preflight(
+      { cwd: '/ws-pf-2c' },
+      {
+        cwd: '/ws-pf-2c',
+        fetch: async () => {
+          throw new Error('connect ETIMEDOUT: network unavailable')
+        },
+        platform: {
+          fs: makeFakeFs({}),
+          env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+        },
+      } as any,
+    )
+    check(
+      rStep2Network.ok === false && rStep2Network.error?.kind === 'network' && rStep2Network.stage === 'auth',
+      '3.2c 无坐标时用户探针网络异常返回 auth/network，保留诚实未知而不是误报 auth 或坐标错误',
+      rStep2Network,
+    )
+
+    // 3.2d 既有 handle.refId 坐标回退不能因为认证先行而丢失：配置文件缺席时仍能完成纯 Projex 预检。
+    const rHandleFallback = await roomMod.yunxiaoBackend.create({} as any).preflight(
+      { cwd: '/ws-pf-handle-fallback', refId: REF_ID },
+      {
+        cwd: '/ws-pf-handle-fallback',
+        fetch: async (input: string | URL) => {
+          const u = String(input)
+          if (u.endsWith('/oapi/v1/platform/user')) {
+            return new Response(JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao', lastOrganization: ORG_ID }), { status: 200 })
+          }
+          if (u.includes('/projects/' + PROJ_ID)) {
+            return new Response(JSON.stringify({ id: PROJ_ID, name: 'fallback-project', customCode: 'FALLBK' }), { status: 200 })
+          }
+          return new Response('unexpected url: ' + u, { status: 500 })
+        },
+        platform: {
+          fs: makeFakeFs({}),
+          env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+        },
+      } as any,
+    )
+    check(
+      rHandleFallback.ok === true,
+      '3.2d 本地配置文件缺席时，合法 handle.refId 仍回退提供组织与项目坐标并完成认证后预检',
+      rHandleFallback,
     )
 
     // 3.3 第 3 步失败：Projex GetProject 返回 HTTP 400 InvalidIdentifier.NotFound -> not-found；返回 403 UserNotInCurrentOrganization -> auth
@@ -472,9 +577,11 @@ async function main(): Promise<void> {
     check(
       rStep3NotFound.ok === false &&
         rStep3NotFound.error?.kind === 'not-found' &&
+        rStep3NotFound.stage === 'repo' &&
         rStep3WrongOrg.ok === false &&
-        rStep3WrongOrg.error?.kind === 'auth',
-      '3.3 Preflight 第 3 步：将 GetProject 的 HTTP 400 InvalidIdentifier.NotFound 精准映射为 not-found，403 跨组织越权映射为 auth',
+        rStep3WrongOrg.error?.kind === 'auth' &&
+        rStep3WrongOrg.stage === 'repo',
+      '3.3 Preflight 第 3 步：项目不存在与跨组织越权分别保留 not-found/auth 分类，并显式标记 repo 阶段',
       { rStep3NotFound, rStep3WrongOrg },
     )
 
@@ -688,6 +795,38 @@ async function main(): Promise<void> {
         learnedAlias?.codeupRepo?.pathWithNamespace === ORG_ID + '/Apple/enterpriseagentplatform/cdi-new-api',
       '4.2 双步 GetRepository：企业标识名首段 myCompany 触发 404 SYSTEM_NOT_FOUND_ERROR 后自动剥离首段重试，锁定权威 id 与 pathWithNamespace（忽略含空格的 nameWithNamespace）',
       { rPreflightWithAlias, requestedUrls, codeupRepo: learnedAlias?.codeupRepo },
+    )
+
+    // 4.3 已认证且坐标完整，但关联 Codeup 仓库低于 Reporter(20)：这是仓库访问失败，不得倒报成令牌失效。
+    const rLowCodeupAccess = await roomMod.yunxiaoBackend.create({} as any).preflight(
+      { cwd: '/ws-pf-low-access' },
+      {
+        cwd: '/ws-pf-low-access',
+        fetch: async (input: string | URL) => {
+          const u = String(input)
+          if (u.endsWith('/oapi/v1/platform/user')) {
+            return new Response(JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao', lastOrganization: ORG_ID }), { status: 200 })
+          }
+          if (u.includes('/projects/' + PROJ_ID)) {
+            return new Response(JSON.stringify({ id: PROJ_ID, name: 'sandbox', customCode: 'DCIAFS' }), { status: 200 })
+          }
+          return new Response(JSON.stringify({
+            id: 7360166,
+            pathWithNamespace: ORG_ID + '/Apple/enterpriseagentplatform/cdi-new-api',
+            webUrl: 'https://codeup.aliyun.com/' + ORG_ID + '/Apple/enterpriseagentplatform/cdi-new-api',
+            accessLevel: '10',
+          }), { status: 200 })
+        },
+        platform: {
+          fs: makeFakeFs({ 'docs/agents/yunxiao.yaml': VALID_YUNXIAO_YAML + '\nrepositoryId: "7360166"' }),
+          env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+        },
+      } as any,
+    )
+    check(
+      rLowCodeupAccess.ok === false && rLowCodeupAccess.error?.kind === 'auth' && rLowCodeupAccess.stage === 'repo',
+      '4.3 Codeup accessLevel 低于 20 时返回 repo/auth，不把权限不足伪装成资源不存在或令牌失效',
+      rLowCodeupAccess,
     )
   }
 
@@ -2793,7 +2932,7 @@ async function main(): Promise<void> {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // Slice 12：面板三阶段环境检查（yunxiao:configured / yunxiao:authed / yunxiao:repoAccess）、首开引导链与技能说明模板
+  // Slice 12：面板三阶段环境检查（yunxiao:authed / yunxiao:configured / yunxiao:repoAccess）、首开引导链与技能说明模板
   // ══════════════════════════════════════════════════════════════════════════
   console.log('\n== Slice 12：面板三阶段环境检查目录、宿主谓词求值、viewerOnce 后端透传、首开引导链与技能说明模板 ==')
   {
@@ -2810,15 +2949,15 @@ async function main(): Promise<void> {
     check(
       yxCat.filter((c: any) => c.scope === 'generic').length === 5 &&
         JSON.stringify(yxBackendItems.map((c: any) => c.id)) ===
-          JSON.stringify(['yunxiao:configured', 'yunxiao:authed', 'yunxiao:repoAccess']) &&
+          JSON.stringify(['yunxiao:authed', 'yunxiao:configured', 'yunxiao:repoAccess']) &&
         catDirsMod.scopeOf('yunxiao:configured') === 'backend' &&
         catDirsMod.scopeOf('yunxiao:authed') === 'backend' &&
         catDirsMod.scopeOf('yunxiao:repoAccess') === 'backend' &&
         JSON.stringify(yxGuideSteps.map((s: any) => s.id)) ===
           JSON.stringify([
             'selection:backendSelected',
-            'yunxiao:configured',
             'yunxiao:authed',
+            'yunxiao:configured',
             'yunxiao:repoAccess',
             'tracker:initialized',
             'skill:wayfinder',
@@ -2831,7 +2970,350 @@ async function main(): Promise<void> {
       },
     )
 
-    // 12.2 probeChainEnv.viewer() 将当前 backendId 传给 session.getCurrentUser（而非硬编码 github），且三项谓词在 check-chain-evaluation 中求值准确
+    // 12.2 三个宿主谓词严格执行认证先行的四阶段真值表；repo 的 not-found 与权限不足都是确定仓库失败。
+    const yxStageCases = [
+      { stage: 'auth', kind: 'auth', expected: ['fail', 'pending', 'pending'] },
+      { stage: 'gh', kind: 'env', expected: ['pass', 'fail', 'pending'] },
+      { stage: 'repo', kind: 'not-found', expected: ['pass', 'pass', 'fail'] },
+      { stage: 'repo', kind: 'auth', expected: ['pass', 'pass', 'fail'] },
+      { stage: 'pass', kind: '', expected: ['pass', 'pass', 'pass'] },
+    ]
+    const yxStageRows = yxStageCases.map((item) => ({
+      stage: item.stage,
+      kind: item.kind,
+      actual: [
+        envMapMod.yunxiaoAuthVerdict({ stage: item.stage, kind: item.kind, refId: REF_ID }, true).status,
+        envMapMod.yunxiaoConfigVerdict({ stage: item.stage, kind: item.kind, refId: REF_ID }, true).status,
+        envMapMod.yunxiaoRepoAccessVerdict({ stage: item.stage, kind: item.kind, refId: REF_ID }, true).status,
+      ],
+      expected: item.expected,
+    }))
+    check(
+      yxStageRows.every((row) => JSON.stringify(row.actual) === JSON.stringify(row.expected)),
+      '12.2 auth/gh/repo/pass 四阶段分别得到认证、配置、仓库三项的确定状态，网络未知仍由 auth+network 单独保持 pending',
+      yxStageRows,
+    )
+    const yxNetworkUnknown = [
+      { stage: 'auth', expected: ['pending', 'pending', 'pending'] },
+      { stage: 'repo', expected: ['pass', 'pass', 'pending'] },
+    ].map((item) => ({
+      stage: item.stage,
+      actual: [
+        envMapMod.yunxiaoAuthVerdict({ stage: item.stage, kind: 'network', refId: REF_ID }, true).status,
+        envMapMod.yunxiaoConfigVerdict({ stage: item.stage, kind: 'network', refId: REF_ID }, true).status,
+        envMapMod.yunxiaoRepoAccessVerdict({ stage: item.stage, kind: 'network', refId: REF_ID }, true).status,
+      ],
+      expected: item.expected,
+    }))
+    check(
+      yxNetworkUnknown.every((row) => JSON.stringify(row.actual) === JSON.stringify(row.expected)),
+      '12.2b 网络未知只让当前及后续检查保持 pending，已通过的认证或配置不倒退，也不伪装成确定失败',
+      yxNetworkUnknown,
+    )
+
+    // 12.2c 真实 Yunxiao preflight 经 probeChainEnv 映射后再由三个谓词读取，杜绝手工 stage 造成的覆盖假绿。
+    async function runRealYunxiaoChain(input: {
+      cwd: string
+      yaml?: string
+      fetch: (input: string | URL) => Promise<Response>
+    }): Promise<any> {
+      let seenPreflight: any = null
+      const files = typeof input.yaml === 'string' ? { 'docs/agents/yunxiao.yaml': input.yaml } : {}
+      const probe = envMapMod.probeChainEnv(
+        {
+          getRepoKey: async () => null,
+          openSession: async () => ({
+            ok: true,
+            backendId: 'yunxiao',
+            call: async (fn: any) =>
+              fn(
+                {
+                  preflight: async (handle: any, ctx: any) => {
+                    seenPreflight = await roomMod.yunxiaoBackend.create({} as any).preflight(handle, ctx)
+                    return seenPreflight
+                  },
+                  getCurrentUser: async () => ({ ok: false }),
+                },
+                {
+                  cwd: input.cwd,
+                  platform: {
+                    fs: makeFakeFs(files),
+                    env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+                  },
+                  fetch: input.fetch,
+                },
+              ),
+          }),
+        },
+        input.cwd,
+        { backendId: 'yunxiao' },
+      )
+      const reply = await probe.preflightOnce()
+      const views = [
+        envMapMod.yunxiaoAuthVerdict(reply, true),
+        envMapMod.yunxiaoConfigVerdict(reply, true),
+        envMapMod.yunxiaoRepoAccessVerdict(reply, true),
+      ]
+      return {
+        preflight: seenPreflight,
+        reply,
+        statuses: views.map((view: any) => view.status),
+        details: views.map((view: any) => String(view.detail || '')),
+        asked: probe.asked(),
+      }
+    }
+
+    let configNetworkCalls = 0
+    const configChain = await runRealYunxiaoChain({
+      cwd: '/ws-chain-config',
+      yaml: `version: 1
+apiBaseUrl: "https://unterminated.example.test`,
+      fetch: async () => {
+        configNetworkCalls += 1
+        return new Response('{}', { status: 200 })
+      },
+    })
+    const configMessage = String(configChain.preflight?.error?.message || '')
+    check(
+      configChain.preflight?.ok === false &&
+        configChain.preflight?.stage === 'auth' &&
+        configChain.preflight?.error?.kind === 'env' &&
+        configChain.reply?.stage === 'auth' &&
+        JSON.stringify(configChain.statuses) === JSON.stringify(['pending', 'pending', 'pending']) &&
+        configNetworkCalls === 0 &&
+        configMessage.length > 0 &&
+        configChain.details.some((detail: string) => detail.includes(configMessage)),
+      '12.2c 认证前 YAML 配置错误经真实宿主链路保持 auth/env，三项均 pending 且界面展示真实配置错误',
+      { ...configChain, configNetworkCalls },
+    )
+
+    repoIdModelMod.clearLearnedYunxiaoContexts()
+    let noCoordsUserCalls = 0
+    const noCoordsChain = await runRealYunxiaoChain({
+      cwd: '/ws-chain-no-coords',
+      yaml: 'version: 1',
+      fetch: async () => {
+        noCoordsUserCalls += 1
+        return new Response(
+          JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao', lastOrganization: ORG_ID }),
+          { status: 200 },
+        )
+      },
+    })
+    const learnedNoCoords = repoIdModelMod.getLearnedYunxiaoContext('/ws-chain-no-coords')
+    check(
+      noCoordsChain.preflight?.stage === 'gh' &&
+        noCoordsChain.preflight?.error?.kind === 'env' &&
+        noCoordsChain.reply?.stage === 'gh' &&
+        JSON.stringify(noCoordsChain.statuses) === JSON.stringify(['pass', 'fail', 'pending']) &&
+        noCoordsUserCalls === 1 &&
+        noCoordsChain.asked === 1 &&
+        learnedNoCoords?.currentUser?.id === '6a86ddf4dfcb465c20f193e2' &&
+        learnedNoCoords?.currentUser?.name === 'BryanShao' &&
+        learnedNoCoords?.currentUser?.lastOrganization === ORG_ID &&
+        Object.prototype.hasOwnProperty.call(learnedNoCoords || {}, 'token') === false,
+      '12.2d 有效令牌但无坐标经真实链路得到 pass/fail/pending，只问一次用户并缓存不含令牌的身份',
+      { ...noCoordsChain, noCoordsUserCalls, learnedNoCoords },
+    )
+
+    const projectNetworkChain = await runRealYunxiaoChain({
+      cwd: '/ws-chain-project-network',
+      yaml: VALID_YUNXIAO_YAML,
+      fetch: async (input: string | URL) => {
+        const u = String(input)
+        if (u.endsWith('/oapi/v1/platform/user')) {
+          return new Response(JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao' }), { status: 200 })
+        }
+        throw new Error('connect ETIMEDOUT: Projex network unavailable')
+      },
+    })
+    const codeupNetworkChain = await runRealYunxiaoChain({
+      cwd: '/ws-chain-codeup-network',
+      yaml: `${VALID_YUNXIAO_YAML}
+repositoryId: "7360166"`,
+      fetch: async (input: string | URL) => {
+        const u = String(input)
+        if (u.endsWith('/oapi/v1/platform/user')) {
+          return new Response(JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao' }), { status: 200 })
+        }
+        if (u.includes('/projects/' + PROJ_ID)) {
+          return new Response(JSON.stringify({ id: PROJ_ID, name: 'sandbox', customCode: 'DCIAFS' }), { status: 200 })
+        }
+        throw new Error('connect ETIMEDOUT: Codeup network unavailable')
+      },
+    })
+    check(
+      [projectNetworkChain, codeupNetworkChain].every((row) =>
+        row.preflight?.stage === 'repo' &&
+        row.preflight?.error?.kind === 'network' &&
+        row.reply?.stage === 'repo' &&
+        JSON.stringify(row.statuses) === JSON.stringify(['pass', 'pass', 'pending']) &&
+        String(row.reply?.message || '').length > 0 &&
+        row.details[2].includes(String(row.reply?.message || '')) &&
+        !row.details[2].includes('可能尚未创建')
+      ),
+      '12.2e Projex 与 Codeup 网络未知均经真实链路保留 repo/network，已通过的认证和配置不倒退且展示真实错误',
+      { projectNetworkChain, codeupNetworkChain },
+    )
+
+    // 12.2f 项目与仓库共用 repo 判定分支：除 not-found/auth 外，解析、限流等错误都只能保留未知并展示原文。
+    const repoUnknownCases = [
+      {
+        caseName: 'Projex 200 错误 JSON 形状',
+        key: 'projex-parse',
+        withCodeup: false,
+        body: JSON.stringify({ unexpected: true }),
+        status: 200,
+        expectedKind: 'parse',
+        expectedMessage: 'Yunxiao Projex GetProject 回包不是有效的项目对象',
+      },
+      {
+        caseName: 'Projex HTTP 429',
+        key: 'projex-rate-limit',
+        withCodeup: false,
+        body: JSON.stringify({ errorCode: 'Throttling', errorMessage: 'Projex request quota exhausted; retry after 60 seconds' }),
+        status: 429,
+        expectedKind: 'rate-limit',
+        expectedMessage: 'Projex request quota exhausted; retry after 60 seconds',
+      },
+      {
+        caseName: 'Codeup 200 非 JSON 回包',
+        key: 'codeup-parse',
+        withCodeup: true,
+        body: 'Unexpected token < in JSON at position 0',
+        status: 200,
+        expectedKind: 'parse',
+        expectedMessage: 'Unexpected token < in JSON at position 0',
+      },
+    ] as const
+    for (const item of repoUnknownCases) {
+      const row = await runRealYunxiaoChain({
+        cwd: '/ws-chain-' + item.key,
+        yaml: VALID_YUNXIAO_YAML + (item.withCodeup ? '\nrepositoryId: "7360166"' : ''),
+        fetch: async (input: string | URL) => {
+          const u = String(input)
+          if (u.endsWith('/oapi/v1/platform/user')) {
+            return new Response(JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao' }), { status: 200 })
+          }
+          if (item.withCodeup && u.includes('/projects/' + PROJ_ID)) {
+            return new Response(JSON.stringify({ id: PROJ_ID, name: 'sandbox', customCode: 'DCIAFS' }), { status: 200 })
+          }
+          return new Response(item.body, { status: item.status })
+        },
+      })
+      check(
+        row.preflight?.ok === false &&
+          row.preflight?.stage === 'repo' &&
+          row.preflight?.error?.kind === item.expectedKind &&
+          row.reply?.stage === 'repo' &&
+          row.reply?.kind === item.expectedKind &&
+          row.reply?.message === row.preflight?.error?.message &&
+          JSON.stringify(row.statuses) === JSON.stringify(['pass', 'pass', 'pending']) &&
+          row.details[2].includes(item.expectedMessage) &&
+          !row.details[2].includes('可能尚未创建') &&
+          row.asked === 1,
+        '12.2f ' + item.caseName + ' 经真实链路得到 repo/' + item.expectedKind + '，三项为 pass/pass/pending 且展示真实错误',
+        row,
+      )
+    }
+
+    const codeupAccessChains: Array<{ caseName: string; row: any }> = []
+    for (const [caseName, accessLevel] of [['low', '10'], ['missing', undefined], ['non-numeric', 'not-a-number']] as const) {
+      const row = await runRealYunxiaoChain({
+        cwd: '/ws-chain-access-' + caseName,
+        yaml: `${VALID_YUNXIAO_YAML}
+repositoryId: "7360166"`,
+        fetch: async (input: string | URL) => {
+          const u = String(input)
+          if (u.endsWith('/oapi/v1/platform/user')) {
+            return new Response(JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao' }), { status: 200 })
+          }
+          if (u.includes('/projects/' + PROJ_ID)) {
+            return new Response(JSON.stringify({ id: PROJ_ID, name: 'sandbox', customCode: 'DCIAFS' }), { status: 200 })
+          }
+          return new Response(JSON.stringify({
+            id: 7360166,
+            pathWithNamespace: ORG_ID + '/Apple/enterpriseagentplatform/cdi-new-api',
+            webUrl: 'https://codeup.aliyun.com/' + ORG_ID + '/Apple/enterpriseagentplatform/cdi-new-api',
+            ...(accessLevel === undefined ? {} : { accessLevel }),
+          }), { status: 200 })
+        },
+      })
+      codeupAccessChains.push({ caseName, row })
+    }
+    check(
+      codeupAccessChains.every(({ row }) =>
+        row.preflight?.stage === 'repo' &&
+        row.preflight?.error?.kind === 'auth' &&
+        row.reply?.stage === 'repo' &&
+        row.reply?.kind === 'auth' &&
+        JSON.stringify(row.statuses) === JSON.stringify(['pass', 'pass', 'fail'])
+      ),
+      '12.2g Codeup accessLevel=10、缺失与非数字经真实链路均为 repo/auth，宿主只判仓库失败',
+      codeupAccessChains,
+    )
+
+    // 12.2h 未提供显式阶段的其他后端继续按 kind 回退；非法显式值不得进入宿主谓词。
+    async function mapFakePreflight(result: any, backendId: string): Promise<any> {
+      const probe = envMapMod.probeChainEnv(
+        {
+          getRepoKey: async () => ({ owner: 'acme', name: 'deck' }),
+          openSession: async () => ({
+            ok: true,
+            backendId,
+            call: async (fn: any) => fn({ preflight: async () => result }, {}),
+          }),
+        },
+        '/ws-chain-fake-' + backendId,
+        { backendId },
+      )
+      return probe.preflightOnce()
+    }
+    const legacyNetworkReply = await mapFakePreflight({ ok: false, error: { kind: 'network', message: 'offline' } }, 'github')
+    const legacyEnvReply = await mapFakePreflight({ ok: false, error: { kind: 'env', message: 'gh not found' } }, 'github')
+    const invalidStageReply = await mapFakePreflight(
+      { ok: false, stage: 'anchor-lookup', error: { kind: 'not-found', message: 'missing' } },
+      'yunxiao',
+    )
+    check(
+      legacyNetworkReply.stage === 'auth' &&
+        envMapMod.ghAuthVerdict(legacyNetworkReply, true).status === 'pending' &&
+        envMapMod.repoAccessVerdict(legacyNetworkReply, true).status === 'pending' &&
+        legacyEnvReply.stage === 'gh' &&
+        envMapMod.ghAuthVerdict(legacyEnvReply, true).status === 'pending' &&
+        envMapMod.repoAccessVerdict(legacyEnvReply, true).status === 'pending' &&
+        invalidStageReply.stage === 'repo' &&
+        invalidStageReply.kind === 'not-found',
+      '12.2h 其他后端无 stage 时保持 kind-only 回退，anchor-lookup 等非法预检阶段被忽略',
+      { legacyNetworkReply, legacyEnvReply, invalidStageReply },
+    )
+
+    // 12.3 三项检查共用同一组「令牌 → 项目 → 仓库」三步向导声明，随后刷新检查链，不再注入聊天提示词。
+    const yxFixIds = ['yunxiao:authed', 'yunxiao:configured', 'yunxiao:repoAccess']
+    const expectedInitialSteps = [0, 1, 1]
+    const yxWizards = yxFixIds.map((id) => roomMod.fixes[id]?.actions?.[0])
+    const expectedStepTitles = ['连接云效个人访问令牌', '组织与 Projex 项目', 'Codeup 仓库与打通']
+    check(
+      yxWizards.every((wizard: any, index: number) =>
+        wizard?.type === 'wizard' &&
+        wizard.initialStepIndex === expectedInitialSteps[index] &&
+        wizard.steps?.length === 3 &&
+        JSON.stringify(wizard.steps.map((step: any) => step.title?.zh)) === JSON.stringify(expectedStepTitles) &&
+        wizard.submitAction?.type === 'contract-op' &&
+        wizard.submitAction?.op === 'initProject'
+      ) &&
+        yxWizards.every((wizard: any) => JSON.stringify(wizard.steps) === JSON.stringify(yxWizards[0].steps)) &&
+        yxFixIds.every((id) =>
+          roomMod.fixes[id]?.actions?.length === 2 &&
+          roomMod.fixes[id].actions[1]?.type === 'refresh' &&
+          roomMod.fixes[id].actions[1]?.target === 'chain' &&
+          roomMod.fixes[id].actions.every((action: any) => action.type !== 'inject-prompt')
+        ),
+      '12.3 三项修复动作共享三步 Yunxiao onboarding wizard，初始步为 0/1/1，随后 refresh(chain)，无 inject-prompt',
+      yxFixIds.map((id) => roomMod.fixes[id]),
+    )
+
+    // 12.4 probeChainEnv.viewer() 将当前 backendId 传给 session.getCurrentUser（而非硬编码 github），且三项谓词在 check-chain-evaluation 中求值准确
     let seenViewerBackend = ''
     const probe = envMapMod.probeChainEnv(
       {
@@ -2954,7 +3436,7 @@ async function main(): Promise<void> {
         yxTemplateDoc.md.includes('# Issue tracker: Yunxiao') &&
         typeof yxTemplateDoc.mdZh === 'string' &&
         yxTemplateDoc.mdZh.length > 0,
-      '12.2 viewerOnce 透传当前 backendId=yunxiao，宿主检查链三项云效谓词全部求值为 pass，且 skillDoc 支持 issue-tracker-yunxiao.md 英文与中文模板读取',
+      '12.4 viewerOnce 透传当前 backendId=yunxiao，宿主检查链三项云效谓词全部求值为 pass，且 skillDoc 支持 issue-tracker-yunxiao.md 英文与中文模板读取',
       {
         viewerRes,
         seenViewerBackend,
@@ -2965,7 +3447,7 @@ async function main(): Promise<void> {
       },
     )
 
-    // 12.3 YUNXIAO_LIVE_VERIFY=1 环境变量门控的可选云效真机沙箱冒烟脚本（不设置或为 0 时安全跳过且不阻塞离线主链，开启时可通过注入 fetch 跑完探针与生命周期）
+    // 12.5 YUNXIAO_LIVE_VERIFY=1 环境变量门控的可选云效真机沙箱冒烟脚本（不设置或为 0 时安全跳过且不阻塞离线主链，开启时可通过注入 fetch 跑完探针与生命周期）
     const sandboxMod = await imp('scripts/real-machine/commands/yunxiao-sandbox.mts')
     const skippedRun = await sandboxMod.runYunxiaoLiveSmoke({
       env: {},
@@ -3075,7 +3557,7 @@ async function main(): Promise<void> {
         liveRun.lifecycle?.blockedWired === true &&
         liveRun.lifecycle?.closedState === 'closed' &&
         liveWriteCalls >= 3,
-      '12.3 yunxiao-sandbox.mts 受 YUNXIAO_LIVE_VERIFY=1 严格门控：未设置时安全跳过（exit 0），开启时完整执行 preflight、权限核验与沙箱工作项生命周期冒烟',
+      '12.5 yunxiao-sandbox.mts 受 YUNXIAO_LIVE_VERIFY=1 严格门控：未设置时安全跳过（exit 0），开启时完整执行 preflight、权限核验与沙箱工作项生命周期冒烟',
       { skippedRun, liveRun, liveWriteCalls },
     )
   }

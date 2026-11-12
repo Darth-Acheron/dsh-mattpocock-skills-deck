@@ -126,6 +126,12 @@ export interface OpUsage {
  */
 export interface PreflightResult {
   ok: boolean
+  /**
+   * 多关卡预检实际失败的阶段（可选，仅 `ok:false` 时携带）。
+   * 这是预检自己的进度事实，供宿主组合多项检查；不要复用 `TrackerError.stage`，
+   * 后者表达的是锚点回查或输入拒绝等错误后续处理语义。
+   */
+  stage?: 'auth' | 'gh' | 'repo'
   /** `ok:false` 时给出原因；`ok:true` 时不写。 */
   error?: TrackerError
   /**

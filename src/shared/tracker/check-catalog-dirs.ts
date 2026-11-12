@@ -234,23 +234,23 @@ export const MARKDOWN_CATALOG: readonly CatalogItem[] = Object.freeze([
   },
 ])
 
-/** Yunxiao 后端检查目录（仅 yunxiao 适用，三阶段递进：本地配置 → 令牌认证 → Projex 项目与关联 Codeup 仓库访问）。 */
+/** Yunxiao 后端检查目录（仅 yunxiao 适用，认证先行：令牌认证 → 本地配置 → Projex 项目与关联 Codeup 仓库访问）。 */
 export const YUNXIAO_CATALOG: readonly CatalogItem[] = Object.freeze([
-  {
-    id: 'yunxiao:configured',
-    label: '已配置云效组织与 Yunxiao Projex 项目',
-    scope: 'backend',
-    backends: ['yunxiao'],
-    check: { kind: 'backend', id: 'configured', backendId: 'yunxiao' },
-    origin: 'rooms/yunxiao/preflight.ts:1 (规格 #02 / #05)',
-  },
   {
     id: 'yunxiao:authed',
     label: '云效个人访问令牌有效',
     scope: 'backend',
     backends: ['yunxiao'],
     check: { kind: 'preflight', id: 'yunxiaoAuth' },
-    origin: 'rooms/yunxiao/preflight.ts:2 (规格 #02 / #05)',
+    origin: 'rooms/yunxiao/preflight.ts:1 (规格 #21 / #22)',
+  },
+  {
+    id: 'yunxiao:configured',
+    label: '已配置云效组织与 Yunxiao Projex 项目',
+    scope: 'backend',
+    backends: ['yunxiao'],
+    check: { kind: 'backend', id: 'configured', backendId: 'yunxiao' },
+    origin: 'rooms/yunxiao/preflight.ts:2 (规格 #21 / #22)',
   },
   {
     id: 'yunxiao:repoAccess',

@@ -32,7 +32,7 @@ type ChainRepoHandle = { cwd?: string; refId?: string; backend?: string }
 type ChainRepoRef = { backend: string; refId: string; name: string; url: string }
 /** 只读会话：本文件只用这几条读能力。 */
 type ChainReadSession = {
-  preflight(handle: ChainRepoHandle, ctx: unknown): Promise<{ ok: boolean; error?: ChainReadError | null }>
+  preflight(handle: ChainRepoHandle, ctx: unknown): Promise<{ ok: boolean; stage?: unknown; error?: ChainReadError | null }>
   getCurrentUser(repo: ChainRepoRef, ctx: unknown): Promise<{ ok: boolean; data?: { login?: string } | null; error?: ChainReadError | null }>
   /**
    * 从工作区目录解析仓库身份（owner/name）；解析不出来回 null，不抛。
@@ -65,8 +65,9 @@ type ChainEnvProbeReply = {
 /**
  * preflight 的失败档位 → 这一次求值停在哪一关（写死的对照表，#1444）。
  *
- * 为什么需要反推：房间的 preflight 只回一个错误档位（TrackerError.kind），不回「停在第几步」；
- * 而链上两行要按关分开显示，所以只能按「哪种档位只可能在哪一关出现」反推：
+ * 为什么需要回退反推：没有显式 PreflightResult.stage 的旧房间只回错误档位（TrackerError.kind），
+ * 而链上多项检查要按关分开显示，所以只能按「哪种档位只可能在哪一关出现」反推。
+ * 多关卡房间应显式返回真实阶段；这张表只服务没有阶段的兼容路径：
  *   · env 只可能落在第一关，但不等于「找不到 gh 可执行」：出站控制面没接上、执行器没注入也归 env
  *     （#1571 起 pending 文案按原文分流，见下面 envPendingDetail）；
  *   · not-found 只可能是第三关（仓库不存在 / 无权限）；
@@ -258,15 +259,13 @@ export function glabAuthVerdict(pr: ChainEnvProbeReply, zh: boolean): ChainPredi
   return { status: 'pending', detail: zh ? '读会话还没接上，暂时无法确认登录状态' : 'read session not available; login state unknown' }
 }
 
-// ── Yunxiao 的三行（规格 #02 / #05）：共用同一次会话 preflight 回包分派 ───────────────────
+// ── Yunxiao 的三行（规格 #21 / #22）：共用同一次认证先行 preflight 回包分派 ───────────────────
 /**
- * 「已配置云效组织与 Yunxiao Projex 项目」这一项的判定（第一关）。
- *
- * 当会话 preflight 停在第 1 关（stage === 'gh'，即 kind === 'env'）且不是宿主接线缺失时判 fail；
- * 若已进入 auth / repo / pass 阶段，说明本地坐标已配置通过，判 pass；会话未接上则判 pending。
+ * 「已配置云效组织与 Yunxiao Projex 项目」这一项的判定（认证后的第二关）。
+ * auth 阶段尚未证明令牌可用，配置只能 pending；gh 阶段是认证已通过、坐标缺失，判 fail。
  */
 export function yunxiaoConfigVerdict(pr: ChainEnvProbeReply, zh: boolean): ChainPredicateVerdict {
-  if (pr.stage === 'pass' || pr.stage === 'auth' || pr.stage === 'repo') {
+  if (pr.stage === 'pass' || pr.stage === 'repo') {
     return {
       status: 'pass',
       detail: pr.refId
@@ -285,43 +284,40 @@ export function yunxiaoConfigVerdict(pr: ChainEnvProbeReply, zh: boolean): Chain
       detail: clip || (zh ? '尚未配置 docs/agents/yunxiao.yaml（organizationId / projectId）' : 'docs/agents/yunxiao.yaml is missing organizationId or projectId'),
     }
   }
-  return { status: 'pending', detail: zh ? '读会话还没接上，暂时无法确认云效配置' : 'read session not available; Yunxiao configuration unknown' }
+  return { status: 'pending', detail: zh ? '读会话还没接上或认证尚未通过，暂时无法确认云效配置' : 'read session unavailable or authentication incomplete; Yunxiao configuration unknown' }
 }
 
-/**
- * 「云效个人访问令牌有效」这一项的判定（第二关）。
- *
- * 只有明确令牌缺失或无效（stage === 'auth' 且 kind === 'auth'）才判 fail；
- * 本地配置未过（stage === 'gh'）或网络抖动归 pending；已走到 repo 或 pass 则判 pass。
- */
+/** 认证是第一关：gh / repo / pass 都证明令牌探针已成功，只有明确的令牌缺失或无效才判 fail。 */
 export function yunxiaoAuthVerdict(pr: ChainEnvProbeReply, zh: boolean): ChainPredicateVerdict {
   if (pr.stage === 'pass') return { status: 'pass', detail: zh ? '云效个人访问令牌有效' : 'Yunxiao token valid' }
-  if (pr.stage === 'gh') return { status: 'pending', detail: envPendingDetail(pr, zh, 'yunxiao', 'login') }
+  if (pr.stage === 'gh') return { status: 'pass', detail: zh ? '云效个人访问令牌有效（工作区坐标由下一项判断）' : 'Yunxiao token valid (workspace coordinates checked next)' }
   if (pr.stage === 'repo') return { status: 'pass', detail: zh ? '云效个人访问令牌有效（项目可达性由下一项判断）' : 'Yunxiao token valid (project reachability checked next)' }
   if (pr.stage === 'auth') {
     const kind = pr.kind || 'exit'
+    const errMsg = String(pr.message || '').slice(0, 240)
     if (kind === 'network') return { status: 'pending', detail: zh ? '网络异常，暂时无法确认云效令牌状态' : 'Yunxiao auth probe network failure; token state unknown' }
     if (kind === 'auth') return { status: 'fail', detail: zh ? '云效个人访问令牌缺失或已失效（请配置 YUNXIAO_TOKEN 或 ~/.config/yunxiao/token）' : 'Yunxiao personal access token missing or invalid (configure YUNXIAO_TOKEN or ~/.config/yunxiao/token)' }
-    return { status: 'pending', detail: zh ? '暂时无法确认云效令牌状态（' + kind + '）' : 'Yunxiao token probe failed (' + kind + '); state unknown' }
+    return { status: 'pending', detail: zh ? '暂时无法确认云效令牌状态（' + kind + '）' + (errMsg ? '：' + errMsg : '') : 'Yunxiao token probe failed (' + kind + '); state unknown: ' + errMsg }
   }
   return { status: 'pending', detail: zh ? '读会话还没接上，暂时无法确认云效令牌状态' : 'read session not available; Yunxiao token state unknown' }
 }
 
-/**
- * 「Yunxiao Projex 项目与关联仓库可访问」这一项的判定（第三、四关）。
- *
- * 只有确定项目或关联仓库不存在（stage === 'repo' 且 kind === 'not-found'）才判 fail；
- * 认证未过、网络异常或会话未接上一律判 pending。
- */
+/** 项目与仓库是第三、四关：只有 not-found/auth 是确定访问失败；其他错误保持未知并展示真实原因。 */
 export function yunxiaoRepoAccessVerdict(pr: ChainEnvProbeReply, zh: boolean): ChainPredicateVerdict {
   if (pr.stage === 'pass') {
-    if (pr.refId) return { status: 'pass', detail: zh ? 'Yunxiao Projex 项目与关联仓库访问正常' : 'Yunxiao Projex project and repository accessible' }
-    return { status: 'pending', detail: zh ? '暂时无法确认项目可访问（本地认不出云效项目坐标）' : 'Yunxiao project coordinates unknown locally; reachability unknown' }
+    return { status: 'pass', detail: zh ? 'Yunxiao Projex 项目与关联仓库访问正常' : 'Yunxiao Projex project and repository accessible' }
   }
   if (pr.stage === 'gh') return { status: 'pending', detail: envPendingDetail(pr, zh, 'yunxiao', 'repo') }
   if (pr.stage === 'repo') {
-    if (pr.kind === 'not-found') return { status: 'fail', detail: zh ? '云效上访问不到目标 Yunxiao Projex 项目或关联的 Codeup 仓库（可能尚未创建，或没有权限）' : 'API 404: Yunxiao Projex project or Codeup repository not found' }
-    return { status: 'pending', detail: zh ? '暂时无法确认云效项目可访问（网络或令牌态未知）' : 'Yunxiao project reachability unknown (network or auth unknown)' }
+    const kind = pr.kind || 'unknown'
+    const errMsg = String(pr.message || '').trim()
+    if (kind === 'not-found' || kind === 'auth') return { status: 'fail', detail: zh ? '云效上访问不到目标 Yunxiao Projex 项目或关联的 Codeup 仓库（可能尚未创建，或没有权限）' : 'Yunxiao Projex project or Codeup repository is missing or inaccessible' }
+    return {
+      status: 'pending',
+      detail: zh
+        ? '暂时无法确认云效项目或仓库可访问（' + kind + '）' + (errMsg ? '：' + errMsg : '')
+        : 'Yunxiao project or repository reachability unknown (' + kind + ')' + (errMsg ? ': ' + errMsg : ''),
+    }
   }
   if (pr.stage === 'auth') return { status: 'pending', detail: zh ? '暂时无法确认云效项目可访问（网络或令牌态未知）' : 'Yunxiao project reachability unknown (network or auth unknown)' }
   return { status: 'pending', detail: zh ? '读会话还没接上，暂时无法确认云效项目可访问' : 'read session not available; Yunxiao project reachability unknown' }
@@ -423,8 +419,10 @@ export function probeChainEnv(deps: ChainEnvProbeDeps, probeCwd: string, opts?: 
       if (res && res.ok === true) return { stage: 'pass', refId: refId }
       const error = (res && res.error) || {}
       const kind = String(error.kind || '')
+      // 多关卡房间显式报告真实失败阶段；只接受契约中的三个值，其他后端或任意字符串仍走旧的 kind 回退表。
+      const reportedStage = res && (res.stage === 'auth' || res.stage === 'gh' || res.stage === 'repo') ? res.stage : null
       // refId 一起带回去：GitLab 的「仓库可达」要据此区分「确实没有」与「本地认不出、没核对」。
-      return { stage: chainEnvStageOf(kind), kind: kind || 'unknown', message: String(error.message || ''), refId: refId }
+      return { stage: reportedStage || chainEnvStageOf(kind), kind: kind || 'unknown', message: String(error.message || ''), refId: refId }
     })()
     return preflight
   }

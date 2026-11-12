@@ -273,11 +273,15 @@ export function learnYunxiaoContext(
   patch: Partial<LearnedYunxiaoContext> & { organizationId: string; projectId: string },
 ): LearnedYunxiaoContext | null {
   const key = normalizeCacheKey(cwdOrRefId)
-  if (!key || !patch.organizationId || !patch.projectId) return null
+  // 认证先行时，取得 currentUser 的那一刻可能还没有组织与项目坐标；只允许这种身份补丁先落缓存，
+  // 其他补丁仍必须同时给出完整坐标。已有坐标不被这次空值覆盖，后续坐标成功后再正常补齐。
+  if (!key || (!patch.currentUser && (!patch.organizationId || !patch.projectId))) return null
   const prev = learnedContexts.get(key)
   const next: LearnedYunxiaoContext = {
     ...(prev || {}),
     ...patch,
+    organizationId: patch.organizationId || prev?.organizationId || '',
+    projectId: patch.projectId || prev?.projectId || '',
   }
   if (learnedContexts.has(key)) learnedContexts.delete(key)
   learnedContexts.set(key, next)
