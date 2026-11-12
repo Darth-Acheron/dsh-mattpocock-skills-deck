@@ -396,6 +396,7 @@ export default {
     // ==== kernel:slots (spliced by build) ====
     // ==== kernel:slotRendererQueue (spliced by build) ====
     // ==== kernel:slotRendererRepoSync (spliced by build) ====
+    // ==== kernel:modalWizardStep (spliced by build) ====
     // ==== kernel:slotRendererModalView (spliced by build) ====
 
     // ==== leaf:chips (spliced by build) ====

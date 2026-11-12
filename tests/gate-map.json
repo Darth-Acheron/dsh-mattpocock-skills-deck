@@ -1,16 +1,16 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-11T16:06:32.445Z",
+  "generatedAt": "2026-11-12T13:40:09.867Z",
   "generatedBy": "node scripts/gate-map.mts",
-  "chainLength": 597,
-  "gateCount": 597,
-  "attributedGates": 541,
+  "chainLength": 598,
+  "gateCount": 598,
+  "attributedGates": 542,
   "unattributedGates": 56,
   "buildOutputOnlyGates": 21,
-  "completionRecordedGates": 140,
+  "completionRecordedGates": 141,
   "smokeLength": 8,
   "smokeCompletionRecordedGates": 5,
-  "graphFileCount": 987,
+  "graphFileCount": 989,
   "gates": [
     {
       "step": "node tests/verify-1207-splice-ts.ts",
@@ -13814,7 +13814,37 @@
       "unattributed": false,
       "buildOutputOnly": false,
       "completionRecord": true,
-      "expectedAssertions": 33,
+      "expectedAssertions": 35,
+      "reason": "归属来自 文件头 // 门禁归属: 注释（共 11 条）"
+    },
+    {
+      "step": "node tests/verify-yunxiao-onboarding-wizard.ts",
+      "file": "tests/verify-yunxiao-onboarding-wizard.ts",
+      "guards": [
+        "src/client/kernel/actions.ts",
+        "src/client/kernel/modal-fields.ts",
+        "src/client/kernel/modal-wizard-step.ts",
+        "src/client/kernel/slotRenderer-modal-view.ts",
+        "src/client/kernel/slotRenderer-queue.ts",
+        "src/host/yunxiaoOnboarding.ts",
+        "src/shared/tracker/chain-types.ts",
+        "src/shared/tracker/chain-validate.ts",
+        "src/tracker/registry/builtins.ts",
+        "src/tracker/rooms/yunxiao/model/workspace-config.ts",
+        "src/tracker/rooms/yunxiao/room/fixes.ts"
+      ],
+      "dirs": [
+        "src/client/kernel",
+        "src/host",
+        "src/shared/tracker",
+        "src/tracker/registry",
+        "src/tracker/rooms/yunxiao/model",
+        "src/tracker/rooms/yunxiao/room"
+      ],
+      "unattributed": false,
+      "buildOutputOnly": false,
+      "completionRecord": true,
+      "expectedAssertions": 19,
       "reason": "归属来自 文件头 // 门禁归属: 注释（共 11 条）"
     },
     {
@@ -13880,7 +13910,7 @@
       "unattributed": false,
       "buildOutputOnly": false,
       "completionRecord": true,
-      "expectedAssertions": 41,
+      "expectedAssertions": 56,
       "reason": "归属来自 文件头 // 门禁归属: 注释（共 36 条）"
     },
     {
@@ -14692,6 +14722,7 @@
       "node tests/verify-time-config.ts",
       "node tests/verify-ui-feedback.ts",
       "node tests/verify-workspace-file-note.ts",
+      "node tests/verify-yunxiao-onboarding-wizard.ts",
       "node tests/verify-locale-completeness.ts",
       "node tests/verify-locale-config.ts"
     ],
@@ -15227,6 +15258,7 @@
       "node tests/verify-update-panel.ts",
       "node tests/verify-version-control-host.ts",
       "node tests/verify-visible-truth.ts",
+      "node tests/verify-yunxiao-onboarding-wizard.ts",
       "node tests/verify-yunxiao-room.ts"
     ],
     "src/host/platform": [
@@ -15726,6 +15758,7 @@
       "node tests/verify-issue232-sync.ts",
       "node tests/verify-subdir-first-frame.ts",
       "node tests/verify-time-config.ts",
+      "node tests/verify-yunxiao-onboarding-wizard.ts",
       "node tests/verify-yunxiao-room.ts"
     ],
     "src/shared/ui": [
@@ -15915,6 +15948,7 @@
       "node tests/verify-time-config.ts",
       "node tests/verify-tracker-contract.ts",
       "node tests/verify-tracker-session.ts",
+      "node tests/verify-yunxiao-onboarding-wizard.ts",
       "node tests/verify-yunxiao-room.ts"
     ],
     "src/tracker/rooms": [
@@ -16211,6 +16245,7 @@
     ],
     "src/tracker/rooms/yunxiao/model": [
       "node tests/verify-yunxiao-config-and-remote.ts",
+      "node tests/verify-yunxiao-onboarding-wizard.ts",
       "node tests/verify-yunxiao-room.ts"
     ],
     "src/tracker/rooms/yunxiao/project": [
@@ -16220,6 +16255,7 @@
       "node tests/verify-yunxiao-room.ts"
     ],
     "src/tracker/rooms/yunxiao/room": [
+      "node tests/verify-yunxiao-onboarding-wizard.ts",
       "node tests/verify-yunxiao-room.ts"
     ],
     "src/tracker/rooms/yunxiao/support": [
@@ -16587,9 +16623,9 @@
   },
   "coverage": {
     "sourceRoot": "src",
-    "fileCount": 1012,
+    "fileCount": 1014,
     "dirCount": 111,
-    "coveredFileCount": 1012,
+    "coveredFileCount": 1014,
     "ungatedFileCount": 0,
     "ungatedDirCount": 0,
     "dedicatedDirCount": 90,
@@ -16627,6 +16663,7 @@
       "src/client/kernel/locale-data.ts",
       "src/client/kernel/locale.ts",
       "src/client/kernel/modal-fields.ts",
+      "src/client/kernel/modal-wizard-step.ts",
       "src/client/kernel/motion.ts",
       "src/client/kernel/portal.ts",
       "src/client/kernel/prompt-data.ts",
@@ -17096,6 +17133,7 @@
       "src/host/workspaceCwd.ts",
       "src/host/workspaceKey.ts",
       "src/host/workspaceLabelColors.ts",
+      "src/host/yunxiaoOnboarding.ts",
       "src/refresh/README.md",
       "src/refresh/contract/.gitkeep",
       "src/refresh/contract/host-timer-ports.ts",

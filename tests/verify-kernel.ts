@@ -99,6 +99,7 @@ const MODULES = [
   { name: 'slots', exports: ['SLOTS_KERNEL_VERSION', 'SLOT_DEFS_KERNEL', 'MODAL_SEAT_ID', 'orderOf', 'isScopeValid', 'canDeclareIn', 'shouldShowInModal', 'isModalAction', 'getWizardAction', 'getFormAction', 'getModalAction', 'getWizardSteps'] },
   { name: 'slotRendererQueue', file: 'slotRenderer-queue', exports: ['SLOT_RENDERER_VERSION', 'ensureFormModal', 'openFormModal', 'closeFormModal', 'createModalRenderForm', 'canOpenModalForStep', 'canOpenWizardForStep'] },
   { name: 'slotRendererRepoSync', file: 'repo-sync-renderer', exports: ['startRepoSync', 'finishRepoSync', 'retryRepoSync'] },
+  { name: 'modalWizardStep', file: 'modal-wizard-step', exports: ['isWizardFieldVisible', 'validateWizardFields', 'applyWizardHydratePayload', 'hydrateWizardModal', 'runWizardStepNext', 'renderWizardStepper', 'buildWizardSuccessState', 'renderWizardSuccessModal'] },
   { name: 'slotRendererModalView', file: 'slotRenderer-modal-view', exports: ['FormModalSeat'] },
 ]
 const kernelFileOf = (m) => {

@@ -197,8 +197,8 @@ export function createActionDispatcher(ctx: any) {
         if (typeof ctx.renderForm !== 'function') {
           return { ok: false, error: { kind: 'unsupported', message: 'renderForm not available' }, action }
         }
-        // 单步 wizard 当单页表单：与 form 同形态，仅改用 steps 载荷；提交时合并全步值后走 submitAction（label 透传，空时由 slotRenderer 回落为“向导”，保持 locale 封顶）
-        const wizardPayload = { type: 'wizard', steps: steps, label: action.label, submitAction: action.submitAction }
+        // 单步 wizard 当单页表单：与 form 同形态，仅改用 steps 载荷；提交时合并全步值后走 submitAction（label / initialStepIndex / hydrateRpc 透传，空时由 slotRenderer 回落为“向导”，保持 locale 封顶）
+        const wizardPayload = { type: 'wizard', steps: steps, label: action.label, initialStepIndex: action.initialStepIndex, hydrateRpc: action.hydrateRpc, submitAction: action.submitAction }
         await ctx.renderForm(wizardPayload, async (values: any) => {
           const merged = Object.assign({}, action.submitAction)
           if (values && typeof values === 'object') {

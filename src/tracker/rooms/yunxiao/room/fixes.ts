@@ -1,19 +1,37 @@
 /**
- * src/tracker/rooms/yunxiao/room/fixes.ts —— Yunxiao backend 交给环境检查页的修复动作（规格 #21 / #22）。
+ * src/tracker/rooms/yunxiao/room/fixes.ts —— Yunxiao backend 交给环境检查页的修复动作（规格 #21 / #22 / #23）。
  *
  * 三项环境检查（yunxiao:authed / yunxiao:configured / yunxiao:repoAccess）共用面板内三步向导，
  * 不再把令牌或坐标提示词注入聊天框。Object.freeze 防止运行时被意外篡改。
  */
 
 /**
- * 三项环境检查共用的一组向导步骤。本票只声明令牌、项目、仓库三个位置：
- * 密码字段与令牌落盘由 #23 接线，组织/项目/仓库发现与置备由 #24 接线。
- * 不在本票用普通文本框收集令牌，避免在主入口里引入明文凭证输入。
+ * 三项环境检查共用的一组向导步骤：
+ *   - 第 1 步（#23）：深链打开云效个人访问令牌创建页 + 3 行最小权限勾选口诀 + 掩码密码框 + wf.yunxiaoSaveToken 在线验真与 0600 落盘；
+ *   - 第 2 步与第 3 步（#24 扩展组织/项目/仓库发现与置备）：配合顶层 hydrateRpc (wf.yunxiaoDiscover) 动态水合。
  */
 const YUNXIAO_ONBOARDING_STEPS = [
   {
     title: { zh: '连接云效个人访问令牌', en: 'Connect Yunxiao personal access token' },
-    schema: [],
+    stepAction: { type: 'rpc', method: 'wf.yunxiaoSaveToken' },
+    schema: [
+      {
+        name: 'token',
+        type: 'password',
+        required: true,
+        label: { zh: '个人访问令牌 (PAT)', en: 'Personal Access Token' },
+        placeholder: { zh: '粘贴 pt-... 或个人访问令牌', en: 'Paste personal access token' },
+        helperLink: {
+          label: { zh: '打开云效令牌创建页 ↗', en: 'Open Yunxiao token page ↗' },
+          url: 'https://account-devops.aliyun.com/settings/personalAccessToken',
+        },
+        helperLines: [
+          { zh: '1. 组织管理 / 用户信息：只读', en: '1. Organization & User info: Read-only' },
+          { zh: '2. 项目协作（Projex）项目与工作项：读写，项目成员：只读', en: '2. Projex projects & workitems: Read/Write, members: Read-only' },
+          { zh: '3. 代码管理（Codeup）代码库：读写（代码组只读可选）', en: '3. Codeup repositories: Read/Write (groups read-only optional)' },
+        ],
+      },
+    ],
   },
   {
     title: { zh: '组织与 Projex 项目', en: 'Organization & Projex project' },
@@ -28,12 +46,13 @@ const YUNXIAO_ONBOARDING_STEPS = [
   },
 ]
 
-/** 声明统一向导入口与本次检查应落到的初始步；initialStepIndex 的客户端接线由 #23 完成。 */
+/** 声明统一向导入口与本次检查应落到的初始步；支持通过 wf.yunxiaoDiscover 水合动态选项与初始步。 */
 function yunxiaoOnboardingWizard(initialStepIndex: number) {
   return {
     type: 'wizard',
     label: { zh: '配置云效工作区', en: 'Configure Yunxiao workspace' },
     initialStepIndex,
+    hydrateRpc: { method: 'wf.yunxiaoDiscover' },
     steps: YUNXIAO_ONBOARDING_STEPS,
     submitAction: { type: 'contract-op', op: 'initProject', params: {} },
   }

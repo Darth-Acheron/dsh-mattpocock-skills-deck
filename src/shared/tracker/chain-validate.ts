@@ -140,8 +140,8 @@ export function validateAction(action: ValidateAction | null | undefined): Valid
       for (let i = 0; i < fields.length; i++) {
         const f = fields[i]
         if (!f || typeof f !== 'object' || !f.name || typeof f.name !== 'string' || !String(f.name).trim()) return { ok: false, error: { kind: ERROR_KIND.PARSE, message: 'form.fields[' + i + '].name 必填' } }
-        // label / labelKey 二选一兼容
-        const hasLabel = (f.label && typeof f.label === 'string' && String(f.label).trim()) || (f.labelKey && typeof f.labelKey === 'string' && String(f.labelKey).trim())
+        // label / labelKey 二选一兼容（支持字符串或 {zh,en} 双语对象）
+        const hasLabel = (f.label && ((typeof f.label === 'string' && String(f.label).trim()) || isPlainObject(f.label))) || (f.labelKey && typeof f.labelKey === 'string' && String(f.labelKey).trim())
         if (!hasLabel) return { ok: false, error: { kind: ERROR_KIND.PARSE, message: 'form.fields[' + i + '].label/labelKey 必填' } }
       }
       if (!getSubmit || typeof getSubmit !== 'object') return { ok: false, error: { kind: ERROR_KIND.PARSE, message: 'form 需 submitAction/submit' } }
@@ -171,11 +171,11 @@ export function validateAction(action: ValidateAction | null | undefined): Valid
           const f = schema[fi]
           if (!f || typeof f !== 'object' || !f.name || typeof f.name !== 'string' || !String(f.name).trim()) return { ok: false, error: { kind: ERROR_KIND.PARSE, message: 'wizard.steps[' + si + '].fields[' + fi + '].name 必填' } }
           const hasLabel = (f.label && typeof f.label === 'string' && String(f.label).trim()) || (f.labelKey && typeof f.labelKey === 'string' && String(f.labelKey).trim()) || (f.name && typeof f.name === 'string')
-          // 兼容：wizard 复用 FieldSchema 允许仅 name（label 回落 name），但若显式提供则需非空字符串
-          if (f.label !== undefined && f.label !== null && typeof f.label !== 'string') return { ok: false, error: { kind: ERROR_KIND.PARSE, message: 'wizard.steps[' + si + '].fields[' + fi + '].label 必须为字符串' } }
+          // 兼容：wizard 复用 FieldSchema 允许仅 name（label 回落 name），若显式提供则允许字符串或 {zh,en} 双语对象
+          if (f.label !== undefined && f.label !== null && typeof f.label !== 'string' && !isPlainObject(f.label)) return { ok: false, error: { kind: ERROR_KIND.PARSE, message: 'wizard.steps[' + si + '].fields[' + fi + '].label 必须为字符串' } }
           if (f.type !== undefined && f.type !== null) {
             const vt = String(f.type).trim()
-            if (vt && !['text','number','date','single','multi','directory','file'].includes(vt)) return { ok: false, error: { kind: ERROR_KIND.PARSE, message: 'wizard.steps[' + si + '].fields[' + fi + '].type 非法：' + vt } }
+            if (vt && !['text','number','date','single','multi','directory','file','password','select'].includes(vt)) return { ok: false, error: { kind: ERROR_KIND.PARSE, message: 'wizard.steps[' + si + '].fields[' + fi + '].type 非法：' + vt } }
           }
         }
       }

@@ -3297,8 +3297,14 @@ repositoryId: "7360166"`,
       yxWizards.every((wizard: any, index: number) =>
         wizard?.type === 'wizard' &&
         wizard.initialStepIndex === expectedInitialSteps[index] &&
+        wizard.hydrateRpc?.method === 'wf.yunxiaoDiscover' &&
         wizard.steps?.length === 3 &&
         JSON.stringify(wizard.steps.map((step: any) => step.title?.zh)) === JSON.stringify(expectedStepTitles) &&
+        wizard.steps[0]?.stepAction?.method === 'wf.yunxiaoSaveToken' &&
+        wizard.steps[0]?.schema?.[0]?.name === 'token' &&
+        wizard.steps[0]?.schema?.[0]?.type === 'password' &&
+        wizard.steps[0]?.schema?.[0]?.helperLink?.url === 'https://account-devops.aliyun.com/settings/personalAccessToken' &&
+        wizard.steps[0]?.schema?.[0]?.helperLines?.length === 3 &&
         wizard.submitAction?.type === 'contract-op' &&
         wizard.submitAction?.op === 'initProject'
       ) &&
@@ -3309,7 +3315,7 @@ repositoryId: "7360166"`,
           roomMod.fixes[id].actions[1]?.target === 'chain' &&
           roomMod.fixes[id].actions.every((action: any) => action.type !== 'inject-prompt')
         ),
-      '12.3 三项修复动作共享三步 Yunxiao onboarding wizard，初始步为 0/1/1，随后 refresh(chain)，无 inject-prompt',
+      '12.3 三项修复动作共享三步 Yunxiao onboarding wizard（含第 1 步 password 令牌字段、深链、3 行权限口诀、wf.yunxiaoSaveToken 与 wf.yunxiaoDiscover），初始步为 0/1/1，随后 refresh(chain)，无 inject-prompt',
       yxFixIds.map((id) => roomMod.fixes[id]),
     )
 

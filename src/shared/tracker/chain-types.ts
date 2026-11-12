@@ -142,16 +142,29 @@ export type Show = {
  * @property {string} [defaultValue]
  * @property {string} [pattern]
  */
+export type FieldText = string | { zh: string; en: string }
+
+export type FieldOption = string | { value: string; label: FieldText }
+
 export type FieldSchema = {
   name: string
-  type?: 'text' | 'number' | 'date' | 'single' | 'multi' | 'directory' | 'file'
-  label?: string
+  type?: 'text' | 'number' | 'date' | 'single' | 'multi' | 'directory' | 'file' | 'password' | 'select'
+  label?: FieldText
   labelKey?: string
   required?: boolean
-  options?: string[]
+  options?: FieldOption[]
+  optionSubs?: Record<string, FieldText>
+  readOnlyWhenSingle?: boolean
+  visibleWhen?: { field: string; equals?: string | string[]; notEquals?: string }
+  helperLink?: { label: FieldText; url: string }
+  helperLines?: FieldText[]
+  banner?: { level: 'warn' | 'info'; text: FieldText }
+  rehydrateOnChange?: boolean
   placeholderKey?: string
-  placeholder?: string
+  placeholder?: FieldText
   defaultValue?: string
+  defaultFrom?: string
+  preview?: FieldText
   pattern?: string
 }
 
@@ -200,7 +213,9 @@ export type Action = {
   fields?: FieldSchema[]
   submitAction?: Action
   submit?: { type?: string; endpoint?: string; method?: string }
-  steps?: Array<{ title?: string; schema: FieldSchema[] }>
+  initialStepIndex?: number
+  hydrateRpc?: { method: string; params?: Record<string, unknown> }
+  steps?: Array<{ title?: FieldText; schema: FieldSchema[]; stepAction?: { type: 'rpc'; method: string; params?: Record<string, unknown> } }>
   form?: { title?: string; desc?: string; fields?: FieldSchema[]; submit?: { type?: string; endpoint?: string; method?: string } }
   target?: 'chain' | 'snapshot'
 }

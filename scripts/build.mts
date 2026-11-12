@@ -615,6 +615,7 @@ const KERNEL_MODULES: { name: string; file: string }[] = [
   // #1251：这一片由手写 .js 转成 .ts，这里改指新真源（读源由 readSpliceFragmentSource 按扩展名分派，
   //   它会把 .ts 转译成可拼接的 JavaScript；同名 .js 已删，不再入库）。
   { name: 'slotRendererRepoSync', file: 'src/refresh/rooms/client/repo-sync-renderer.ts' },
+  { name: 'modalWizardStep', file: 'src/client/kernel/modal-wizard-step.ts' },
   // #1251：这一片由手写 .js 转成 .ts，这里改指新真源（读源由 readSpliceFragmentSource 按扩展名分派，
   //   它会把 .ts 转译成可拼接的 JavaScript；同名 .js 已删，不再入库）。
   { name: 'slotRendererModalView', file: 'src/client/kernel/slotRenderer-modal-view.ts' },
