@@ -35,6 +35,8 @@
 
 2026-10-26 起，远端不再承担验证裁决职责：`.github/workflows/verify.yml` 已下掉（#1542），推送 main 与开 PR 都不再自动跑验证。本地验证是唯一的裁决口径，规则是三条：本地跑链必须用 Node 24.15 及以上版本（在 Node 22 上跑链本身就是 #1523 记录的装载故障）；`npm run verify:parallel` 是唯一的裁决入口，提交前与推送前每次都要跑它（#1643 起它一次盖住主链与五条冒烟，`npm test` 与 `npm run test:smoke` 仍然可用，但都不是裁决入口）；合并前要求除登记在案的已知红之外，全链真红为 0（例如 #1541 跟踪的那几道与 Node 版本无关的失败）。这三条的来龙去脉见 `docs/adr/20261026-cancel-ci-verify.md`。
 
+新机器第一次跑全链前，除了确认 Node 版本，还要装一次 Playwright 的浏览器：`npx playwright install chromium`（#30）。真浏览器类门禁经 `tests/lib/browser-pool.ts` 起 Playwright 自带的 chromium 与 headless shell；仓库锁定的 Playwright 版本对应哪一号二进制就装哪一号，没装时这些门禁会在 `chromium.launch` 处直接报 `Executable doesn't exist`，这不是代码坏了。装到默认缓存位置（macOS 上是 `~/Library/Caches/ms-playwright`）后不需要任何环境变量；临时把二进制放在别处时，可以用 `PLAYWRIGHT_BROWSERS_PATH` 指过去，但提交前的裁决跑法以默认位置为准。
+
 2026-10-12 的实测（28 核机器）：当时 228 步串行 517 秒；8 路并发在源码没动过时约 36 秒，
 源码刚改过（要真跑一次构建）时约 66 秒。链今天约三百步，量级不变，绝对值会跟链长一起涨。
 并发跑的日志里每一步的起止与耗时都打了时间戳；并发跑红的步骤会自动串行重跑一次，
