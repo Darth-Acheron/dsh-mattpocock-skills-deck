@@ -466,7 +466,10 @@ async function main() {
   }
   const realCleanup = []
   function mkRepo(tag) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsws-maint-c-' + tag + '-')).replace(/\\/g, '/')
+    // 先过一遍真实路径：git maintenance register 会把仓库的 realpath（macOS 上 /var/… 解析成
+    //   /private/var/…）写进清单，模块拿 rig 报的根跟清单比对；目录一开始就用真实路径，三边同一条，
+    //   「登记后本地仓库出现在维护清单里」不再被符号链接拆散（Windows 上 realpathSync 原样返回；#30）。
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dsws-maint-c-' + tag + '-'))).replace(/\\/g, '/')
     realCleanup.push(dir)
     gitMust(dir, ['init', '-q', '-b', 'main'])
     gitMust(dir, ['config', 'user.name', '测试用户'])
