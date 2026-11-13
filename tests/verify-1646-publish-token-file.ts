@@ -33,7 +33,11 @@ const ENV_TOKEN = 'fake1646-env-token-do-not-leak'
 // 误操作形态用：长得像 token（一段 32 个字符以上的连续字母数字串），但没有路径分隔符。
 const TOKEN2 = 'fake1646-token-value-do-not-leak-0123456789abcdef'
 const PKG = 'verify-1646-fake-pkg'
-const PKG_VERSION = '0.0.1'
+// 版本号故意用预发布形态：正式形态（如 0.0.1）撞上「registry 已有同号版本」时，npm 11 会在客户端侧直接
+//   拒发（EPUBLISHCONFLICT），探针那一把根本不会把 PUT 发到 registry 上——「真写了 PUT、Authorization 带
+//   文件里的 token」这两条判据就空转了（#30 实测）。预发布形态走的是真 PUT、由 registry 的 409 拒收，这正是
+//   探针要验的写链路。
+const PKG_VERSION = '0.0.1-probe.1'
 
 let failed = false
 let total = 0
@@ -168,6 +172,11 @@ function startStub(mode: 'missing' | 'visible'): Promise<Stub> {
 }
 
 // 子进程环境要干净：别人的 token、npm 配置、代理都可能把请求带出 127.0.0.1 或污染结论。
+// npm 的缓存目录也一并指到本门禁自己的临时目录：不然 npm 会去写用户级 ~/.npm——那片目录不属于本门禁
+//   的判据（token 从文件进 registry 这一趟），却被外部状态绑住：缓存里出现属主不对或只读的文件时 npm
+//   直接 EPERM 退出，脚本报「token 校验没过」，门禁跟着红，红的原因与被测代码无关（#30 实测）。指进来
+//   之后门禁不再依赖用户主目录的任何可写状态，两个平台一致。
+let hermeticNpmCache: string | null = null
 function childEnv(extra: Record<string, string>): Record<string, string> {
   const drop = new Set(['NODE_AUTH_TOKEN', 'NPM_TOKEN', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY'])
   const env: Record<string, string> = {}
@@ -178,6 +187,8 @@ function childEnv(extra: Record<string, string>): Record<string, string> {
     env[key] = value
   }
   for (const [key, value] of Object.entries(extra)) env[key] = value
+  if (hermeticNpmCache === null) hermeticNpmCache = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-1646-npm-'))
+  env.npm_config_cache = hermeticNpmCache
   return env
 }
 
