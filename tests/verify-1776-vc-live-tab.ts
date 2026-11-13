@@ -23,7 +23,10 @@ let total = 0
 let failed = 0
 const check = (ok, msg) => { total += 1; console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed += 1 }
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
-const NOW = Date.parse('2026-11-01T10:00:00+08:00')
+// 基准时刻取跑这一趟的真实当下，不写死日期：写死的日子离今天一远，「读取于」就会超过一周、按口径
+//   回成绝对时刻，T4d2「不再是绝对写法」翻红（#30 实测 13 天即翻）。扇里所有时刻都是 NOW 的相对偏移
+//   （几小时前、昨天、读于当下），跟真实当下对齐后各档措辞与写门禁那天一致。
+const NOW = Date.now()
 const CWD = 'D:/w/repo'
 
 // ---------------- 源码闭包：与 scripts/build.mts 的拼接次序同源 ----------------
