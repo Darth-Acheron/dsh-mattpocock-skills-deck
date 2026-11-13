@@ -69,7 +69,7 @@ const MATRIX: [string, string, string[]][] = [
   ['src/client/views/labels/LabelColorEntry.ts', '调色板入口', ['head.palette']],
   ['src/client/views/shared/workRouteTable.ts', '在办表入口', ['head.workroute']],
   ['src/client/views/listFilterRow.ts', '列表三组筛选药丸', ['list.filter.state.', 'list.filter.sort.', 'list.filter.label.']],
-  ['src/client/views/ListTabRow.ts', '列表行与行内四颗按钮', ['list.row.', 'list.row.newsession.', 'list.row.copy.', 'list.row.link.']],
+  ['src/client/views/ListTabRow.ts', '列表行与行内四颗按钮及树折叠箭头', ['list.row.', 'list.row.newsession.', 'list.row.copy.', 'list.row.link.', 'list.tree.toggle.']],
   ['src/client/kernel/row-actions.ts', '行级主动作（执行/原型）', ['issue.action.']],
   ['src/client/views/MapDetail.ts', '地图卡片与折叠条', ['map.card.', 'map.card.newsession.', 'map.card.copy.', 'map.card.link.', 'map.notes.toggle', 'map.decisions.toggle', 'map.fog.toggle', 'map.outofscope.toggle']],
   ['src/client/views/MapDetailTop.ts', '地图详情顶栏', ['map.top.back', 'map.top.exec', 'map.top.newsession', 'map.top.copy', 'map.top.link']],
@@ -91,6 +91,7 @@ const MATRIX: [string, string, string[]][] = [
   ['src/client/views/ListTab.ts', '列表页顶部按钮与筛选药丸', ['list.filter.remove.', 'list.filter.clear', 'list.healthcheck', 'list.fold.closed']],
   // #1639：顶部那排 md目录签的画法搬到 views/mdEffortRow.ts，它的点击日志定位串跟着搬过去（画法在哪，接线就登记在哪）。
   ['src/client/views/mdEffortRow.ts', '列表页顶部的 md目录签', ['list.effort.']],
+  ['src/client/views/listTree.ts', '列表父子树内已关闭子票折叠条', ['list.tree.closed.']],
   ['src/client/views/ListTabClosed.ts', '已关闭列表', ['list.closed.web']],
   ['src/client/views/IssueDetail.ts', '工单详情错误态控件', ['detail.err.']],
   ['src/client/views/IssueDetailComments.ts', '评论区的错误态链接', ['detail.cmt.']],

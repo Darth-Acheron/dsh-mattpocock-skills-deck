@@ -200,6 +200,13 @@ const CONTAINER_ACCENT_CSS: any = (typeof CONTAINER_ACCENT === 'object' && CONTA
       // v1.3.3：左侧预留空白减 20%（8px → 6.4px，map 行/普通行一致更紧凑）
       '.dsws-aggrow{display:flex;flex-direction:column;align-items:stretch;gap:6px;padding:6px 6.4px;border-radius:6px;border:1px solid transparent}',
       '.dsws-aggrow:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06));border-color:var(--dsw-alias-border-l1,#2a2d35)}',
+      // 主列表父子树缩进与折叠开关：左缩进加纵向引导线区分层级（探索地图紫轨、规格蓝轨），窄屏自动收紧间距保留标题区宽度
+      '.dsws-tree-kids{display:flex;flex-direction:column;gap:2px;margin:2px 0 6px 12px;padding-left:9px;border-left:1.5px solid var(--dsw-alias-border-l1,#2a2d35)}',
+      '.dsws-narrow .dsws-tree-kids{margin-left:7px;padding-left:6px}',
+      '.dsws-tree-kids.map-rail{border-left-color:rgba(192,132,252,.32)}',
+      '.dsws-tree-kids.spec-rail{border-left-color:rgba(29,78,216,.38)}',
+      '.dsws-tree-toggle{display:inline-flex;align-items:center;justify-content:center;width:18px;height:20px;padding:0;margin-right:2px;border-radius:4px;border:1px solid transparent;background:transparent;color:var(--dsw-alias-label-secondary,#a1a1aa);cursor:pointer;flex:none}',
+      '.dsws-tree-closed-bar{display:flex;align-items:center;gap:4px;padding:3px 6px;margin-top:1px;border-radius:6px;border:1px solid transparent;background:transparent;color:var(--dsw-alias-label-caption,#8b8b95);font-size:11px;cursor:pointer;user-select:none;text-align:left;width:100%}',
       // v1.3.3 UI：辅助按钮（复制/外链）常显（用户要求一直显示，不 hover）
       '.dsws-aggrow .dsws-aux{display:inline-flex;align-items:center;gap:2px;flex:none}',
       // v1.3.3 UI：行2 标签贪心折叠（单行不换行，宽多窄少，+N 弹窗展开）

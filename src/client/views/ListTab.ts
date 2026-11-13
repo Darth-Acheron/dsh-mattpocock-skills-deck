@@ -24,6 +24,11 @@ declare function closedPagesNode(...args: any[]): any;
 declare function listFilterRowNode(...args: any[]): any;
 // #1639：顶部那排 md目录签的画法与目录名文字上限（内联流跨行切断，见 views/mdEffortRow.ts）。
 declare function mdEffortRowNode(...args: any[]): any;
+declare function buildListTicketTree(...args: any[]): any;
+declare function listBottomClosedRowsOf(...args: any[]): any;
+declare function listClosedTreeNodes(...args: any[]): any;
+declare function listTicketTreeNodes(...args: any[]): any;
+declare function listTreeFoldFingerprintOf(...args: any[]): any;
 declare function compute(...args: any[]): any;
 declare function darken(...args: any[]): any;
 declare function deckCountsOf(...args: any[]): any;
@@ -136,7 +141,8 @@ export     const ListTab = ({ st, narrow }: any) => {
         //   #1295 起这个副作用另有一条调试档的 container.split（见下），只记分桶计数，与这里的耗时测点无关。
         const _tFit0 = isEnabled('debug') ? panelNow() : 0
         const _addFit = function () { try { if (_tFit0) panelClock.fitMs = Math.round((panelClock.fitMs || 0) + (panelNow() - _tFit0)) } catch (eF) {} }
-        const fp = String((st.snapshot && st.snapshot.generatedMs) || '') + '|' + st.tab + '|' + st.stateFilter + '|' + (st.lblFilters || []).join(',')
+        const _treeFp = (typeof listTreeFoldFingerprintOf === 'function') ? listTreeFoldFingerprintOf(st) : ''
+        const fp = String((st.snapshot && st.snapshot.generatedMs) || '') + '|' + st.tab + '|' + st.stateFilter + '|' + (st.lblFilters || []).join(',') + (_treeFp ? '|' + _treeFp : '')
         if (_tagsFpOf.get(st) === fp) { _addFit(); return }
         _tagsFpOf.set(st, fp)
         fitAllTags()
@@ -328,6 +334,21 @@ export     const ListTab = ({ st, narrow }: any) => {
       const filteredOpen = showOpen ? (filters.stateFilter === 'blocked' ? openFiltered.filter(function (x: any) { return isOccupied(st, x) })
         : (filters.stateFilter === 'frontier' ? openFiltered.filter(function (x: any) { return !isOccupied(st, x) }) : openFiltered)) : []
       const filteredClosed = showClosedList ? ((filters.lblFilters && filters.lblFilters.length) ? closedRows.filter(byLabel) : closedRows) : []
+      const _hasTreeLeaf = typeof buildListTicketTree === 'function' && typeof listTicketTreeNodes === 'function'
+      const _hasOpenSubFilter = !!((filters.lblFilters && filters.lblFilters.length) || filters.stateFilter === 'blocked' || filters.stateFilter === 'frontier')
+      const _matchOpenItem = function (x: any) {
+        if (filters.lblFilters && filters.lblFilters.length && !byLabel(x)) return false
+        if (filters.stateFilter === 'blocked') return isOccupied(st, x)
+        if (filters.stateFilter === 'frontier') return !isOccupied(st, x)
+        return true
+      }
+      const _treeModel = (showOpen && _hasTreeLeaf)
+        ? buildListTicketTree({ maps: sortedMaps.filter(effPass), specs: sortedSpecs.filter(effPass), openTickets: sortedOpen.filter(effPass), closedRows: closedRows })
+        : null
+      const _openTreeEls = (showOpen && _treeModel)
+        ? listTicketTreeNodes({ h: h, st: st, tree: _treeModel, narrow: narrow, blockOf: blockOf, colorOf: colorOf, multiEffort: multiEffort, matchOpen: _matchOpenItem, hasSubFilter: _hasOpenSubFilter, containerKindOf: containerKindOfSafe })
+        : null
+      const _bottomClosedRows = (_treeModel && typeof listBottomClosedRowsOf === 'function') ? listBottomClosedRowsOf(_treeModel, closedRows) : closedRows
       // KPI 口径：与全局一致，但跟随 effort 筛选（未选 effort 时就是全局）
       // #1887：数字只有一个来源 —— 快照库的六个数字（deck.counts）。可接/阻塞/已关闭直接读它；
       //   拿不到（旧快照）或界面带着筛选时退回按池子派生，并如实标 complete=false。
@@ -451,19 +472,19 @@ export     const ListTab = ({ st, narrow }: any) => {
           const tone = function (t: any) { return t === 'red' ? '#f87171' : (t === 'yellow' ? '#f59e0b' : 'var(--dsws-label-caption,#8b8b95)') }
           return h('div', { className: 'dsws-truth', style: { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', fontSize: 11, padding: '2px 2px 4px' } }, ls.map(function (ln: any) { return h('span', { key: ln.kind || ln.key, style: { color: tone(ln.tone) } }, tr(ln.key, ln.params)) }))
         })(),
-        // #374：状态过滤渲染 —— open 主体 / closed 列表 / 「全部」态保留已关闭折叠行
-        showOpen ? (filteredOpen.length === 0 ? h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary,#a1a1aa)', padding: '14px 0', textAlign: 'center' } }, tr('list.none')) : filteredOpen.map(function (x: any) { return listIssueRow(h, st, x, true, narrow, blockOf, colorOf, multiEffort) })) : null,
-        showClosedList ? (filteredClosed.length === 0 ? h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary,#a1a1aa)', padding: '14px 0', textAlign: 'center' } }, tr('list.none')) : filteredClosed.map(function (x: any) { return listIssueRow(h, st, x, false, narrow, blockOf, colorOf, multiEffort) })) : null,
-        // v14-4⑤：列表底部「已关闭 (N)」折叠行（仅「全部」状态显示；默认收起，只占一行，展开可见）
+        // #374：状态过滤渲染 —— open 主体（优先走父子树状可折叠展示） / closed 列表 / 「全部」态保留已关闭折叠行
+        showOpen ? ((_openTreeEls !== null ? _openTreeEls.length === 0 : filteredOpen.length === 0) ? h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary,#a1a1aa)', padding: '14px 0', textAlign: 'center' } }, tr('list.none')) : (_openTreeEls !== null ? _openTreeEls : filteredOpen.map(function (x: any) { return listIssueRow(h, st, x, true, narrow, blockOf, colorOf, multiEffort) }))) : null,
+        showClosedList ? (filteredClosed.length === 0 ? h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary,#a1a1aa)', padding: '14px 0', textAlign: 'center' } }, tr('list.none')) : (typeof listClosedTreeNodes === 'function' ? listClosedTreeNodes({ h: h, st: st, rows: filteredClosed, narrow: narrow, blockOf: blockOf, colorOf: colorOf, multiEffort: multiEffort, containerKindOf: containerKindOfSafe }) : filteredClosed.map(function (x: any) { return listIssueRow(h, st, x, false, narrow, blockOf, colorOf, multiEffort) }))) : null,
+        // v14-4⑤：列表底部「已关闭 (N)」折叠行（仅「全部」状态且仍有未被上方开放容器收拢的已关闭行时显示；默认收起，只占一行，展开可见）
         // #689：文案改成「已关闭 N（已加载 x）」—— N 是后端计数说的总数，x 是列表里真加载到的行数；
         //   两个不一样时（本仓现在就是）用户一眼能看出「还有多少没装进来」，而不是以为列表就是全部。
-        (st.stateFilter === 'all' && closedRows.length) ? h('details', { style: { marginTop: 8 }, onToggle: function (e: any) { const open = !!(e && e.target && e.target.open); st.closedFoldOpen = open; emit(st); if (open) loadIssuePage(st, { view: 'list' }) } }, [
+        (st.stateFilter === 'all' && _bottomClosedRows.length) ? h('details', { style: { marginTop: 8 }, onToggle: function (e: any) { const open = !!(e && e.target && e.target.open); st.closedFoldOpen = open; emit(st); if (open) loadIssuePage(st, { view: 'list' }) } }, [
           // 本次界面反馈需求：折叠条能点（展开已关闭列表），给它自己的按压态与点击日志。
           h('summary', { className: 'dsws-hov', 'data-press': 'button', 'data-log': 'list.fold.closed', style: { fontSize: 11, color: 'var(--dsw-alias-label-caption,#8b8b95)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, padding: '4px 2px', userSelect: 'none' } }, [
             Ic({ n: 'check', size: 11 }),
             h('span', null, tr('list.closedN', { n: foldCounts ? foldCounts.closed : closedRows.length, x: closedRows.length })),
           ]),
-          h('div', null, closedRows.map(function (x: any) { return listIssueRow(h, st, x, false, narrow, blockOf, colorOf, multiEffort) })),
+          h('div', null, typeof listClosedTreeNodes === 'function' ? listClosedTreeNodes({ h: h, st: st, rows: _bottomClosedRows, narrow: narrow, blockOf: blockOf, colorOf: colorOf, multiEffort: multiEffort, containerKindOf: containerKindOfSafe }) : _bottomClosedRows.map(function (x: any) { return listIssueRow(h, st, x, false, narrow, blockOf, colorOf, multiEffort) })),
         ]) : null,
       ])
     }

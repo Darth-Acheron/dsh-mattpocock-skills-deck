@@ -63,6 +63,8 @@ const LEAVES = [
   { file: 'src/client/views/listFilterRow.ts', exports: ['listFilterRowNode'], components: [] },
   // #1639：主列表顶部那排 md目录签的画法（普通内联流跨行切断、slice 封口）与目录名文字上限（19 个数字的宽度 + 末尾省略号）。
   { file: 'src/client/views/mdEffortRow.ts', exports: ['MD_EFFORT_LABEL_DIGIT_LIMIT', 'MD_EFFORT_LABEL_ELLIPSIS', 'mdEffortLabelOf', 'mdEffortRowNode'], components: [] },
+  // 主列表父子层级归属树构建与可折叠渲染叶子（三级缩进、默认展开未关子票、默认收拢已关子票）。
+  { file: 'src/client/views/listTree.ts', exports: ['LIST_TREE_MAX_DEPTH', 'listTreeFoldFingerprintOf', 'buildListTicketTree', 'listBottomClosedRowsOf', 'listClosedTreeNodes', 'listTicketTreeNodes'], components: [] },
   { file: 'src/client/views/ListTab.js', exports: ['ListTab'], components: ['ListTab'] },
   { file: 'src/client/views/SkillsTab.js', exports: ['SkillsTab'], components: ['SkillsTab'] },
   { file: 'src/client/views/ChecksTab.js', exports: ['ChecksTab'], components: ['ChecksTab'] },

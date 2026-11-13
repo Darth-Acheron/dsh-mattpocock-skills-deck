@@ -1028,6 +1028,8 @@ const LEAF_MODULES: { id: string; file: string }[] = [
   // #1639：顶部那排 md目录签的排布（普通内联流、行尾照字面切断）与目录名文字上限（19 个数字的宽度 + 末尾省略号），
   //   从 ListTab 抽出，排在 listTab 之前（ListTab 调它画那一排）。
   { id: 'mdEffortRow', file: 'src/client/views/mdEffortRow.ts' },
+  // 主列表父子层级归属树构建与可折叠渲染叶子，排在 listTab 之前（ListTab 调它画三级可折叠树）。
+  { id: 'listTree', file: 'src/client/views/listTree.ts' },
   { id: 'listTab', file: 'src/client/views/ListTab.ts' },
   { id: 'prTab', file: 'src/client/views/PrTab.ts' },
   { id: 'skillsTab', file: 'src/client/views/SkillsTab.ts' },

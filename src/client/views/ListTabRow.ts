@@ -135,7 +135,7 @@ export const listSkeletonNode = function (h: any, count: any) {
   return h('div', { className: 'dsws-list-skel', 'data-dsws-list-skeleton': '1', 'aria-hidden': 'true', style: { display: 'flex', flexDirection: 'column', gap: 0, width: '100%' } }, rows)
 }
 
-export const listIssueRow = function (h: any, st: any, x: any, isOpen: any, narrow: any, blockOf: any, colorOf: any, multiEffort: any) {
+export const listIssueRow = function (h: any, st: any, x: any, isOpen: any, narrow: any, blockOf: any, colorOf: any, multiEffort: any, treeMeta?: any) {
       // 2026-10-26 维护者要求：effort 徽标先整体隐藏，代码保留、不删除。
       //   背景：#1511 起编号已经写成「#目录/01」，这枚徽标里写的目录名与同一行编号里的目录名重复，
       //   一行里同一段文字出现两次。改回 true 即恢复显示（三处同名开关：ListTabRow、IssueDetail、MapDetailHead）。
@@ -314,7 +314,11 @@ export const listIssueRow = function (h: any, st: any, x: any, isOpen: any, narr
       }
       // R5：变化行视觉（变更琥珀渐隐 / 新增绿闪）
       const _flashCls = (st.rowFlash && st.rowFlash[idOf(x)]) ? (st.rowFlash[idOf(x)] === 'added' ? ' dsws-row-added' : ' dsws-row-changed') : ''
-      return h(Tip, { content: (isContainer && containerObj) ? tr((typeof containerTitleKey === 'function') ? containerTitleKey(kind) : (isSpec ? 'list.specTitle' : 'list.mapTitle')) : tr('list.issueDetailTitle') }, h('div', {
+      const _rowLogKey = String(x.key != null ? x.key : x.number).toLowerCase()
+      const _hasTreeToggle = !!(treeMeta && treeMeta.hasChildren === true)
+      const _treeCollapsed = !!(treeMeta && treeMeta.collapsed === true)
+      const _treeToggleTip = _hasTreeToggle ? (_treeCollapsed ? tr('list.treeExpand', { n: treeMeta.childTotal || 0 }) : tr('list.treeCollapse')) : ''
+      const _rowProps: any = {
         key: idOf(x),
         className: 'dsws-aggrow' + _flashCls,
         // #949 瞬间底座：整行可点就要能被键盘走到。tabIndex 让 Tab 停留，
@@ -325,7 +329,7 @@ export const listIssueRow = function (h: any, st: any, x: any, isOpen: any, narr
         'aria-label': '#' + (x.key != null ? x.key : x.number) + ' ' + (x.title || ''),
         // 本次界面反馈需求：整行按下变暗、点击写一条调试日志（target 带票号，读日志能定位到点了哪一行）。
         'data-press': 'row',
-        'data-log': 'list.row.' + (x.key != null ? x.key : x.number),
+        'data-log': 'list.row.' + _rowLogKey,
         onClick: function () {
           // #1286：容器行（探索地图与规格）点开都进容器详情，走地图那条路；普通票进票详情。
           if (isContainer && containerObj) { setActiveMap(st, x.number, effortOf(x)) }
@@ -338,9 +342,20 @@ export const listIssueRow = function (h: any, st: any, x: any, isOpen: any, narr
           chipKeyDown(e)
         },
         style: isContainer ? { cursor: 'pointer', borderLeft: '3px solid ' + accentOf(kind), background: tintOf(kind) } : { cursor: 'pointer' },
-      }, [
-        // 行1：idcol 竖排（编号上 map 徽章下）+ 标题 + 圆环进度（T1 Map #120：gap 6→8，idcol↔标题 8、标题↔圆环 8）
+      }
+      if (treeMeta && typeof treeMeta.depth === 'number') _rowProps['data-tree-depth'] = String(treeMeta.depth)
+      return h(Tip, { content: (isContainer && containerObj) ? tr((typeof containerTitleKey === 'function') ? containerTitleKey(kind) : (isSpec ? 'list.specTitle' : 'list.mapTitle')) : tr('list.issueDetailTitle') }, h('div', _rowProps, [
+        // 行1：可选折叠箭头 + idcol 竖排（编号上 map 徽章下）+ 标题 + 圆环进度（T1 Map #120：gap 6→8，idcol↔标题 8、标题↔圆环 8）
         h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: LIST_ROW_SHAPE.line1.gap, width: '100%' } }, [
+          _hasTreeToggle ? h(Tip, { content: _treeToggleTip }, h('button', {
+            type: 'button',
+            className: 'dsws-tree-toggle',
+            'data-press': 'icon',
+            'data-log': 'list.tree.toggle.' + _rowLogKey,
+            'aria-expanded': _treeCollapsed ? 'false' : 'true',
+            'aria-label': _treeToggleTip,
+            onClick: function (e: any) { e.stopPropagation(); if (treeMeta && typeof treeMeta.onToggle === 'function') treeMeta.onToggle(e) },
+          }, [Ic({ n: _treeCollapsed ? 'chev-right' : 'chev-down', size: 12 })])) : null,
           h('span', { className: 'dsws-idcol', 'data-dsws-row-part': 'idcol' }, [
             // #1286：容器角标 —— 地图图标 + 「地图」/「规格」两行字，底色随容器种类（探索紫 / 规格贵族蓝）；
             //   末尾那个标记类让列表页认出「这一行是容器」（两种容器共用一个类名，不按颜色猜）。
