@@ -196,11 +196,20 @@ function displayArgv(argv: string[]): string {
   return argv.map((item) => (/\s/.test(item) ? JSON.stringify(item) : item)).join(' ')
 }
 
-/** 两个路径是不是同一个（Windows 大小写不敏感；子进程回读的 cwd 可能把 D:\Temp 写成 D:\temp）。 */
+/** 两个路径是不是同一个（Windows 大小写不敏感；子进程回读的 cwd 可能把 D:\Temp 写成 D:\temp）。
+ *   macOS 的临时目录 /var/… 是 /private/var/… 的符号链接，子进程报上来的 cwd 是解析后的真实路径，
+ *   所以解析相等的两个路径再各过一遍 realpath 对一次（哪边解析不了就保留原样；Windows 上 realpath
+ *   原样返回，判据不变；#30）。 */
 export function samePath(left: string, right: string): boolean {
   const a = path.resolve(String(left || ''))
   const b = path.resolve(String(right || ''))
-  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
+  const flat = (p: string): string => {
+    try { return fs.realpathSync(p) } catch { return p }
+  }
+  const ra = flat(a)
+  const rb = flat(b)
+  if (process.platform === 'win32') return ra.toLowerCase() === rb.toLowerCase()
+  return ra === rb
 }
 
 /** 工作根内的相对路径解析；越界（../ 或绝对路径跑到外面）直接报错，避免读到宿主文件。 */
