@@ -20,6 +20,7 @@ export interface YunxiaoLiveSmokeOptions {
   cwd?: string
   env?: Record<string, string | undefined>
   writeLifecycle?: boolean
+  checkDiscover?: boolean
   fetch?: (input: string, init?: unknown) => Promise<unknown>
 }
 
@@ -32,6 +33,15 @@ export interface YunxiaoLiveSmokeResult {
   currentUser?: { login: string; name?: string }
   permissions?: { push: boolean; triage: boolean }
   issueCount?: number
+  discover?: {
+    authenticated: boolean
+    initialStepIndex: number
+    organizationCount: number
+    projectCount: number
+    namespaceCount: number
+    hasMismatchBanner: boolean
+    defaultsByField: Record<string, string>
+  }
   lifecycle?: {
     createdKey: string
     parentWired: boolean
@@ -189,6 +199,29 @@ export async function runYunxiaoLiveSmoke(opts: YunxiaoLiveSmokeOptions = {}): P
       issueCount: listRes.data.length,
     }
 
+    const wantDiscover = opts.checkDiscover === true || String(envMap['YUNXIAO_LIVE_DISCOVER'] || '').trim() === '1'
+    if (wantDiscover && typeof extras.discoverYunxiaoWorkspace === 'function') {
+      const discRes = await extras.discoverYunxiaoWorkspace({
+        cwd,
+        deps: {
+          DEFAULT_CWD: cwd,
+          platform,
+          workspaceFs: platform.fs,
+          env: platform.env,
+          fetch: opts.fetch,
+        },
+      })
+      result.discover = {
+        authenticated: Boolean(discRes?.authenticated),
+        initialStepIndex: Number(discRes?.initialStepIndex ?? 0),
+        organizationCount: Array.isArray(discRes?.optionsByField?.organizationId) ? discRes.optionsByField.organizationId.length : 0,
+        projectCount: Array.isArray(discRes?.optionsByField?.projectId) ? discRes.optionsByField.projectId.length : 0,
+        namespaceCount: Array.isArray(discRes?.optionsByField?.namespaceId) ? discRes.optionsByField.namespaceId.length : 0,
+        hasMismatchBanner: Boolean(discRes?.bannersByField?.projectMode || discRes?.bannersByField?.projectId),
+        defaultsByField: discRes?.defaultsByField || {},
+      }
+    }
+
     const wantLifecycle = opts.writeLifecycle === true || String(envMap['YUNXIAO_LIVE_WRITE'] || '').trim() === '1'
     if (wantLifecycle) {
       const created = await backend.create(
@@ -272,7 +305,8 @@ if (isMain) {
     const args = parseArgs(process.argv.slice(2))
     const cwd = args.get('cwd')
     const writeLifecycle = args.has('write-lifecycle')
-    const res = await runYunxiaoLiveSmoke({ cwd, writeLifecycle })
+    const checkDiscover = args.has('check-discover')
+    const res = await runYunxiaoLiveSmoke({ cwd, writeLifecycle, checkDiscover })
     if (res.skipped) {
       info('跳过云效真机沙箱冒烟（未设置 YUNXIAO_LIVE_VERIFY=1）。')
       printJson(res)

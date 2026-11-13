@@ -34,10 +34,12 @@ export interface YunxiaoOnboardingDeps {
   DEFAULT_CWD?: string
   fs?: Partial<TokenFsPort> | null
   workspaceFs?: any
+  platform?: any
   getPlatform?: () => Promise<any> | any
   getHome?: () => Promise<string | null> | string | null
   homeDir?: string
   env?: { get?(name: string): string | undefined } | null
+  exec?: (cmd: string, args: string[], opts?: { cwd?: string; timeout?: number }) => Promise<unknown>
   fetch?: (input: string | URL, init?: RequestInit) => Promise<Response>
   loadExtras?: () => Promise<any>
   logCtx?: { fire(level: string, event: string, fields?: unknown): void } | null
@@ -277,85 +279,58 @@ export function createYunxiaoOnboarding(deps: YunxiaoOnboardingDeps = {}) {
     }
   }
 
+  async function readPreferredOrganizationId(home: string): Promise<string> {
+    if (!home) return ''
+    try {
+      const prefPath = nodeJoin(home, '.config', 'yunxiao', 'preferences.json')
+      const raw = await tokenFs.readFile(prefPath, 'utf8')
+      const parsed = JSON.parse(String(raw || '{}'))
+      return typeof parsed?.lastSelectedOrganizationId === 'string' ? parsed.lastSelectedOrganizationId.trim() : ''
+    } catch {
+      return ''
+    }
+  }
+
+  async function savePreferredOrganizationId(home: string, organizationId: string): Promise<void> {
+    const orgId = String(organizationId || '').trim()
+    if (!home || !orgId) return
+    try {
+      const configDir = nodeJoin(home, '.config', 'yunxiao')
+      const prefPath = nodeJoin(configDir, 'preferences.json')
+      const tmpPath = nodeJoin(configDir, 'preferences.tmp.' + String(randomUUID()))
+      await tokenFs.mkdir(configDir, { recursive: true, mode: 0o700 })
+      const payload = JSON.stringify({ lastSelectedOrganizationId: orgId }, null, 2) + '\n'
+      await tokenFs.writeFile(tmpPath, payload, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+      await tokenFs.chmod(tmpPath, 0o600)
+      await tokenFs.rename(tmpPath, prefPath)
+    } catch {}
+  }
+
   async function handleYunxiaoDiscoverRaw(args?: { cwd?: string; organizationId?: string; projectId?: string } | null): Promise<any> {
     const cwd = String((args && args.cwd) || DEFAULT_CWD).trim()
     const extras = await getExtras()
     if (typeof extras.discoverYunxiaoWorkspace === 'function') {
+      const { env, wsFs, home } = await resolveRuntimeEnvAndFs()
+      if (args?.organizationId && String(args.organizationId).trim()) {
+        await savePreferredOrganizationId(home, String(args.organizationId).trim())
+      }
+      const lastSelectedOrganizationId = await readPreferredOrganizationId(home)
       return extras.discoverYunxiaoWorkspace({
         cwd,
         organizationId: args?.organizationId,
         projectId: args?.projectId,
-        deps,
+        lastSelectedOrganizationId,
+        deps: {
+          ...deps,
+          env,
+          workspaceFs: wsFs,
+          homeDir: home,
+          lastSelectedOrganizationId,
+        },
       })
     }
 
-    const { env, wsFs, home } = await resolveRuntimeEnvAndFs()
-    const baseUrlsRes = await extras.resolveYunxiaoBaseUrls({ cwd, fs: wsFs, env })
-    const apiBaseUrl = baseUrlsRes && baseUrlsRes.ok ? baseUrlsRes.value.apiBaseUrl : undefined
-    const tokRes = await extras.loadYunxiaoToken({
-      env,
-      fs: wsFs,
-      homeDir: home,
-      platform: {
-        env,
-        fs: wsFs,
-        getHome: async () => home,
-        path: { join: (...parts: string[]) => nodeJoin(...parts) },
-      } as any,
-    })
-
-    if (!tokRes || !tokRes.token) {
-      return {
-        ok: true,
-        authenticated: false,
-        initialStepIndex: 0,
-        optionsByField: {},
-        defaultsByField: {},
-        bannersByField: {},
-      }
-    }
-
-    const probeRes = await extras.probeYunxiaoPlatformUser(
-      {
-        cwd,
-        apiBaseUrl,
-        token: tokRes.token,
-        fetch: deps.fetch,
-        platform: { fs: wsFs, env } as any,
-      },
-      undefined,
-      { cwd, apiBaseUrl, token: tokRes.token },
-    )
-
-    if (!probeRes || !probeRes.ok) {
-      return {
-        ok: true,
-        authenticated: false,
-        initialStepIndex: 0,
-        optionsByField: {},
-        defaultsByField: {},
-        bannersByField: {},
-      }
-    }
-
-    const defaultsByField: Record<string, string> = {}
-    if (probeRes.user?.lastOrganization) {
-      defaultsByField.organizationId = probeRes.user.lastOrganization
-    }
-    return {
-      ok: true,
-      authenticated: true,
-      initialStepIndex: 1,
-      user: {
-        id: probeRes.user.id,
-        name: probeRes.user.name,
-        login: probeRes.user.login,
-        ...(probeRes.user.lastOrganization ? { lastOrganization: probeRes.user.lastOrganization } : {}),
-      },
-      optionsByField: {},
-      defaultsByField,
-      bannersByField: {},
-    }
+    return { ok: true, authenticated: false, initialStepIndex: 0, optionsByField: {}, defaultsByField: {}, bannersByField: {} }
   }
 
   return {

@@ -175,7 +175,7 @@ export function validateAction(action: ValidateAction | null | undefined): Valid
           if (f.label !== undefined && f.label !== null && typeof f.label !== 'string' && !isPlainObject(f.label)) return { ok: false, error: { kind: ERROR_KIND.PARSE, message: 'wizard.steps[' + si + '].fields[' + fi + '].label 必须为字符串' } }
           if (f.type !== undefined && f.type !== null) {
             const vt = String(f.type).trim()
-            if (vt && !['text','number','date','single','multi','directory','file','password','select'].includes(vt)) return { ok: false, error: { kind: ERROR_KIND.PARSE, message: 'wizard.steps[' + si + '].fields[' + fi + '].type 非法：' + vt } }
+            if (vt && !['text','number','date','single','radio','multi','directory','file','password','select'].includes(vt)) return { ok: false, error: { kind: ERROR_KIND.PARSE, message: 'wizard.steps[' + si + '].fields[' + fi + '].type 非法：' + vt } }
           }
         }
       }

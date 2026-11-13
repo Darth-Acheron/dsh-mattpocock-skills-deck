@@ -23,7 +23,11 @@ type UsableResult =
   | { ok: false; kind: string; text: string; triedRepair?: boolean }
 
 /** 建仓发布的入参（前端传进来的原始对象，字段一律按 unknown 收、用到时再转）。 */
-interface InitPublishArgs { cwd?: string; name?: unknown; visibility?: unknown }
+interface InitPublishArgs {
+  cwd?: string; name?: unknown; visibility?: unknown; organizationId?: unknown; projectMode?: unknown
+  projectId?: unknown; projectName?: unknown; customCode?: unknown; templateId?: unknown; repoMode?: unknown
+  repositoryId?: unknown; namespaceId?: unknown; remoteProtocol?: unknown; description?: unknown
+}
 /** 重试推送的入参（半成功时由前端从 initPublish 结果带出）。 */
 interface RetryPushArgs { cwd?: string; name?: unknown; repoUrl?: unknown; owner?: unknown }
 
@@ -216,17 +220,46 @@ export function createPublishFlow(deps: Deps) {
   //   （#993：兜底从 permission 改成 unknown，「属主不一致」单独成 git-ownership 一档；#1445 起 env 表示写会话没接上）
   async function handleInitPublish(args?: InitPublishArgs | null) {
     const cwd = (args && args.cwd) || DEFAULT_CWD
-    const name = args && args.name ? String(args.name).trim() : ''
+    const repoMode = args && (args.repoMode === 'none' || args.repoMode === 'bind' || args.repoMode === 'bind-origin' || args.repoMode === 'existing' || args.repoMode === 'create')
+      ? (args.repoMode as 'none' | 'bind' | 'bind-origin' | 'existing' | 'create')
+      : undefined
+    const rawRepoId = args && args.repositoryId != null ? String(args.repositoryId).trim() : ''
+    const rawName = args && args.name ? String(args.name).trim() : ''
+    const rawProjName = args && args.projectName ? String(args.projectName).trim() : ''
+    const fallbackSlug = (repoMode && repoMode !== 'create')
+      ? (rawProjName ||
+        (rawRepoId.split('/').filter(Boolean).pop() || '').replace(/\.git$/i, '') ||
+        (String(cwd || '').trim().replace(/[\\/]+$/, '').split(/[\\/]/).filter(Boolean).pop() || '') ||
+        'repo')
+      : ''
+    const name = rawName || fallbackSlug
     const visibility = (args && args.visibility) === 'public' ? 'public' : 'private'
     if (!name) return { ok: false, errorKind: 'bad-name', error: '仓库名为空' }
     if (!/^[A-Za-z0-9._-]+$/.test(name) || name.length > 100) {
       return { ok: false, errorKind: 'bad-name', error: '仓库名仅支持字母/数字/._- 且 ≤100：' + name }
     }
-    // 前置：git 可执行 + 工作区 git 可用性（#994）。失败快返，一步都不改这个目录。
-    const git = await resolveGit()
-    if (!git) return { ok: false, errorKind: 'no-git', error: '未找到 git（请安装 https://git-scm.com/）' }
-    const usable = await preflightWorkspaceGit(git, cwd)
-    if (!usable.ok) return gitFail(usable.text, cwd)
+    const initInput: Record<string, unknown> = { name: name, visibility: visibility }
+    if (args) {
+      if (args.organizationId != null && String(args.organizationId).trim()) initInput.organizationId = String(args.organizationId).trim()
+      if (args.projectMode === 'reuse' || args.projectMode === 'existing' || args.projectMode === 'create') initInput.projectMode = args.projectMode
+      if (args.projectId != null && String(args.projectId).trim()) initInput.projectId = String(args.projectId).trim()
+      if (args.projectName != null && String(args.projectName).trim()) initInput.projectName = String(args.projectName).trim()
+      if (args.customCode != null && String(args.customCode).trim()) initInput.customCode = String(args.customCode).trim()
+      if (args.templateId != null && String(args.templateId).trim()) initInput.templateId = String(args.templateId).trim()
+      if (repoMode) initInput.repoMode = repoMode
+      if (rawRepoId) initInput.repositoryId = rawRepoId
+      if (args.namespaceId != null && String(args.namespaceId).trim()) initInput.namespaceId = args.namespaceId
+      if (args.remoteProtocol === 'auto' || args.remoteProtocol === 'https' || args.remoteProtocol === 'ssh') initInput.remoteProtocol = args.remoteProtocol
+      if (args.description != null && String(args.description).trim()) initInput.description = String(args.description).trim()
+    }
+    // 前置：git 可执行 + 工作区 git 可用性（#994；none 纯规划工作区无需 git）。
+    let git: string | null = null
+    if (repoMode !== 'none') {
+      git = await resolveGit()
+      if (!git) return { ok: false, errorKind: 'no-git', error: '未找到 git（请安装 https://git-scm.com/）' }
+      const usable = await preflightWorkspaceGit(git, cwd)
+      if (!usable.ok) return gitFail(usable.text, cwd)
+    }
     // #1445：建仓整步交给写会话。宿主没接 openSession 时如实回环境失败 —— 不自己调注册表、
     //   也不偷偷退回直调 gh 的老路（那条路正是这一票要拆掉的）。
     if (typeof openSession !== 'function') {
@@ -242,17 +275,17 @@ export function createPublishFlow(deps: Deps) {
     let r: unknown = null
     try {
       r = await opened.call(function (session: any, ctx: any) {
-        return session.initProject({ cwd: cwd }, { name: name, visibility: visibility }, ctx)
+        return session.initProject({ cwd: cwd }, initInput, ctx)
       })
     } catch (e) {
       const eb = e as { message?: unknown } | null
       const msg = String((eb && eb.message) || e).slice(0, 200)
       return { ok: false, errorKind: 'env', error: '写会话调用失败：' + msg }
     }
-    if (!r || !(r as { ok?: boolean }).ok) return publishFailure(r, name, cwd, git)
+    if (!r || !(r as { ok?: boolean }).ok) return publishFailure(r, name, cwd, git || 'git')
     // 成功：仓库身份取会话回包的 repoRef（房间按 getRepoKey → currentUser 的顺序定 owner），
     //   不再由宿主用 getRepoKey 重解析、也不再兜一次 gh api user —— 那两步是旧实现自己的解析链，房间已经做过。
-    const ref = ((r as { data?: { refId?: unknown; name?: unknown; url?: unknown } }).data) || {}
+    const ref = ((r as { data?: { refId?: unknown; name?: unknown; url?: unknown; projectUrl?: unknown; repoUrl?: unknown; customCode?: unknown; extraUrls?: unknown; hint?: unknown } }).data) || {}
     const refId = String(ref.refId || ref.name || name)
     const slash = refId.indexOf('/')
     const owner = slash > 0 ? refId.slice(0, slash) : ''
@@ -267,13 +300,21 @@ export function createPublishFlow(deps: Deps) {
     const backendId = String((opened as { backendId?: unknown }).backendId || '')
     const fallbackBase = backendId === 'gitlab' ? 'https://gitlab.com/' : 'https://github.com/'
     const repoUrl = owner ? (String(ref.url || '') || (fallbackBase + owner + '/' + repoName)) : ''
-    return { ok: true, repo: { owner: owner, name: repoName }, repoUrl: repoUrl }
+    return {
+      ok: true,
+      repo: { owner: owner, name: repoName },
+      repoUrl: repoUrl,
+      ...(typeof ref.projectUrl === 'string' && ref.projectUrl ? { projectUrl: ref.projectUrl } : {}),
+      ...(typeof ref.customCode === 'string' && ref.customCode ? { customCode: ref.customCode } : {}),
+      ...(Array.isArray(ref.extraUrls) ? { extraUrls: ref.extraUrls, links: ref.extraUrls } : {}),
+      ...(ref.hint ? { hint: ref.hint } : {}),
+    }
   }
 
   // ============ 契约操作分发（#1191：UI 的 contract-op 落到这里按当前后端执行）============
-  // 入参：{ op, cwd?, name?, visibility? }（op 如 initProject；只取 cwd/name/visibility 三键透给对应操作，其余键丢弃）。
+  // 入参：{ op, cwd?, name?, visibility?, ...wizardOverrides }（op 如 initProject；将向导参数透给对应操作）。
   // 为什么只有 initProject：今天 UI 只有建仓向导用 contract-op；未知 op 诚实回 unsupported，不猜、不兜。
-  interface ContractOpArgs { op?: unknown; cwd?: unknown; name?: unknown; visibility?: unknown }
+  interface ContractOpArgs extends InitPublishArgs { op?: unknown }
   async function handleContractOp(args?: ContractOpArgs | null) {
     const op = args && args.op ? String(args.op).trim() : ''
     if (!op) return { ok: false, errorKind: 'bad-name', error: '缺少 op（契约操作名，如 initProject）' }
@@ -281,7 +322,12 @@ export function createPublishFlow(deps: Deps) {
     const cwd = (args && args.cwd ? String(args.cwd) : '') || DEFAULT_CWD
     const name = args && args.name ? String(args.name) : ''
     const visibility = (args && args.visibility) === 'public' ? 'public' : 'private'
-    return handleInitPublish({ cwd: cwd, name: name, visibility: visibility })
+    return handleInitPublish({
+      ...(args || {}),
+      cwd: cwd,
+      name: name,
+      visibility: visibility,
+    })
   }
 
   // ============ 重试推送（#420/#426 定版：仅推送，不动建仓）============

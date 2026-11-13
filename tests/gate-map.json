@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-12T13:40:09.867Z",
+  "generatedAt": "2026-11-13T07:13:39.264Z",
   "generatedBy": "node scripts/gate-map.mts",
   "chainLength": 598,
   "gateCount": 598,
@@ -10,7 +10,7 @@
   "completionRecordedGates": 141,
   "smokeLength": 8,
   "smokeCompletionRecordedGates": 5,
-  "graphFileCount": 989,
+  "graphFileCount": 991,
   "gates": [
     {
       "step": "node tests/verify-1207-splice-ts.ts",
@@ -13831,6 +13831,8 @@
         "src/shared/tracker/chain-validate.ts",
         "src/tracker/registry/builtins.ts",
         "src/tracker/rooms/yunxiao/model/workspace-config.ts",
+        "src/tracker/rooms/yunxiao/project/discover.ts",
+        "src/tracker/rooms/yunxiao/project/init-project-helpers.ts",
         "src/tracker/rooms/yunxiao/room/fixes.ts"
       ],
       "dirs": [
@@ -13839,13 +13841,14 @@
         "src/shared/tracker",
         "src/tracker/registry",
         "src/tracker/rooms/yunxiao/model",
+        "src/tracker/rooms/yunxiao/project",
         "src/tracker/rooms/yunxiao/room"
       ],
       "unattributed": false,
       "buildOutputOnly": false,
       "completionRecord": true,
-      "expectedAssertions": 19,
-      "reason": "归属来自 文件头 // 门禁归属: 注释（共 11 条）"
+      "expectedAssertions": 44,
+      "reason": "归属来自 文件头 // 门禁归属: 注释（共 13 条）"
     },
     {
       "step": "node tests/verify-yunxiao-room.ts",
@@ -16249,6 +16252,7 @@
       "node tests/verify-yunxiao-room.ts"
     ],
     "src/tracker/rooms/yunxiao/project": [
+      "node tests/verify-yunxiao-onboarding-wizard.ts",
       "node tests/verify-yunxiao-room.ts"
     ],
     "src/tracker/rooms/yunxiao/repo": [
@@ -16623,9 +16627,9 @@
   },
   "coverage": {
     "sourceRoot": "src",
-    "fileCount": 1014,
+    "fileCount": 1016,
     "dirCount": 111,
-    "coveredFileCount": 1014,
+    "coveredFileCount": 1016,
     "ungatedFileCount": 0,
     "ungatedDirCount": 0,
     "dedicatedDirCount": 90,
@@ -17582,6 +17586,8 @@
       "src/tracker/rooms/yunxiao/model/repo-identity.ts",
       "src/tracker/rooms/yunxiao/model/workspace-config.ts",
       "src/tracker/rooms/yunxiao/preflight.ts",
+      "src/tracker/rooms/yunxiao/project/discover.ts",
+      "src/tracker/rooms/yunxiao/project/init-project-helpers.ts",
       "src/tracker/rooms/yunxiao/project/init-project.ts",
       "src/tracker/rooms/yunxiao/queries.ts",
       "src/tracker/rooms/yunxiao/repo/current-user.ts",

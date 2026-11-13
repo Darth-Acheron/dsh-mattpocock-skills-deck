@@ -11,7 +11,8 @@
 import { yunxiaoClient } from './client.js'
 import type { YunxiaoCtx, YunxiaoHttpResult } from './client.js'
 import {
-  allWorkitemTypesPath, codeupRepositoriesCreatePath, codeupRepositoryPath,
+  allWorkitemTypesPath, codeupNamespacesListPath, codeupRepositoriesCreatePath,
+  codeupRepositoriesListPath, codeupRepositoryPath,
   platformOrganizationsPath, platformUserPath, projectLabelItemPath, projectLabelsPath,
   projectMembersPath, projectPath, projectsCreatePath, projectsSearchPath, projectTemplatesPath,
   projectWorkitemTypesPath, workitemCommentsPath, workitemFieldConfigPath, workitemPath,
@@ -181,4 +182,14 @@ export interface YunxiaoCreateRepoBody { name: string; path: string; visibility:
 /** 创建 Codeup 代码库（CreateRepository）：POST .../codeup/organizations/{orgId}/repositories?createParentPath=true。 */
 export function requestCodeupRepositoryCreate(opCtx: MaybeCtx, organizationId: string, body: YunxiaoCreateRepoBody, timeoutMs: number): Promise<YunxiaoHttpResult> {
   return yunxiaoClient(opCtx).request(codeupRepositoriesCreatePath(organizationId, true), { method: 'POST', body, timeoutMs, cmd: 'codeup:repo-create', bucket: 'write' })
+}
+
+/** 查询组织下可访问的 Codeup 代码库列表：GET .../codeup/organizations/{orgId}/repositories。 */
+export function requestCodeupRepositoriesList(opCtx: MaybeCtx, organizationId: string, query: string, timeoutMs: number): Promise<YunxiaoHttpResult> {
+  return yunxiaoClient(opCtx).request(codeupRepositoriesListPath(organizationId, query), { method: 'GET', timeoutMs, cmd: 'codeup:repos-list', bucket: 'read' })
+}
+
+/** 查询组织下可用的 Codeup 命名空间（代码组）列表：GET .../codeup/organizations/{orgId}/namespaces。 */
+export function requestCodeupNamespacesList(opCtx: MaybeCtx, organizationId: string, query: string, timeoutMs: number): Promise<YunxiaoHttpResult> {
+  return yunxiaoClient(opCtx).request(codeupNamespacesListPath(organizationId, query), { method: 'GET', timeoutMs, cmd: 'codeup:namespaces-list', bucket: 'read' })
 }

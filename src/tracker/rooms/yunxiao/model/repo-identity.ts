@@ -191,6 +191,9 @@ export function parseCodeupRepo(
   }
 }
 
+/** 同 parseCodeupRepo 的另一个入口名：房间外部按「远端 URL 解析」的语义调用。 */
+export { parseCodeupRepo as parseCodeupRemoteUrl }
+
 /**
  * 将 GetRepository 或 CreateRepository 的响应对象归一化为权威 Codeup repository identity。
  * 严格读取数字 id 与 pathWithNamespace（剥离可能附带的 .git），并将字符串或数字 accessLevel 统一转为 number。

@@ -75,6 +75,27 @@ export function issueAddress(ref: Partial<RepositoryRef> | null | undefined, key
   )
 }
 
+/**
+ * 构建云效网页深链（支持 Projex 项目、工作项与 Codeup 代码库深链；规格 #24）。
+ */
+export function buildAddress(
+  coords: { webBaseUrl?: string; organizationId?: string; projectId?: string; customCode?: string; repoWebUrl?: string } | null | undefined,
+  target: { kind: 'project' | 'workitem' | 'codeup'; id?: string | number; url?: string },
+): string {
+  const origin = (coords?.webBaseUrl ? coords.webBaseUrl.trim().replace(/\/+$/, '') : '') || DEFAULT_YUNXIAO_WEB_ORIGIN
+  if (target.kind === 'codeup') {
+    const raw = String(target.url || coords?.repoWebUrl || '').trim()
+    return raw ? raw.replace(/\.git$/i, '').replace(/\/+$/, '') : ''
+  }
+  const projectId = String(coords?.projectId || target.id || '').trim()
+  if (!projectId) return ''
+  if (target.kind === 'project') {
+    return origin + '/projex/project/' + encodeURIComponent(projectId)
+  }
+  const organizationId = String(coords?.organizationId || '').trim() || 'org'
+  return issueAddress({ host: origin, refId: organizationId + '/' + projectId }, target.id ?? '')
+}
+
 /** 按名称搜索项目的网页地址。 */
 export function repoSearchAddress(
   name: string | null | undefined,

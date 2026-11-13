@@ -148,17 +148,17 @@ export type FieldOption = string | { value: string; label: FieldText }
 
 export type FieldSchema = {
   name: string
-  type?: 'text' | 'number' | 'date' | 'single' | 'multi' | 'directory' | 'file' | 'password' | 'select'
+  type?: 'text' | 'number' | 'date' | 'single' | 'radio' | 'multi' | 'directory' | 'file' | 'password' | 'select'
   label?: FieldText
   labelKey?: string
   required?: boolean
   options?: FieldOption[]
   optionSubs?: Record<string, FieldText>
   readOnlyWhenSingle?: boolean
-  visibleWhen?: { field: string; equals?: string | string[]; notEquals?: string }
+  visibleWhen?: { field: string; equals?: string | string[]; in?: string[]; notEquals?: string }
   helperLink?: { label: FieldText; url: string }
   helperLines?: FieldText[]
-  banner?: { level: 'warn' | 'info'; text: FieldText }
+  banner?: { level: 'warn' | 'info' | 'warning'; kind?: 'warn' | 'info' | 'warning'; text: FieldText }
   rehydrateOnChange?: boolean
   placeholderKey?: string
   placeholder?: FieldText
@@ -166,6 +166,7 @@ export type FieldSchema = {
   defaultFrom?: string
   preview?: FieldText
   pattern?: string
+  maxLength?: number
 }
 
 /**

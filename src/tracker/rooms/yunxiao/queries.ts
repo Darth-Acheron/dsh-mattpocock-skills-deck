@@ -176,3 +176,13 @@ export function codeupRepositoriesCreatePath(organizationId: string, createParen
   const base = '/oapi/v1/codeup' + orgPrefix(organizationId) + '/repositories'
   return createParentPath ? base + '?createParentPath=true' : base
 }
+
+/** Codeup 代码库列表路径：GET /oapi/v1/codeup/organizations/{orgId}/repositories。 */
+export function codeupRepositoriesListPath(organizationId: string, query = ''): string {
+  return appendQuery('/oapi/v1/codeup' + orgPrefix(organizationId) + '/repositories', query)
+}
+
+/** Codeup 代码组（命名空间）列表路径：GET /oapi/v1/codeup/organizations/{orgId}/namespaces。 */
+export function codeupNamespacesListPath(organizationId: string, query = ''): string {
+  return appendQuery('/oapi/v1/codeup' + orgPrefix(organizationId) + '/namespaces', query)
+}

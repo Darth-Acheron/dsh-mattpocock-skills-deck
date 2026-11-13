@@ -262,7 +262,7 @@ const ENV_FIELD_MAP: ReadonlyArray<readonly [string, string]> = [
 type YunxiaoFileDocResult = { ok: true; doc: Record<string, unknown> } | Extract<YunxiaoConfigParseResult, { ok: false }>
 
 /** 只读一次工作区文件并做语法、未知键与明文凭证检查；文件不存在按空配置处理。 */
-async function readYunxiaoFileDoc(input: { cwd?: string; fs?: SandboxFs | null }): Promise<YunxiaoFileDocResult> {
+export async function readYunxiaoFileDoc(input: { cwd?: string; fs?: SandboxFs | null }): Promise<YunxiaoFileDocResult> {
   const cwd = String(input.cwd || '').trim()
   const fs = input.fs || null
   if (!fs || typeof fs.readText !== 'function') return { ok: true, doc: {} }

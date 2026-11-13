@@ -10,12 +10,10 @@
  * 反例：不要在这里读弹窗开关或提交状态，不要在这里直接调 emit 或 host，也绝不要硬编码任何平台品牌或 URL。
  */
 declare const CONTAINER_ACCENT: any;
-declare const MOTION: any; // #1236 动效时长统一在 kernel/motion.ts，本文件只引用不写真值
 declare function openUrl(...args: any[]): any;
 // #1296：激活态的紫只从中央色表 container-view.ts 的 CONTAINER_ACCENT 取；单独求值本文件（门禁环境）
 //   时表还没拼进来，typeof 守卫退空串——那时断的是表单结构，不靠这里的颜色值。
 const CONTAINER_ACCENT_FALLBACK: any = (typeof CONTAINER_ACCENT === 'object' && CONTAINER_ACCENT) ? CONTAINER_ACCENT.map : '';
-const HOVER_FADE_MS: number = (typeof MOTION === 'object' && MOTION && typeof MOTION.hoverFadeMs === 'number') ? MOTION.hoverFadeMs : 120;
 
 function _fieldText(v: any): string {
   if (v === null || v === undefined) return ''
@@ -37,14 +35,15 @@ function _isFieldVisible(f: any, vals: any): boolean {
   const depField: string = String(vw.field || '').trim()
   if (!depField) return true
   const actual: string = String((vals && vals[depField]) !== undefined && (vals && vals[depField]) !== null ? vals[depField] : '')
-  if (vw.equals !== undefined) {
-    if (Array.isArray(vw.equals)) {
+  const eqList: any = Array.isArray(vw.in) ? vw.in : vw.equals
+  if (eqList !== undefined) {
+    if (Array.isArray(eqList)) {
       let hit: boolean = false
-      for (let i: number = 0; i < vw.equals.length; i++) {
-        if (String(vw.equals[i]) === actual) { hit = true; break }
+      for (let i: number = 0; i < eqList.length; i++) {
+        if (String(eqList[i]) === actual) { hit = true; break }
       }
       if (!hit) return false
-    } else if (String(vw.equals) !== actual) {
+    } else if (String(eqList) !== actual) {
       return false
     }
   }
@@ -86,7 +85,7 @@ export const modalFormFields = function (curSchema: any, ctx: any): any {
     const rawLabel: any = (f && (f.label || f.labelKey)) || (f && f.name) || String(idx)
     const label: string = _fieldText(rawLabel)
     const placeholder: string = _fieldText((f && (f.placeholder || f.placeholderKey)) || '')
-    const isSingle: boolean = f.type === 'single'
+    const isSingle: boolean = f.type === 'single' || f.type === 'radio'
     const isMulti: boolean = f.type === 'multi'
     const isSelect: boolean = f.type === 'select'
     const isPassword: boolean = f.type === 'password'
@@ -124,7 +123,8 @@ export const modalFormFields = function (curSchema: any, ctx: any): any {
     })) : null
 
     const bannerNodes: any[] = banners.map(function (bn: any, bi: number): any {
-      const isWarn: boolean = String(bn.level || 'info') === 'warn'
+      const rawLv: string = String(bn.level || bn.kind || 'info')
+      const isWarn: boolean = rawLv === 'warn' || rawLv === 'warning'
       return h('div', {
         key: 'bn-' + String(bi),
         role: isWarn ? 'alert' : 'status',
@@ -164,7 +164,7 @@ export const modalFormFields = function (curSchema: any, ctx: any): any {
         const active: boolean = String(vals[f.name] || '') === optVal
         // 接线（#1335 界面反馈）：单选药丸整颗可点（role=radio 的 label），按药丸接 chip 形状；
         //   日志名用字段名加选项序号拼出来，不把选项上那句展示文字写进日志。
-        return h('label', { key: optVal, role: 'radio', tabIndex: m.pending ? -1 : 0, className: 'dsws-hov', 'data-press': 'chip', 'data-log': 'modal.field.single.' + String(f.name || idx).toLowerCase() + '.' + String(optIdx), 'aria-checked': active ? 'true' : 'false', 'aria-label': optLabel, onClick: function (): void { if (m.pending) return; applyVal(f, optVal) }, onKeyDown: function (e: any): void { const k: any = e && e.key; if (k === ' ' || k === 'Enter' || k === 'Spacebar' || k === 'Space') { try { if (e.preventDefault) e.preventDefault() } catch (_) {} if (m.pending) return; applyVal(f, optVal) } }, style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '9px 8px', border: '1px solid ' + (active ? 'var(--dsw-alias-interactive-bg-primary,' + CONTAINER_ACCENT_FALLBACK + ')' : 'var(--dsw-alias-border-l1,#2a2d35)'), borderRadius: 10, background: active ? 'rgba(192,132,252,.08)' : 'var(--dsw-alias-bg-layer-2,#16181d)', color: active ? 'var(--dsw-alias-interactive-bg-primary,' + CONTAINER_ACCENT_FALLBACK + ')' : 'var(--dsw-alias-label-secondary,#a1a1aa)', cursor: m.pending ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', transition: 'border-color ' + HOVER_FADE_MS + 'ms,background ' + HOVER_FADE_MS + 'ms', opacity: m.pending ? 0.6 : 1 } }, [
+        return h('label', { key: optVal, role: 'radio', tabIndex: m.pending ? -1 : 0, className: 'dsws-hov', 'data-press': 'chip', 'data-log': 'modal.field.single.' + String(f.name || idx).toLowerCase() + '.' + String(optIdx), 'aria-checked': active ? 'true' : 'false', 'aria-label': optLabel, onClick: function (): void { if (m.pending) return; applyVal(f, optVal) }, onKeyDown: function (e: any): void { const k: any = e && e.key; if (k === ' ' || k === 'Enter' || k === 'Spacebar' || k === 'Space') { try { if (e.preventDefault) e.preventDefault() } catch (_) {} if (m.pending) return; applyVal(f, optVal) } }, style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '9px 8px', border: '1px solid ' + (active ? 'var(--dsw-alias-interactive-bg-primary,' + CONTAINER_ACCENT_FALLBACK + ')' : 'var(--dsw-alias-border-l1,#2a2d35)'), borderRadius: 10, background: active ? 'rgba(192,132,252,.08)' : 'var(--dsw-alias-bg-layer-2,#16181d)', color: active ? 'var(--dsw-alias-interactive-bg-primary,' + CONTAINER_ACCENT_FALLBACK + ')' : 'var(--dsw-alias-label-secondary,#a1a1aa)', cursor: m.pending ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', opacity: m.pending ? 0.6 : 1 } }, [
           h('span', { style: { width: 13, height: 13, borderRadius: '50%', border: '1.5px solid ' + (active ? 'var(--dsw-alias-interactive-bg-primary,' + CONTAINER_ACCENT_FALLBACK + ')' : 'var(--dsw-alias-border-l2,#3a3f4a)'), flex: 'none', display: 'grid', placeItems: 'center' } }, active ? h('span', { style: { width: 7, height: 7, borderRadius: '50%', background: 'var(--dsw-alias-interactive-bg-primary,' + CONTAINER_ACCENT_FALLBACK + ')' } }) : null),
           h('span', null, optLabel),
           (f.optionSubs && f.optionSubs[optVal]) ? h('span', { style: { fontSize: 11, color: (active ? 'var(--dsw-alias-interactive-bg-primary,' + CONTAINER_ACCENT_FALLBACK + ')' : 'var(--dsw-alias-label-caption,#8b8b95)'), fontWeight: 400, whiteSpace: 'nowrap' } }, _fieldText(f.optionSubs[optVal])) : null,
@@ -228,6 +228,7 @@ export const modalFormFields = function (curSchema: any, ctx: any): any {
         type: f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text',
         value: String(vals[f.name] || ''),
         placeholder: placeholder,
+        maxLength: typeof f.maxLength === 'number' ? f.maxLength : undefined,
         disabled: !!m.pending,
         onChange: function (e: any): void { applyVal(f, e.target.value) },
         style: { fontSize: 12, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--dsw-alias-border-l1,#2a2d35)', background: 'var(--dsw-alias-bg-layer-1,#10131a)', color: 'var(--dsw-alias-label-primary,#e6edf3)' },

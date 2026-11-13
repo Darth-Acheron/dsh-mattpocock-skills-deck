@@ -159,16 +159,19 @@ export type YunxiaoHostExtras = {
   firstNonEmptyLine: typeof import('../rooms/yunxiao/model/workspace-config.js').firstNonEmptyLine
   /** 将云效响应或异常归入契约错误分类。 */
   classifyYunxiaoError: typeof import('../rooms/yunxiao/errors.js').classifyYunxiaoError
+  /** 发现当前工作区的云效组织、Yunxiao Projex 项目、错位纠偏建议与 Codeup 代码库/命名空间（规格 #24）。 */
+  discoverYunxiaoWorkspace: typeof import('../rooms/yunxiao/project/discover.js').discoverYunxiaoWorkspace
 }
 
 /** 取出 Yunxiao 房的宿主实现。 */
 export async function loadYunxiaoHostExtras(): Promise<YunxiaoHostExtras> {
-  const [prompts, client, currentUser, wsCfg, errors] = await Promise.all([
+  const [prompts, client, currentUser, wsCfg, errors, discover] = await Promise.all([
     import('../rooms/yunxiao/room/prompts.js'),
     import('../rooms/yunxiao/client.js'),
     import('../rooms/yunxiao/repo/current-user.js'),
     import('../rooms/yunxiao/model/workspace-config.js'),
     import('../rooms/yunxiao/errors.js'),
+    import('../rooms/yunxiao/project/discover.js'),
   ])
   return {
     YUNXIAO_ISSUE_TRACKER_TEMPLATE: prompts.YUNXIAO_ISSUE_TRACKER_TEMPLATE,
@@ -179,6 +182,7 @@ export async function loadYunxiaoHostExtras(): Promise<YunxiaoHostExtras> {
     loadYunxiaoToken: wsCfg.loadYunxiaoToken,
     firstNonEmptyLine: wsCfg.firstNonEmptyLine,
     classifyYunxiaoError: errors.classifyYunxiaoError,
+    discoverYunxiaoWorkspace: discover.discoverYunxiaoWorkspace,
   }
 }
 

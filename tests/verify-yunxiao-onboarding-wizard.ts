@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * tests/verify-yunxiao-onboarding-wizard.ts —— 声明式向导字段原语、向导生命周期与云效令牌在线验真/0600原子落盘门禁（规格 #21 / #23）。
+ * tests/verify-yunxiao-onboarding-wizard.ts —— 声明式向导字段原语、向导生命周期、云效令牌在线验真/0600 原子落盘，
+ *   以及组织/项目发现与三模式一体化置备（规格 #21 / #23 / #24）。
  *
  * 门禁归属: src/shared/tracker/chain-types.ts
  * 门禁归属: src/shared/tracker/chain-validate.ts
@@ -13,6 +14,8 @@
  * 门禁归属: src/tracker/registry/builtins.ts
  * 门禁归属: src/tracker/rooms/yunxiao/room/fixes.ts
  * 门禁归属: src/tracker/rooms/yunxiao/model/workspace-config.ts
+ * 门禁归属: src/tracker/rooms/yunxiao/project/discover.ts
+ * 门禁归属: src/tracker/rooms/yunxiao/project/init-project-helpers.ts
  *
  * 用法：node --import ./scripts/ts-hook.mts tests/verify-yunxiao-onboarding-wizard.ts
  */
@@ -76,6 +79,79 @@ function textOf(node: any): string {
   if (Array.isArray(node)) return node.map(textOf).join('')
   if (typeof node === 'object' && 'children' in node) return textOf(node.children)
   return ''
+}
+
+// ── 注入用的替身端口（第 5、6 段用）──────────────────────────────────────────
+// 都只模拟端口形状（fs：resolve/readText/writeText；env：get/has；exec：函数），
+// 不碰真实网络与磁盘，保证整扇门禁离线可跑、结论可重复。
+
+/** 记录写入的文件替身：store 是当前内容，writes 按调用顺序留痕（顺序本身就是 Persist-Before-Push 的判据）。 */
+function makePortFs(files: Record<string, string>) {
+  const writes: Array<{ path: string; text: string }> = []
+  const store: Record<string, string> = Object.assign({}, files)
+  return {
+    writes,
+    store,
+    resolve: async (rel: string, opts?: { cwd?: string }) => {
+      if (rel.startsWith('/')) return rel
+      const base = opts && opts.cwd ? String(opts.cwd).replace(/\/+$/, '') + '/' : ''
+      return base + rel
+    },
+    readText: async (target: unknown) => {
+      const k = String(target || '')
+      if (Object.prototype.hasOwnProperty.call(store, k)) return store[k]
+      const stripped = k.replace(/^\/[^/]+\//, '')
+      if (Object.prototype.hasOwnProperty.call(store, stripped)) return store[stripped]
+      // 房间会把相对路径拼上 cwd 再读（/ws/x/docs/agents/yunxiao.yaml），
+      // 而用例只关心「这份文件内容是什么」，所以按路径后缀认领，不要求 cwd 逐字相同。
+      const bySuffix = Object.keys(store).find((key) => k.endsWith('/' + key) || key.endsWith('/' + k))
+      if (bySuffix !== undefined) return store[bySuffix]
+      const err = new Error('ENOENT: ' + k) as Error & { code?: string }
+      err.code = 'ENOENT'
+      throw err
+    },
+    writeText: async (target: unknown, text: unknown) => {
+      const k = String(target || '')
+      const t = String(text == null ? '' : text)
+      store[k] = t
+      writes.push({ path: k, text: t })
+    },
+  }
+}
+
+function makePortEnv(vars: Record<string, string>) {
+  return {
+    get: (k: string): string | undefined => (Object.prototype.hasOwnProperty.call(vars, k) ? vars[k] : undefined),
+    has: (k: string): boolean => Object.prototype.hasOwnProperty.call(vars, k),
+  }
+}
+
+/** 记录外部命令调用的 exec 替身：handler 决定每条命令怎么回，calls 留住全部调用以便断言顺序。 */
+function makePortExec(handler: (cmd: string, args: string[]) => unknown) {
+  const calls: Array<{ cmd: string; args: string[] }> = []
+  const fn = async (cmd: string, args: string[]) => {
+    calls.push({ cmd, args: args.slice() })
+    return handler(cmd, args)
+  }
+  return { fn, calls }
+}
+
+/** 按「方法 + 路径特征」派发的 fetch 替身；命中的路由都记在 hits 里。 */
+function makePortFetch(routes: Array<{ method?: string; match: (url: string) => boolean; reply: (url: string, init?: RequestInit) => { status: number; body?: unknown } }>) {
+  const hits: Array<{ method: string; url: string }> = []
+  const fn = async (input: string | URL, init?: RequestInit) => {
+    const url = String(input)
+    const method = String((init && init.method) || 'GET').toUpperCase()
+    hits.push({ method, url })
+    for (const r of routes) {
+      if (r.method && r.method !== method) continue
+      if (!r.match(url)) continue
+      const out = r.reply(url, init)
+      return new Response(out.body === undefined ? '' : JSON.stringify(out.body), { status: out.status })
+    }
+    return new Response('unexpected: ' + method + ' ' + url, { status: 500 })
+  }
+  return { fn, hits }
 }
 
 async function main(): Promise<void> {
@@ -385,6 +461,7 @@ async function main(): Promise<void> {
           return {
             ok: true,
             authenticated: true,
+            bannersByField: {},
             optionsByField: {
               organizationId: [{ value: 'org-1', label: 'Org 1' }],
             },
@@ -457,6 +534,24 @@ async function main(): Promise<void> {
         textOf(successModalVNode).includes('工作区坐标已写入 docs/agents/yunxiao.yaml'),
       '2.7 多深链成功弹窗渲染全部 links 按钮（点击调 openUrl）与 hint 提示，且无 links 时兼容单仓视图',
       { linkBtnCount: linkBtns.length, clickedSuccessUrls },
+    )
+
+    // 2.8 重新发现后清掉已经失效的项目预警，但不能抹掉令牌步骤的环境变量警告
+    const rehydratedModal: any = {
+      bannersByField: {
+        token: { level: 'warn', text: { zh: '环境变量优先', en: 'Environment variable wins' } },
+        projectMode: { level: 'warn', text: { zh: '旧项目错位', en: 'Stale project mismatch' } },
+      },
+    }
+    wizMod.applyWizardHydratePayload(rehydratedModal, {
+      bannersByField: { organizationId: { level: 'info', text: { zh: '新组织', en: 'New organization' } } },
+    }, true)
+    check(
+      Boolean(rehydratedModal.bannersByField.token) &&
+        !rehydratedModal.bannersByField.projectMode &&
+        rehydratedModal.bannersByField.organizationId?.level === 'info',
+      '2.8 水合刷新会清除旧项目预警，同时保留令牌警告并展示新组织横幅',
+      rehydratedModal.bannersByField,
     )
   }
 
@@ -615,6 +710,604 @@ async function main(): Promise<void> {
     }
 
     try { fs.rmSync(tmpHome, { recursive: true, force: true }) } catch {}
+  }
+
+  console.log('\n== 5. 组织与项目发现：401 未认证、403 降级、预选优先级、MattDemo 错位纠偏与双源命名空间 ==')
+  {
+    const discoverMod = await imp('src/tracker/rooms/yunxiao/project/discover.ts')
+    const { discoverYunxiaoWorkspace } = discoverMod
+    const ORG = '673db5665c76405a332eebc4'
+    const ORG_FILE = '111122223333444455556666'
+    const ORG_PREF = 'aaaabbbbccccddddeeeeffff'
+    const ORG_ACTIVE = '0123456789abcdef01234567'
+    const PROJ = '8efcbccd3981cb23178fc66bd1'
+    const PROJ_SANDBOX = 'aabbccdd112233445566778899'
+    const PROJ_MATCH = 'ccddeeff001122334455667788'
+    const YAML_REL = 'docs/agents/yunxiao.yaml'
+
+    const runDiscover = async (opts: any) => {
+      const fsPort = makePortFs(opts.files || {})
+      const envPort = makePortEnv(Object.assign({ YUNXIAO_TOKEN: 'pt-valid-token-123456', HOME: '/home/u' }, opts.env || {}))
+      const execPort = makePortExec(opts.exec || (() => ({ code: 1, stdout: '', stderr: 'no ssh' })))
+      const fetchPort = makePortFetch(opts.routes)
+      const res = await discoverYunxiaoWorkspace({
+        cwd: opts.cwd,
+        ...(opts.organizationId ? { organizationId: opts.organizationId } : {}),
+        ...(opts.projectId ? { projectId: opts.projectId } : {}),
+        lastSelectedOrganizationId: opts.lastSelectedOrganizationId || '',
+        deps: {
+          platform: { fs: fsPort, env: envPort, exec: execPort.fn },
+          workspaceFs: fsPort, fetch: fetchPort.fn, homeDir: '/home/u',
+        },
+      })
+      return { res, fsPort, fetchPort, execPort }
+    }
+
+    // 公共路由：用户探针成功、模板列表、代码库列表为空、命名空间 403（验证默认的静默降级路径）。
+    // extra 排在兜底路由前面 —— 派发是按顺序取第一条命中的，兜底在前会把用例自带的响应挡掉。
+    const routesWith = (orgReply: any, searchReply: any, extra?: any[]) => ([
+      { match: (u: string) => u.endsWith('/oapi/v1/platform/user'), reply: () => ({ status: 200, body: { id: 'u-1', name: 'Bryan', username: 'bryan', lastOrganization: ORG_ACTIVE } }) },
+      { match: (u: string) => u.endsWith('/oapi/v1/platform/organizations'), reply: orgReply },
+      { method: 'POST', match: (u: string) => u.includes('/projects:search'), reply: searchReply },
+      { match: (u: string) => u.includes('/projectTemplates'), reply: () => ({ status: 200, body: [{ id: 'tpl-scrum', name: 'Scrum 敏捷' }] }) },
+      ...(extra || []),
+      { match: (u: string) => /\/repositories(\?|$)/.test(u), reply: () => ({ status: 200, body: [] }) },
+      { match: (u: string) => u.includes('/namespaces'), reply: () => ({ status: 403, body: { message: 'forbidden' } }) },
+    ])
+
+    // 5.1 令牌无效（401）时如实回未认证，且不编造任何选项
+    const unauth = await runDiscover({
+      cwd: '/ws/plain',
+      routes: [{ match: (u: string) => u.endsWith('/oapi/v1/platform/user'), reply: () => ({ status: 401, body: { message: 'unauthorized' } }) }],
+    })
+    check(
+      unauth.res.ok === true && unauth.res.authenticated === false && unauth.res.initialStepIndex === 0 &&
+        Object.keys(unauth.res.optionsByField).length === 0,
+      '5.1 令牌验真失败（HTTP 401）时 wf.yunxiaoDiscover 返回 authenticated:false 与 initialStepIndex:0，不编造任何选项',
+      unauth.res,
+    )
+
+    // 5.2 ListOrganizations 返回 403（令牌未勾「组织：只读」）→ 降级为 lastOrganization 单项，第 2 步只读锁定
+    const singleOrg = await runDiscover({
+      cwd: '/ws/one',
+      routes: routesWith(() => ({ status: 403, body: { message: 'forbidden' } }), () => ({ status: 200, body: [] })),
+    })
+    const singleOrgOpts = singleOrg.res.optionsByField.organizationId || []
+    check(
+      singleOrg.res.authenticated === true && singleOrg.res.initialStepIndex === 1 &&
+        singleOrgOpts.length === 1 && singleOrgOpts[0].value === ORG_ACTIVE &&
+        String(singleOrgOpts[0].label.zh).includes('当前活跃企业') &&
+        singleOrg.res.defaultsByField.organizationId === ORG_ACTIVE,
+      '5.2 ListOrganizations 遇 HTTP 403 静默降级为 user.lastOrganization 的单项只读列表，并预选该组织',
+      { opts: singleOrgOpts, defaults: singleOrg.res.defaultsByField },
+    )
+
+    // 5.3 预选优先级第一档：当前工作区配置 > 偏好记忆 > lastOrganization > 列表首项
+    const fileYaml = 'organizationId: ' + ORG_FILE + '\nprojectId: ' + PROJ + '\n'
+    const fileWins = await runDiscover({
+      cwd: '/ws/file-wins',
+      files: { ['/ws/file-wins/' + YAML_REL]: fileYaml },
+      lastSelectedOrganizationId: ORG_PREF,
+      routes: routesWith(() => ({ status: 200, body: [{ id: ORG, name: '组织一' }] }), () => ({ status: 200, body: [] })),
+    })
+    check(
+      fileWins.res.defaultsByField.organizationId === ORG_FILE,
+      '5.3 组织预选：当前工作区 docs/agents/yunxiao.yaml 里的 organizationId 优先于偏好记忆与 lastOrganization',
+      fileWins.res.defaultsByField,
+    )
+
+    const prefWins = await runDiscover({
+      cwd: '/ws/pref-wins',
+      lastSelectedOrganizationId: ORG_PREF,
+      routes: routesWith(() => ({ status: 200, body: [{ id: ORG, name: '组织一' }] }), () => ({ status: 200, body: [] })),
+    })
+    check(
+      prefWins.res.defaultsByField.organizationId === ORG_PREF,
+      '5.4 组织预选：跨工作区记忆 ~/.config/yunxiao/preferences.json 的 lastSelectedOrganizationId 优先于 lastOrganization',
+      prefWins.res.defaultsByField,
+    )
+
+    const activeWins = await runDiscover({
+      cwd: '/ws/active-wins',
+      routes: routesWith(() => ({ status: 200, body: [{ id: ORG, name: '组织一' }] }), () => ({ status: 200, body: [] })),
+    })
+    check(
+      activeWins.res.defaultsByField.organizationId === ORG_ACTIVE,
+      '5.5 组织预选：user.lastOrganization 优先于组织列表首项',
+      activeWins.res.defaultsByField,
+    )
+
+    // 5.6 MattDemo 错位：本地 projectId 指向测试沙箱项目 → 黄色预警 + 默认新建同名项目以显式覆盖
+    const mismatch = await runDiscover({
+      cwd: '/ws/MattDemo',
+      files: { ['/ws/MattDemo/' + YAML_REL]: 'organizationId: ' + ORG + '\nprojectId: ' + PROJ_SANDBOX + '\n' },
+      routes: routesWith(
+        () => ({ status: 200, body: [{ id: ORG, name: '组织一' }] }),
+        () => ({ status: 200, body: [] }),
+        [{ match: (u: string) => u.includes('/projects/' + PROJ_SANDBOX), reply: () => ({ status: 200, body: { id: PROJ_SANDBOX, name: 'dci-agentic-forge-sandbox', customCode: 'SANDBOX', logicalStatus: 'NORMAL' } }) }],
+      ),
+    })
+    check(
+      Boolean(mismatch.res.projectMismatchBanner) &&
+        mismatch.res.bannersByField.projectMode?.level === 'warn' &&
+        mismatch.res.bannersByField.projectId?.level === 'warn' &&
+        mismatch.res.defaultsByField.projectMode === 'create' &&
+        mismatch.res.defaultsByField.projectName === 'MattDemo',
+      '5.6 本地 projectId 指向与工作区名不一致的沙箱项目时，返回黄色预警横幅并把 projectMode 默认切为新建同名项目',
+      { banner: mismatch.res.projectMismatchBanner, defaults: mismatch.res.defaultsByField },
+    )
+
+    // 5.7 同名项目已存在 → 默认推荐复用（不改新建，避免重复建项目）
+    const reuse = await runDiscover({
+      cwd: '/ws/MattDemo',
+      files: { ['/ws/MattDemo/' + YAML_REL]: 'organizationId: ' + ORG + '\nprojectId: ' + PROJ_SANDBOX + '\n' },
+      routes: routesWith(
+        () => ({ status: 200, body: [{ id: ORG, name: '组织一' }] }),
+        () => ({ status: 200, body: [{ id: PROJ_MATCH, name: 'MattDemo', customCode: 'MATT', logicalStatus: 'NORMAL' }] }),
+        [{ match: (u: string) => u.includes('/projects/' + PROJ_SANDBOX), reply: () => ({ status: 200, body: { id: PROJ_SANDBOX, name: 'dci-agentic-forge-sandbox', customCode: 'SANDBOX', logicalStatus: 'NORMAL' } }) }],
+      ),
+    })
+    check(
+      reuse.res.defaultsByField.projectMode === 'reuse' && reuse.res.defaultsByField.projectId === PROJ_MATCH,
+      '5.7 组织内已存在与工作区同名的 Yunxiao Projex 项目时，默认推荐复用该项目而不是重复新建',
+      reuse.res.defaultsByField,
+    )
+
+    // 5.8 双源命名空间：ListRepositories 的 pathWithNamespace 前缀聚合出父代码组；ListNamespaces 403 静默降级；根路径始终兜底
+    const REPO_A = { id: 7001, pathWithNamespace: ORG + '/platform/alpha', webUrl: 'https://codeup.aliyun.com/' + ORG + '/platform/alpha', accessLevel: 40, archived: false, namespace: { id: 9001, path: ORG + '/platform', name: 'platform' } }
+    const REPO_B = { id: 7002, pathWithNamespace: ORG + '/platform/beta', webUrl: 'https://codeup.aliyun.com/' + ORG + '/platform/beta', accessLevel: 40, archived: false, namespace: { id: 9001, path: ORG + '/platform', name: 'platform' } }
+    const dual = await runDiscover({
+      cwd: '/ws/dual',
+      routes: routesWith(
+        () => ({ status: 200, body: [{ id: ORG, name: '组织一' }] }),
+        () => ({ status: 200, body: [] }),
+        [{ match: (u: string) => /\/repositories(\?|$)/.test(u), reply: () => ({ status: 200, body: [REPO_A, REPO_B] }) }],
+      ),
+    })
+    const nsOpts = dual.res.optionsByField.namespaceId || []
+    const nsValues = nsOpts.map((o: any) => String(o.value))
+    check(
+      nsValues.includes('9001') && nsValues.includes('') && nsValues.filter((v: string) => v === '9001').length === 1,
+      '5.8 双源父代码组发现：ListNamespaces 遇 403 时由 ListRepositories 前缀聚合去重出父代码组，并始终提供组织根路径兜底',
+      nsValues,
+    )
+
+    // 5.9 ListNamespaces 可用时合并「没有任何代码库」的空代码组
+    const withNs = await runDiscover({
+      cwd: '/ws/with-ns',
+      routes: routesWith(
+        () => ({ status: 200, body: [{ id: ORG, name: '组织一' }] }),
+        () => ({ status: 200, body: [] }),
+        [
+          { match: (u: string) => /\/repositories(\?|$)/.test(u), reply: () => ({ status: 200, body: [REPO_A] }) },
+          { match: (u: string) => u.includes('/namespaces'), reply: () => ({ status: 200, body: [{ id: 9002, fullPath: ORG + '/infra', nameWithNamespace: 'infra', parentId: 0 }] }) },
+        ],
+      ),
+    })
+    const nsValues2 = (withNs.res.optionsByField.namespaceId || []).map((o: any) => String(o.value))
+    check(
+      nsValues2.includes('9002') && nsValues2.includes('9001') && nsValues2.includes(''),
+      '5.9 ListNamespaces 可用时把没有代码库的空代码组一并合并进父代码组下拉，与仓库前缀聚合结果去重共存',
+      nsValues2,
+    )
+
+    // 5.10 bind 模式预选：本地 git origin 命中组织内已有代码库 → 默认 bind 并选中该库
+    const originHit = await runDiscover({
+      cwd: '/ws/origin',
+      routes: routesWith(
+        () => ({ status: 200, body: [{ id: ORG, name: '组织一' }] }),
+        () => ({ status: 200, body: [] }),
+        [{ match: (u: string) => /\/repositories(\?|$)/.test(u), reply: () => ({ status: 200, body: [REPO_A, REPO_B] }) }],
+      ),
+      exec: (cmd: string, args: string[]) => {
+        if (cmd === 'git' && args.includes('remote') && args.includes('get-url')) {
+          return { code: 0, stdout: 'git@codeup.aliyun.com:' + ORG + '/platform/alpha.git', stderr: '' }
+        }
+        return { code: 1, stdout: '', stderr: 'no ssh' }
+      },
+    })
+    check(
+      originHit.res.defaultsByField.repoMode === 'bind' && originHit.res.defaultsByField.repositoryId === '7001',
+      '5.10 本地 git origin 命中组织内已有 Codeup 代码库时，默认回填 bind 模式并选中该代码库',
+      { defaults: originHit.res.defaultsByField, repos: (originHit.res.optionsByField.repositoryId || []).length },
+    )
+
+    // 5.11 坐标齐全但仓库权限不足（accessLevel < 20）→ 初始步落到第 3 步，让用户处理仓库访问
+    const repoDenied = await runDiscover({
+      cwd: '/ws/MattDemo',
+      files: { ['/ws/MattDemo/' + YAML_REL]: 'organizationId: ' + ORG + '\nprojectId: ' + PROJ + '\nrepositoryId: 7002\n' },
+      routes: routesWith(
+        () => ({ status: 200, body: [{ id: ORG, name: '组织一' }] }),
+        () => ({ status: 200, body: [{ id: PROJ, name: 'MattDemo', customCode: 'MATT', logicalStatus: 'NORMAL' }] }),
+        [
+          { match: (u: string) => u.includes('/projects/' + PROJ), reply: () => ({ status: 200, body: { id: PROJ, name: 'MattDemo', customCode: 'MATT', logicalStatus: 'NORMAL' } }) },
+          { match: (u: string) => /\/repositories(\?|$)/.test(u), reply: () => ({ status: 200, body: [Object.assign({}, REPO_B, { accessLevel: 10 })] }) },
+        ],
+      ),
+    })
+    check(
+      repoDenied.res.initialStepIndex === 2 && !repoDenied.res.projectMismatchBanner,
+      '5.11 组织与项目坐标齐全、但关联 Codeup 代码库权限不足时，初始步直接落到第 3 步',
+      { initialStepIndex: repoDenied.res.initialStepIndex, banner: repoDenied.res.projectMismatchBanner },
+    )
+
+    // 5.12 即使 SearchProjects 已列出本地 projectId，也必须用 GetProject 核验这份存量坐标
+    const verifyExisting = await runDiscover({
+      cwd: '/ws/MattDemo',
+      files: { ['/ws/MattDemo/' + YAML_REL]: 'organizationId: ' + ORG + '\nprojectId: ' + PROJ + '\n' },
+      routes: routesWith(
+        () => ({ status: 200, body: [{ id: ORG, name: '组织一' }] }),
+        () => ({ status: 200, body: [{ id: PROJ, name: 'MattDemo', customCode: 'MATT', logicalStatus: 'NORMAL' }] }),
+        [{ match: (u: string) => u.includes('/projects/' + PROJ), reply: () => ({ status: 200, body: { id: PROJ, name: 'MattDemo', customCode: 'MATT', logicalStatus: 'NORMAL' } }) }],
+      ),
+    })
+    check(
+      verifyExisting.fetchPort.hits.some((hit) => hit.method === 'GET' && hit.url.includes('/projects/' + PROJ)) &&
+        !verifyExisting.res.projectMismatchBanner && verifyExisting.res.defaultsByField.projectMode === 'reuse',
+      '5.12 本地 projectId 已出现在 SearchProjects 结果中时仍调用 GetProject 核验，不凭列表摘要跳过校验',
+      { hits: verifyExisting.fetchPort.hits, banner: verifyExisting.res.projectMismatchBanner },
+    )
+  }
+
+  console.log('\n== 6. 一体化置备：三模式、SSH 自动优选、Persist-Before-Push、半成功重推与双深链 ==')
+  {
+    const initMod = await imp('src/tracker/rooms/yunxiao/project/init-project.ts')
+    const publishMod = await imp('src/host/publishFlow.ts')
+    const { initProject } = initMod
+    const ORG = '673db5665c76405a332eebc4'
+    const PROJ = '8efcbccd3981cb23178fc66bd1'
+    const YAML_REL = 'docs/agents/yunxiao.yaml'
+
+    const baseRoutes = (extra?: any[]) => ([
+      { match: (u: string) => u.endsWith('/oapi/v1/platform/user'), reply: () => ({ status: 200, body: { id: 'u-1', name: 'Bryan', username: 'bryan', lastOrganization: ORG } }) },
+      { method: 'POST', match: (u: string) => u.includes('/projects:search'), reply: () => ({ status: 200, body: [] }) },
+      { match: (u: string) => u.includes('/projectTemplates'), reply: () => ({ status: 200, body: [{ id: 'tpl-scrum', name: 'Scrum 敏捷' }] }) },
+      { method: 'POST', match: (u: string) => u.includes('/projects:search'), reply: () => ({ status: 200, body: [] }) },
+      { match: (u: string) => u.includes('/projects/' + PROJ), reply: () => ({ status: 200, body: { id: PROJ, name: 'planning', customCode: 'PLAN', logicalStatus: 'NORMAL' } }) },
+      ...(extra || []),
+    ])
+
+    /** 组装一次 initProject 调用所需的注入上下文与留痕容器。 */
+    const runInit = async (opts: any) => {
+      const fsPort = makePortFs(opts.files || {})
+      const envPort = makePortEnv(Object.assign({ YUNXIAO_TOKEN: 'pt-valid-token-123456' }, opts.env || {}))
+      const execPort = makePortExec(opts.exec || (() => ({ code: 0, stdout: '', stderr: '' })))
+      const fetchPort = makePortFetch(opts.routes)
+      const ctx: any = {
+        cwd: opts.cwd,
+        platform: {
+          fs: fsPort, env: envPort, exec: execPort.fn,
+          resolveExecutable: async (bin: string) => (bin === 'git' ? '/usr/bin/git' : null),
+        },
+        exec: execPort.fn,
+        fetch: fetchPort.fn,
+      }
+      const res = await initProject({ cwd: opts.cwd }, opts.input, ctx)
+      return { res, fsPort, execPort, fetchPort }
+    }
+
+    const gitOk = (cmd: string, args: string[]) => {
+      if (cmd !== 'git') return { code: 1, stdout: '', stderr: 'not git' }
+      if (args[0] === 'rev-parse') return { code: 0, stdout: 'true\n', stderr: '' }
+      if (args[0] === 'remote' && args[1] === 'get-url') return { code: 2, stdout: '', stderr: 'No such remote' }
+      return { code: 0, stdout: '', stderr: '' }
+    }
+
+    // 6.1 repoMode='none' 纯规划工作区：只落组织与项目坐标（清掉旧 repositoryId），不跑任何 git/Codeup 操作
+    const noneRes = await runInit({
+      cwd: '/ws/planning',
+      files: { ['/ws/planning/' + YAML_REL]: 'organizationId: ' + ORG + '\nprojectId: ' + PROJ + '\ncustomCode: MATE\nrepositoryId: 1234567\n' },
+      input: { name: 'planning', repoMode: 'none' },
+      routes: baseRoutes(),
+      exec: () => ({ code: 1, stdout: '', stderr: 'none 模式不该起任何外部命令' }),
+    })
+    const noneYaml = noneRes.fsPort.writes[0]?.text || ''
+    check(
+      noneRes.res.ok === true &&
+        noneRes.res.data.projectUrl === 'https://devops.aliyun.com/projex/project/' + PROJ &&
+        Array.isArray(noneRes.res.data.extraUrls) && noneRes.res.data.extraUrls.length === 1 &&
+        String(noneRes.res.data.hint?.zh || '').includes('MATE-') &&
+        noneRes.execPort.calls.filter((c) => c.cmd === 'git').length === 0 &&
+        noneYaml.includes('organizationId: ' + ORG) && noneYaml.includes('projectId: ' + PROJ) &&
+        noneYaml.includes('customCode: MATE') && !noneYaml.includes('repositoryId'),
+      '6.1 repoMode=none 只写入组织与 Projex 项目坐标、清除旧 repositoryId，零 git/Codeup 调用，并返回 Projex 深链与提交关联提示',
+      { res: noneRes.res, yaml: noneYaml, gitCalls: noneRes.execPort.calls.length },
+    )
+
+    // 6.2 projectMode='reuse'：经 GetProject 校验并继承远端项目的 customCode，而不是自己编一个
+    const reuseRes = await runInit({
+      cwd: '/ws/planning',
+      input: { name: 'planning', repoMode: 'none', organizationId: ORG, projectMode: 'reuse', projectId: PROJ },
+      routes: baseRoutes(),
+      exec: () => ({ code: 0, stdout: '', stderr: '' }),
+    })
+    check(
+      reuseRes.res.ok === true && reuseRes.res.data.customCode === 'PLAN' &&
+        String(reuseRes.fsPort.writes[0]?.text || '').includes('customCode: PLAN'),
+      '6.2 projectMode=reuse 经 GetProject 校验目标项目并沿用它的 customCode 落盘',
+      { res: reuseRes.res, yaml: reuseRes.fsPort.writes[0]?.text },
+    )
+
+    // 6.3 repoMode='bind'：经 GetRepository 解析 canonical Codeup repository identity 并落到坐标文件
+    const BIND_REPO = { id: 8194002, pathWithNamespace: ORG + '/legacy/app', webUrl: 'https://codeup.aliyun.com/' + ORG + '/legacy/app', httpUrlToRepo: 'https://codeup.aliyun.com/' + ORG + '/legacy/app.git', sshUrlToRepo: 'git@codeup.aliyun.com:' + ORG + '/legacy/app.git', accessLevel: 30, archived: false }
+    const bindRes = await runInit({
+      cwd: '/ws/legacy',
+      input: { name: 'app', repoMode: 'bind', repositoryId: '8194002', organizationId: ORG, projectMode: 'reuse', projectId: PROJ },
+      routes: baseRoutes([{ match: (u: string) => u.includes('/repositories/8194002'), reply: () => ({ status: 200, body: BIND_REPO }) }]),
+      exec: gitOk,
+    })
+    const bindYaml = bindRes.fsPort.writes[0]?.text || ''
+    check(
+      bindRes.res.ok === true && bindYaml.includes('repositoryId: "8194002"') &&
+        bindRes.execPort.calls.some((c) => c.cmd === 'git' && c.args[0] === 'remote' && c.args[1] === 'add') &&
+        bindRes.res.data.repoUrl === BIND_REPO.webUrl,
+      '6.3 repoMode=bind 经 GetRepository 解析 codeup repository identity 并把 repositoryId 写入 docs/agents/yunxiao.yaml',
+      { res: bindRes.res, yaml: bindYaml },
+    )
+
+    // 6.4 Persist-Before-Push：先落盘坐标，之后才起 git remote/push —— 推送翻车也不丢坐标
+    {
+      const fsPort = makePortFs({})
+      const envPort = makePortEnv({ YUNXIAO_TOKEN: 'pt-valid-token-123456' })
+      const writesAtPush: number[] = []
+      const execPort = makePortExec((cmd: string, args: string[]) => {
+        if (cmd !== 'git') return { code: 1, stdout: '', stderr: 'not git' }
+        if (args[0] === 'push') writesAtPush.push(fsPort.writes.length)
+        return gitOk(cmd, args)
+      })
+      const fetchPort = makePortFetch(baseRoutes([
+        { method: 'POST', match: (u: string) => /\/repositories(\?|$)/.test(u), reply: () => ({ status: 200, body: { id: 8899001, pathWithNamespace: ORG + '/apps/new-app' } }) },
+        { match: (u: string) => u.includes('/repositories/8899001'), reply: () => ({ status: 200, body: { id: 8899001, pathWithNamespace: ORG + '/apps/new-app', webUrl: 'https://codeup.aliyun.com/' + ORG + '/apps/new-app', httpUrlToRepo: 'https://codeup.aliyun.com/' + ORG + '/apps/new-app.git', sshUrlToRepo: 'git@codeup.aliyun.com:' + ORG + '/apps/new-app.git', accessLevel: 40 } }) },
+      ]))
+      const res = await initProject({ cwd: '/ws/new-app' }, {
+        name: 'new-app', repoMode: 'create', organizationId: ORG, projectMode: 'reuse', projectId: PROJ, remoteProtocol: 'https',
+      }, {
+        cwd: '/ws/new-app',
+        platform: { fs: fsPort, env: envPort, exec: execPort.fn, resolveExecutable: async (b: string) => (b === 'git' ? '/usr/bin/git' : null) },
+        exec: execPort.fn, fetch: fetchPort.fn,
+      } as any)
+      check(
+        res.ok === true && writesAtPush.length === 1 && writesAtPush[0] >= 1 &&
+          String(fsPort.writes[0]?.path || '').endsWith(YAML_REL),
+        '6.4 Persist-Before-Push：git push 发起之前 docs/agents/yunxiao.yaml 已经落盘（先写坐标再推送）',
+        { ok: res.ok, writesAtPush, writes: fsPort.writes.map((w) => w.path) },
+      )
+    }
+
+    // 6.5 remoteProtocol 缺省即为 auto，且本机 SSH 免密可用 → 自动优选 sshUrlToRepo
+    const sshReady = await runInit({
+      cwd: '/ws/ssh-ready',
+      input: { name: 'ssh-app', repoMode: 'create', organizationId: ORG, projectMode: 'reuse', projectId: PROJ },
+      routes: baseRoutes([
+        { method: 'POST', match: (u: string) => /\/repositories(\?|$)/.test(u), reply: () => ({ status: 200, body: { id: 8899002, pathWithNamespace: ORG + '/apps/ssh-app' } }) },
+        { match: (u: string) => u.includes('/repositories/8899002'), reply: () => ({ status: 200, body: { id: 8899002, pathWithNamespace: ORG + '/apps/ssh-app', webUrl: 'https://codeup.aliyun.com/' + ORG + '/apps/ssh-app', httpUrlToRepo: 'https://codeup.aliyun.com/' + ORG + '/apps/ssh-app.git', sshUrlToRepo: 'git@codeup.aliyun.com:' + ORG + '/apps/ssh-app.git' } }) },
+      ]),
+      exec: (cmd: string, args: string[]) => {
+        if (cmd === 'ssh') return { code: 0, stdout: 'Welcome to Codeup, Bryan!\n', stderr: '' }
+        return gitOk(cmd, args)
+      },
+    })
+    const sshOrigin = sshReady.execPort.calls.find((c) => c.cmd === 'git' && c.args[0] === 'remote' && c.args[1] === 'add')
+    check(
+      sshReady.res.ok === true && String(sshOrigin?.args[3] || '') === 'git@codeup.aliyun.com:' + ORG + '/apps/ssh-app.git',
+      '6.5 remoteProtocol 缺省按 auto 处理，用 ssh -T 探测到免密可用后让 origin 自动优选 sshUrlToRepo',
+      { url: sshOrigin?.args[3], calls: sshReady.execPort.calls.map((c) => c.cmd + ' ' + c.args[0]) },
+    )
+
+    // 6.6 SSH 不可用时回退 httpUrlToRepo
+    const sshDown = await runInit({
+      cwd: '/ws/ssh-down',
+      input: { name: 'http-app', repoMode: 'create', organizationId: ORG, projectMode: 'reuse', projectId: PROJ, remoteProtocol: 'auto' },
+      routes: baseRoutes([
+        { method: 'POST', match: (u: string) => /\/repositories(\?|$)/.test(u), reply: () => ({ status: 200, body: { id: 8899003, pathWithNamespace: ORG + '/apps/http-app' } }) },
+        { match: (u: string) => u.includes('/repositories/8899003'), reply: () => ({ status: 200, body: { id: 8899003, pathWithNamespace: ORG + '/apps/http-app', webUrl: 'https://codeup.aliyun.com/' + ORG + '/apps/http-app', httpUrlToRepo: 'https://codeup.aliyun.com/' + ORG + '/apps/http-app.git', sshUrlToRepo: 'git@codeup.aliyun.com:' + ORG + '/apps/http-app.git' } }) },
+      ]),
+      exec: (cmd: string, args: string[]) => {
+        if (cmd === 'ssh') return { code: 255, stdout: '', stderr: 'Permission denied (publickey)' }
+        return gitOk(cmd, args)
+      },
+    })
+    const httpOrigin = sshDown.execPort.calls.find((c) => c.cmd === 'git' && c.args[0] === 'remote' && c.args[1] === 'add')
+    check(
+      sshDown.res.ok === true && String(httpOrigin?.args[3] || '') === 'https://codeup.aliyun.com/' + ORG + '/apps/http-app.git',
+      '6.6 SSH 免密不可用时自动回退 httpUrlToRepo，不让向导卡在 SSH 上',
+      { url: httpOrigin?.args[3] },
+    )
+
+    // 6.7 首次推送失败：坐标已落盘，错误信封带回 repoUrl 供弹窗内联一键重推（halfCreated）
+    const pushFail = await runInit({
+      cwd: '/ws/push-fail',
+      input: { name: 'retry-app', repoMode: 'create', organizationId: ORG, projectMode: 'reuse', projectId: PROJ, remoteProtocol: 'https' },
+      routes: baseRoutes([
+        { method: 'POST', match: (u: string) => /\/repositories(\?|$)/.test(u), reply: () => ({ status: 200, body: { id: 8899004, pathWithNamespace: ORG + '/apps/retry-app' } }) },
+        { match: (u: string) => u.includes('/repositories/8899004'), reply: () => ({ status: 200, body: { id: 8899004, pathWithNamespace: ORG + '/apps/retry-app', webUrl: 'https://codeup.aliyun.com/' + ORG + '/apps/retry-app', httpUrlToRepo: 'https://codeup.aliyun.com/' + ORG + '/apps/retry-app.git', sshUrlToRepo: 'git@codeup.aliyun.com:' + ORG + '/apps/retry-app.git' } }) },
+      ]),
+      exec: (cmd: string, args: string[]) => {
+        if (cmd === 'git' && args[0] === 'push') return { code: 128, stdout: '', stderr: 'fatal: unable to access remote' }
+        return gitOk(cmd, args)
+      },
+    })
+    check(
+      pushFail.res.ok === false && Boolean(pushFail.res.error && pushFail.res.error.repoUrl) &&
+        String(pushFail.fsPort.writes[0]?.text || '').includes('repositoryId: "8899004"'),
+      '6.7 远端代码库已建、坐标已落盘，但首次 git push 失败时如实报错并带回 repoUrl 供一键重推（不丢坐标、不重复建项）',
+      { error: pushFail.res.error, yaml: pushFail.fsPort.writes[0]?.text },
+    )
+
+    // 6.8 宿主 handleContractOp 把向导参数透传给房间 initProject，并把双深链与提示带回弹窗
+    {
+      const captured: any = { input: null }
+      const flow = publishMod.createPublishFlow({
+        DEFAULT_CWD: '/ws/host',
+        resolveGit: async () => '/usr/bin/git',
+        execProc: async () => ({ ok: true, text: 'true' }),
+        canonicalKey: async (c: any) => String(c),
+        repoKeys: {}, repoRoots: {}, setCache: () => {},
+        makeCreateErrorClassifier: () => (_t: unknown, k: unknown) => String(k || 'unknown'),
+        KIND_UNKNOWN: 'unknown',
+        openSession: async () => ({
+          ok: true, backendId: 'yunxiao',
+          call: async (fn: any) => fn({
+            initProject: async (_h: any, input: any) => {
+              captured.input = input
+              return {
+                ok: true,
+                data: {
+                  backend: 'yunxiao', refId: 'yx/app', name: 'yx/app',
+                  url: 'https://codeup.aliyun.com/' + ORG + '/apps/app',
+                  projectUrl: 'https://devops.aliyun.com/projex/project/' + PROJ,
+                  repoUrl: 'https://codeup.aliyun.com/' + ORG + '/apps/app',
+                  customCode: 'APP',
+                  extraUrls: [
+                    { label: { zh: '打开 Yunxiao Projex 项目 ↗', en: 'Open' }, url: 'https://devops.aliyun.com/projex/project/' + PROJ, primary: true },
+                    { label: { zh: '打开 Codeup 代码库 ↗', en: 'Open' }, url: 'https://codeup.aliyun.com/' + ORG + '/apps/app' },
+                  ],
+                  hint: { zh: '提交说明里带上 APP-<编号> 即可自动关联工作项。', en: 'Use APP-<number>.' },
+                },
+              }
+            },
+          }, {}),
+        }),
+      })
+      const out: any = await flow.handleContractOp({
+        op: 'initProject', cwd: '/ws/host', name: 'app', visibility: 'private',
+        organizationId: ORG, projectMode: 'reuse', projectId: PROJ, repoMode: 'create',
+        namespaceId: '2813489', remoteProtocol: 'auto', description: '一键开仓',
+      })
+      check(
+        out.ok === true &&
+          captured.input?.organizationId === ORG && captured.input?.projectMode === 'reuse' &&
+          captured.input?.projectId === PROJ && captured.input?.repoMode === 'create' &&
+          captured.input?.namespaceId === '2813489' && captured.input?.remoteProtocol === 'auto' &&
+          Array.isArray(out.links) && out.links.length === 2 && Boolean(out.hint) &&
+          typeof out.projectUrl === 'string' && out.customCode === 'APP',
+        '6.8 宿主 handleContractOp 把向导的组织/项目/仓库模式参数透传给房间 initProject，成功时把双深链与提交提示带回弹窗',
+        { out, input: captured.input },
+      )
+    }
+
+    // 6.9 宿主把房间推送失败的报错翻成 halfCreated（带 repoUrl 与重推入口）
+    {
+      const flow = publishMod.createPublishFlow({
+        DEFAULT_CWD: '/ws/host',
+        resolveGit: async () => '/usr/bin/git',
+        execProc: async () => ({ ok: true, text: 'true' }),
+        canonicalKey: async (c: any) => String(c),
+        repoKeys: {}, repoRoots: {}, setCache: () => {},
+        makeCreateErrorClassifier: () => (_t: unknown, k: unknown) => String(k || 'unknown'),
+        KIND_UNKNOWN: 'unknown',
+        openSession: async () => ({
+          ok: true, backendId: 'yunxiao',
+          call: async (fn: any) => fn({
+            initProject: async () => ({
+              ok: false,
+              error: {
+                kind: 'network',
+                message: '坐标已写入，但 git push 失败',
+                repoUrl: 'https://codeup.aliyun.com/' + ORG + '/apps/app',
+              },
+            }),
+          }, {}),
+        }),
+      })
+      const half: any = await flow.handleContractOp({ op: 'initProject', cwd: '/ws/host', name: 'app', repoMode: 'create' })
+      check(
+        half.ok === false && half.halfCreated === true &&
+          Boolean(half.repoUrl) && half.repoUrl === 'https://codeup.aliyun.com/' + ORG + '/apps/app',
+        '6.9 房间回包带 repoUrl 的推送失败在宿主侧翻成 halfCreated:true，供弹窗内联一键重试推送',
+        half,
+      )
+    }
+
+    // 6.10 新建项目：Scrum 模板、当前令牌身份与编号冲突后最多五次递增重试
+    {
+      const newProjectId = 'ffee00112233445566778899'
+      const createBodies: Array<Record<string, unknown>> = []
+      let everyCreateUsedCurrentToken = true
+      const created = await runInit({
+        cwd: '/ws/alpha',
+        input: { name: 'alpha', projectName: 'Alpha', repoMode: 'none', organizationId: ORG, projectMode: 'create' },
+        routes: baseRoutes([
+          {
+            method: 'POST',
+            match: (u: string) => u.endsWith('/projects'),
+            reply: (_u: string, init?: RequestInit) => {
+              const body = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+              createBodies.push(body)
+              const headers = new Headers(init?.headers)
+              everyCreateUsedCurrentToken = everyCreateUsedCurrentToken && headers.get('x-yunxiao-token') === 'pt-valid-token-123456'
+              if (createBodies.length <= 5) return { status: 400, body: { message: 'customCode conflict' } }
+              return { status: 200, body: { id: newProjectId, name: 'Alpha', customCode: body.customCode } }
+            },
+          },
+        ]),
+      })
+      const customCodes = createBodies.map((body) => String(body.customCode || ''))
+      check(
+        created.res.ok === true && createBodies.length === 6 &&
+          customCodes[0] === 'ALPHA' && customCodes[5] === 'ALPHAE' &&
+          createBodies.every((body) => body.templateId === 'tpl-scrum') &&
+          everyCreateUsedCurrentToken && created.res.data?.customCode === 'ALPHAE' &&
+          String(created.fsPort.writes[0]?.text || '').includes('projectId: ' + newProjectId),
+        '6.10 projectMode=create 优选 Scrum 模板，以当前令牌创建项目，并在编号冲突后完成最多五次递增重试',
+        { ok: created.res.ok, attempts: createBodies.length, customCodes, everyCreateUsedCurrentToken, error: created.res.error },
+      )
+    }
+
+    // 6.11 非认证推送错误不应被当成 SSH 失败再推一次；保留半成功坐标供人处理
+    {
+      let origin = ''
+      const pushUrls: string[] = []
+      const rejected = await runInit({
+        cwd: '/ws/hook-rejected',
+        input: { name: 'hook-app', repoMode: 'create', organizationId: ORG, projectMode: 'reuse', projectId: PROJ, remoteProtocol: 'auto' },
+        routes: baseRoutes([
+          { method: 'POST', match: (u: string) => /\/repositories(\?|$)/.test(u), reply: () => ({ status: 200, body: { id: 8899005, pathWithNamespace: ORG + '/apps/hook-app' } }) },
+          { match: (u: string) => u.includes('/repositories/8899005'), reply: () => ({ status: 200, body: { id: 8899005, pathWithNamespace: ORG + '/apps/hook-app', webUrl: 'https://codeup.aliyun.com/' + ORG + '/apps/hook-app', httpUrlToRepo: 'https://codeup.aliyun.com/' + ORG + '/apps/hook-app.git', sshUrlToRepo: 'git@codeup.aliyun.com:' + ORG + '/apps/hook-app.git' } }) },
+        ]),
+        exec: (cmd: string, args: string[]) => {
+          if (cmd === 'ssh') return { code: 0, stdout: 'Welcome to Codeup, Bryan!\n', stderr: '' }
+          if (cmd === 'git' && args[0] === 'remote' && (args[1] === 'add' || args[1] === 'set-url')) origin = String(args[args.length - 1] || '')
+          if (cmd === 'git' && args[0] === 'push') {
+            pushUrls.push(origin)
+            return { code: 1, stdout: '', stderr: 'remote: pre-receive hook declined' }
+          }
+          return gitOk(cmd, args)
+        },
+      })
+      check(
+        rejected.res.ok === false && pushUrls.length === 1 && pushUrls[0].startsWith('git@') &&
+          rejected.execPort.calls.filter((c) => c.cmd === 'git' && c.args[0] === 'remote' && c.args[1] === 'set-url').length === 0 &&
+          String(rejected.fsPort.writes[0]?.text || '').includes('repositoryId: "8899005"'),
+        '6.11 非认证推送错误只推送一次并保留 halfCreated 坐标，不错误切换 HTTP 重推',
+        { ok: rejected.res.ok, pushUrls, error: rejected.res.error },
+      )
+    }
+
+    // 6.12 坐标写盘失败时必须停止在 remote/push 之前，不能把「先落盘」降级成尽力而为
+    {
+      const fsPort = makePortFs({})
+      fsPort.writeText = async () => { throw new Error('injected read-only workspace') }
+      const envPort = makePortEnv({ YUNXIAO_TOKEN: 'pt-valid-token-123456' })
+      const execPort = makePortExec(gitOk)
+      const fetchPort = makePortFetch(baseRoutes([
+        { method: 'POST', match: (u: string) => /\/repositories(\?|$)/.test(u), reply: () => ({ status: 200, body: { id: 8899006, pathWithNamespace: ORG + '/apps/no-persist' } }) },
+        { match: (u: string) => u.includes('/repositories/8899006'), reply: () => ({ status: 200, body: { id: 8899006, pathWithNamespace: ORG + '/apps/no-persist', webUrl: 'https://codeup.aliyun.com/' + ORG + '/apps/no-persist', httpUrlToRepo: 'https://codeup.aliyun.com/' + ORG + '/apps/no-persist.git' } }) },
+      ]))
+      const res = await initProject({ cwd: '/ws/no-persist' }, {
+        name: 'no-persist', repoMode: 'create', organizationId: ORG, projectMode: 'reuse', projectId: PROJ, remoteProtocol: 'https',
+      }, {
+        cwd: '/ws/no-persist',
+        platform: { fs: fsPort, env: envPort, exec: execPort.fn, resolveExecutable: async (b: string) => (b === 'git' ? '/usr/bin/git' : null) },
+        exec: execPort.fn, fetch: fetchPort.fn,
+      } as any)
+      const remoteOrPushCalls = execPort.calls.filter((c) => c.cmd === 'git' && (c.args[0] === 'remote' || c.args[0] === 'push'))
+      check(
+        res.ok === false && remoteOrPushCalls.length === 0,
+        '6.12 docs/agents/yunxiao.yaml 写盘失败时返回错误，且不执行 git remote 或 git push',
+        { res, remoteOrPushCalls },
+      )
+    }
   }
 
   console.log('')

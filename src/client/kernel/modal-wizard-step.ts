@@ -11,6 +11,7 @@ declare function flash(...args: any[]): any;
 declare const host: any;
 declare function openUrl(...args: any[]): any;
 declare function tr(...args: any[]): any;
+declare function dswsNormalizeError(input: any, fallbackText: any): { kind: string; message: string; raw: string };
 
 function _wizText(v: any): string {
   if (v === null || v === undefined) return ''
@@ -33,14 +34,15 @@ export function isWizardFieldVisible(f: any, vals: any): boolean {
   const depField: string = String(vw.field || '').trim()
   if (!depField) return true
   const actual: string = String((vals && vals[depField]) !== undefined && (vals && vals[depField]) !== null ? vals[depField] : '')
-  if (vw.equals !== undefined) {
-    if (Array.isArray(vw.equals)) {
+  const eqList: any = Array.isArray(vw.in) ? vw.in : vw.equals
+  if (eqList !== undefined) {
+    if (Array.isArray(eqList)) {
       let hit: boolean = false
-      for (let i: number = 0; i < vw.equals.length; i++) {
-        if (String(vw.equals[i]) === actual) { hit = true; break }
+      for (let i: number = 0; i < eqList.length; i++) {
+        if (String(eqList[i]) === actual) { hit = true; break }
       }
       if (!hit) return false
-    } else if (String(vw.equals) !== actual) {
+    } else if (String(eqList) !== actual) {
       return false
     }
   }
@@ -58,6 +60,11 @@ export function validateWizardFields(schema: any, vals: any): { ok: boolean; fie
     if (f.required) {
       const v: string = String((vals && vals[f.name]) || '').trim()
       if (!v) return { ok: false, field: f, message: label + ' 必填' }
+    }
+    if (typeof f.maxLength === 'number' && f.maxLength > 0) {
+      if (String((vals && vals[f.name]) || '').length > f.maxLength) {
+        return { ok: false, field: f, message: label + ' 长度超出限制' }
+      }
     }
     if (f.pattern) {
       try {
@@ -79,7 +86,9 @@ export function applyWizardHydratePayload(m: any, res: any, overwriteDefaults?: 
     m.optionsByField = Object.assign({}, m.optionsByField || {}, res.optionsByField)
   }
   if (res.bannersByField && typeof res.bannersByField === 'object') {
-    m.bannersByField = Object.assign({}, m.bannersByField || {}, res.bannersByField)
+    const tokenBanner = m.bannersByField && m.bannersByField.token
+    m.bannersByField = Object.assign({}, res.bannersByField)
+    if (tokenBanner && !m.bannersByField.token) m.bannersByField.token = tokenBanner
   }
   if (res.defaultsByField && typeof res.defaultsByField === 'object') {
     m.defaultsByField = Object.assign({}, m.defaultsByField || {}, res.defaultsByField)
@@ -195,8 +204,8 @@ export async function runWizardStepNext(st: any, m: any, vals: any, hostOverride
         }
       } catch (e: any) {
         m.pending = false
-        const msg: string = String((e && e.message) || e || '请求失败')
-        m.fail = { kind: 'network', code: 'network', text: msg, link: null, repo: null, halfCreated: false }
+        const normalized = dswsNormalizeError(e, '请求失败')
+        m.fail = { kind: normalized.kind, code: normalized.kind, text: _wizText(normalized.message), raw: normalized.raw, link: null, repo: null, halfCreated: false }
         try { if (typeof emit === 'function') emit(st) } catch (_) {}
         return { ok: false }
       }
@@ -252,7 +261,8 @@ export function buildWizardSuccessState(out: any, visLabel: string): any {
   const repoData: any = (out && out.data && out.data.ok) ? out.data : ((out && out.ok) ? out : null)
   if (!repoData) return null
   const repo: any = repoData.repo || null
-  const links: any[] = Array.isArray(repoData.links) ? repoData.links.filter(function (lk: any): boolean { return Boolean(lk && typeof lk.url === 'string' && lk.url) }) : []
+  const rawLinks: any[] = Array.isArray(repoData.links) ? repoData.links : (Array.isArray(repoData.extraUrls) ? repoData.extraUrls : [])
+  const links: any[] = rawLinks.filter(function (lk: any): boolean { return Boolean(lk && typeof lk.url === 'string' && lk.url) })
   const hint: any = repoData.hint || null
   if ((repo && (repo.owner || repo.name)) || links.length > 0) {
     return {
