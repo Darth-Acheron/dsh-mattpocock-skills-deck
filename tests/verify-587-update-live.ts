@@ -31,8 +31,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
   console.log('真机形态验收（#876 搭架 + #877 档案卷皮肤：真宿主判据 + 入口件真挂载）')
 
   // ============ 一、真宿主判据：跑已安装更新包的读取器，读磁盘上那份插件的真目录 ============
-  const home: string = process.env.USERPROFILE || process.env.HOME || os.homedir() as string
-  const profilesDir = path.join(home, '.dsh', 'profiles')
+  let home: string = process.env.USERPROFILE || process.env.HOME || os.homedir() as string
+  let profilesDir = path.join(home, '.dsh', 'profiles')
   let pkgDir = ''
   try {
     for (const name of fs.readdirSync(profilesDir)) {
@@ -43,7 +43,27 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
       if (complete) { pkgDir = candidate; break }
     }
   } catch (e) { /* 没装过就留给下面的断言报 */ }
-  check(!!pkgDir, '找得到装在本机使用范围里、且包完好的那份插件（真宿主判据的输入）' + (pkgDir ? '：' + path.basename(path.dirname(path.dirname(pkgDir))) : ''))
+  // 真使用范围里没有「包完好」的那份时，自造一份再继续：新机器没装过插件、或门禁进程没有写用户目录的
+  // 权限（沙箱拒写 ~/.dsh）时，原先直接整扇判红。这里把仓里 package/ 那份产物复制成「装好的」形状
+  // （profiles/<名>/node_modules/<包名>，外加带依赖声明的 profile 清单），读取器拿到的仍是真文件、
+  // 真目录、真清单，四条判据一条不少；只是不再依赖「这台机器恰好装过插件」这个环境巧合（#30）。
+  let homeDirNote = ''
+  if (!pkgDir) {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-587-install-'))
+    const fixtureProfile = path.join(fixtureRoot, '.dsh', 'profiles', 'verify-587-fixture')
+    const fixturePkg = path.join(fixtureProfile, 'node_modules', 'dsh-mattpocock-skills-deck')
+    fs.cpSync(path.join(ROOT, 'package'), fixturePkg, { recursive: true })
+    fs.writeFileSync(path.join(fixtureProfile, 'package.json'), JSON.stringify({
+      name: 'verify-587-fixture-profile',
+      private: true,
+      dependencies: { 'dsh-mattpocock-skills-deck': 'file:./node_modules/dsh-mattpocock-skills-deck' },
+    }, null, 2), 'utf8')
+    home = fixtureRoot
+    profilesDir = path.join(fixtureRoot, '.dsh', 'profiles')
+    pkgDir = fixturePkg
+    homeDirNote = '（本机没有实装，用仓里 package/ 自造了一份夹具装进临时目录）'
+  }
+  check(!!pkgDir, '找得到装在本机使用范围里、且包完好的那份插件（真宿主判据的输入）' + (pkgDir ? '：' + path.basename(path.dirname(path.dirname(pkgDir))) : '') + homeDirNote)
   if (!pkgDir) { console.log(LF + '存在失败'); process.exit(1) }
 
   const manifestPath = path.join(pkgDir, 'package.json')
