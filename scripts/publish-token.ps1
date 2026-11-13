@@ -430,11 +430,14 @@ try {
   # 是仓里写死的唯一裁决入口（见 AGENTS.md「跑门禁：先挑档位」）。任何红立即非零退出。
   if (-not $SkipGate) {
     Log 'GATE 构建：npm run build（仓根，只构建这一次）'
-    Push-Location $RepoRoot; $b = cmd /c 'npm run build 2>&1' | Out-String; $bc = $LASTEXITCODE; Pop-Location
+    # 直接起 npm、用 pwsh 自己的 2>&1 合并捕获：不要经 cmd /c——cmd.exe 只在 Windows 上有，别的平台上
+    #   这条语句会抛 CommandNotFoundException，把整个 try 块连着后面全部发布步骤一起跳掉，最后还以
+    #   退出码 0 收场（静默假成功，#30 实测）；pwsh 的 2>&1 在两个平台都能把 npm 的 stderr 并进输出。
+    Push-Location $RepoRoot; $b = (npm run build 2>&1 | Out-String); $bc = $LASTEXITCODE; Pop-Location
     if ($bc -ne 0) { $bt = (Mask $b).Trim(); if ($bt.Length -gt 600) { $bt = $bt.Substring($bt.Length - 600) }; Log ('GATE-FAIL 构建红 exit=' + $bc + ' 尾部=' + $bt); exit 1 }
     Log 'GATE 构建绿'
     Log 'GATE 裁决：npm run verify:parallel（唯一裁决入口，含五条冒烟）'
-    Push-Location $RepoRoot; $t = cmd /c 'npm run verify:parallel 2>&1' | Out-String; $tc = $LASTEXITCODE; Pop-Location
+    Push-Location $RepoRoot; $t = (npm run verify:parallel 2>&1 | Out-String); $tc = $LASTEXITCODE; Pop-Location
     if ($tc -ne 0) { $tt = (Mask $t).Trim(); if ($tt.Length -gt 600) { $tt = $tt.Substring($tt.Length - 600) }; Log ('GATE-FAIL 裁决红 exit=' + $tc + ' 尾部=' + $tt); exit 1 }
     Log 'GATE 裁决绿'
   } else { Log 'GATE 跳过（-SkipGate）' }
@@ -477,7 +480,7 @@ try {
       if (-not [string]::IsNullOrWhiteSpace([string]$p.prepublishOnly)) {
         Log ('PACK 发布前补跑包内 prepublishOnly：' + [string]$p.prepublishOnly)
         Push-Location $p.dir
-        $prepOut = (cmd /c 'npm run prepublishOnly 2>&1' | Out-String)
+        $prepOut = (npm run prepublishOnly 2>&1 | Out-String)
         $prepCode = $LASTEXITCODE
         Pop-Location
         if ($prepCode -ne 0) {
