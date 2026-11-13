@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-13T10:01:19.454Z",
+  "generatedAt": "2026-11-13T23:19:54.072Z",
   "generatedBy": "node scripts/gate-map.mts",
   "chainLength": 599,
   "gateCount": 599,
@@ -7518,11 +7518,13 @@
       "step": "node tests/verify-587-update-live.ts",
       "file": "tests/verify-587-update-live.ts",
       "guards": [
+        "package",
         "package/lib/client.js",
         "scripts/generated/updateEntryPanel.bundle.js",
         "tests/lib/eval-probe.ts"
       ],
       "dirs": [
+        "package",
         "package/lib",
         "scripts/generated",
         "tests/lib"
@@ -14280,6 +14282,7 @@
       "node tests/verify-build-artifacts.ts",
       "node tests/verify-leaves.ts",
       "node tests/verify-deck-tools-row-zero-dep.ts",
+      "node tests/verify-587-update-live.ts",
       "node tests/verify-bundled-discovery.ts",
       "node tests/verify-bundled-skills-zh.ts",
       "node tests/verify-bundled-skills.ts",
