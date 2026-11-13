@@ -23,8 +23,9 @@
  * node scripts/build.mts 再跑本门禁即可。A/B/C/E/F 五段与构建无关。
  */
 
-import { readFileSync, existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { readFileSync, existsSync, mkdtempSync } from "node:fs";
+import os from "node:os";
+import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
@@ -233,7 +234,11 @@ let packOut = "";
 let packOk = false;
 let packFiles = [];
 try {
-  const result = spawnSync("npm", ["pack", "--dry-run"], { cwd: resolve(ROOT, "package"), encoding: "utf8", shell: true });
+  // npm 的缓存要指到门禁自己的临时目录：沙箱进程写不了用户级 ~/.npm（EPERM，npm 的报错还会误导成
+  //   「缓存里有属主是 root 的文件」），直接继承进程环境时 pack 一步都迈不出去（#30 实测，与发布令牌
+  //   门禁同一类环境耦合）。缓存隔离后 pack 只读包目录，判据不变。
+  const hermeticNpmCache = mkdtempSync(join(os.tmpdir(), "dsh-release-contract-npm-"));
+  const result = spawnSync("npm", ["pack", "--dry-run"], { cwd: resolve(ROOT, "package"), encoding: "utf8", shell: true, env: Object.assign({}, process.env, { npm_config_cache: hermeticNpmCache }) });
   packOut = (result.stdout || "") + (result.stderr || "");
   // 解析 Tarball Contents 段
   const lines = packOut.split("\n");
