@@ -749,8 +749,32 @@ async function main(): Promise<void> {
   const lSignArgv = after(writeSpawns()[lSignSpawns0] || [])
   check(lSign.ok === true && lSign.sign === false && lSign.signoff === true && lSignArgv.join(' ') === 'commit -s -m 追加签名行', 'L14 2.6 追加签名行只写尾部行（argv 是 -s），与签名提交（-S）是两个独立开关')
   // 失败分类与信封：签名失败归到 signing-failed（不落 unknown-write-failure），信封固定四键。
+  // 原先这条靠「本机没配签名」这个环境巧合：git commit -S 自然失败。在配了签名的机器上这把会成功，
+  //   失败信封判据就空转（#30 实测）。这里把带 -S 的那把提交拦下来、用剥掉签名材料的环境真跑 git
+  //   （全局与系统配置指到空文件、GNUPGHOME 指向空目录、拿掉 ssh agent）——两个平台上这把提交都真
+  //   失败，stderr 仍是 git 自己的形状，分类逻辑走的还是真件。
   const rL7 = mkRepo('i7')
-  const vcL7 = makeVc()
+  const signLab = fs.mkdtempSync(path.join(os.tmpdir(), 'dsws841-sign-'))
+  const emptyCfg = path.join(signLab, 'empty-gitconfig')
+  fs.writeFileSync(emptyCfg, '', 'utf8')
+  const emptyGpg = path.join(signLab, 'empty-gnupghome')
+  fs.mkdirSync(emptyGpg, { recursive: true })
+  const vcL7 = makeVc(function (argv: string[], req: any) {
+    const ci = argv.indexOf('commit')
+    if (ci < 0 || argv.indexOf('-S', ci) < 0) return null
+    const neutered: Record<string, string> = {}
+    const mergedEnv: Record<string, unknown> = Object.assign({}, process.env, req.env || {})
+    Object.keys(mergedEnv).forEach((k) => {
+      if (mergedEnv[k] === undefined) return
+      if (k === 'SSH_AUTH_SOCK' || k === 'SSH_AGENT_PID') return
+      neutered[k] = String(mergedEnv[k])
+    })
+    neutered.GIT_CONFIG_GLOBAL = emptyCfg
+    neutered.GIT_CONFIG_SYSTEM = emptyCfg
+    neutered.GNUPGHOME = emptyGpg
+    const rr = spawnSync(argv[0], argv.slice(1), { cwd: req.cwd, env: neutered, encoding: 'utf8', windowsHide: true, maxBuffer: 1 << 26 })
+    return { code: rr.status, stdout: String(rr.stdout || ''), stderr: String(rr.stderr || '') }
+  })
   const lFailPlan = { mode: 'staged', target: '', skipHooks: false, sign: true, signoff: false }
   const lFailCheck = await vcL7.handleGitWriteCheck({ cwd: rL7, op: 'commit', message: '签名提交', plan: lFailPlan })
   const lFail = await vcL7.handleGitCommit({ cwd: rL7, ticketId: lFailCheck.ok ? lFailCheck.ticket.id : 'x', requestId: 'i-r7', message: '签名提交', plan: lFailPlan })
@@ -932,7 +956,9 @@ async function main(): Promise<void> {
   const kArgv = after(configWrites()[kWriteSpawns0] || [])
   check(kWrite.ok === true && kWrite.oldValue === 'x' && kWrite.newValue === '新名字', 'Q4 12.2 执行成功并回旧值与新值（界面显示的是真的改前改后）')
   // cwd 比大小写与斜杠方向：本机 git 会把 D:\Temp 规范成 D:/temp，两边必须用同一份写法（照 #1752 造工作树那条注释的口径）。
-  const kFlat = (p: any): string => String(p || '').toLowerCase().replace(/\\/g, '/')
+  //   另外 macOS 的临时目录 /var/… 是 /private/var/… 的符号链接，写口起进程前会把 cwd 解析成真实路径，
+  //   比之前两边都先过一遍 realpath（Windows 上原样返回，判据不变；#30）。
+  const kFlat = (p: any): string => { const raw = String(p || '').toLowerCase().replace(/\\/g, '/'); try { return fs.realpathSync(raw).toLowerCase() } catch (e) { return raw } }
   const kWriteCwds = requests.filter((q) => after(q.argv)[0] === 'config' && after(q.argv)[1] === '--local').map((q) => q.cwd)
   check(kArgv.join(' ') === 'config --local user.name 新名字' && kWriteCwds.length > 0 && kWriteCwds.every((cfgC) => kFlat(cfgC) === kFlat(cfgRK)), 'Q5 12.2 的 argv 是「config --local user.name <新值>」且 cwd 钉在票据那个仓库（--local 是默认作用域）')
   check(git(cfgRK, ['config', '--local', 'user.name']).out.trim() === '新名字', 'Q6 12.2 真的落到仓库配置里（用真 git 读回来是新值）')
