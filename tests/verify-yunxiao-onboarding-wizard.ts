@@ -363,21 +363,32 @@ async function main(): Promise<void> {
         organizationId: [{ value: 'org-1', label: { zh: '组织一', en: 'Org 1' } }],
         projectId: [{ value: '8efcbccd3981cb23178fc66bd1', label: { zh: '唯一项目 (PLAN)', en: 'Only Project' } }],
         repositoryId: [{ value: '7001', label: { zh: 'org-1/only-repo (#7001)', en: 'org-1/only-repo (#7001)' } }],
+        namespaceId: [
+          { value: '9001', label: { zh: 'org-1/apps', en: 'org-1/apps' } },
+          { value: '', label: { zh: 'org-1 [组织根路径兜底]', en: 'org-1 [organization root]' } },
+        ],
       },
     }
     fieldsMod.modalFormFields(realStep1Schema, { m: singleSelectModal, isWizard: true, stepIndex: 1, vals: singleReuseVals, setVals: () => {}, h })
     fieldsMod.modalFormFields(realStep2Schema, { m: singleSelectModal, isWizard: true, stepIndex: 2, vals: singleBindVals, setVals: () => {}, h })
+    let rootNsVals: Record<string, any> = { repoMode: 'create', name: 'my-repo', namespaceId: '9001', visibility: 'private', remoteProtocol: 'auto' }
+    singleSelectModal.valuesByStep[2] = Object.assign({}, rootNsVals)
+    const nsTree1 = fieldsMod.modalFormFields(realStep2Schema, { m: singleSelectModal, isWizard: true, stepIndex: 2, vals: rootNsVals, setVals: (nxt: any) => { rootNsVals = nxt }, h })
+    const nsSelectNode = findNodes(nsTree1, (n) => n.tag === 'select' && String(n.props.id || '').includes('namespaceId'))[0]
+    if (nsSelectNode?.props?.onChange) nsSelectNode.props.onChange({ target: { value: '' } })
+    fieldsMod.modalFormFields(realStep2Schema, { m: singleSelectModal, isWizard: true, stepIndex: 2, vals: rootNsVals, setVals: (nxt: any) => { rootNsVals = nxt }, h })
     const reuseValid = wizMod.validateWizardFields(realStep1Schema, singleReuseVals)
     const bindValid = wizMod.validateWizardFields(realStep2Schema, singleBindVals)
     check(
       singleReuseVals.projectId === '8efcbccd3981cb23178fc66bd1' &&
         singleSelectModal.valuesByStep[1].projectId === '8efcbccd3981cb23178fc66bd1' &&
         singleBindVals.repositoryId === '7001' &&
-        singleSelectModal.valuesByStep[2].repositoryId === '7001' &&
         reuseValid.ok === true &&
-        bindValid.ok === true,
-      '1.8 切换到复用项目或绑定代码库时，下拉框首项默认显示值同步写入 vals 与 valuesByStep，单候选场景无需切换即可通过必填校验',
-      { singleReuseVals, singleBindVals, stored1: singleSelectModal.valuesByStep[1], stored2: singleSelectModal.valuesByStep[2], reuseValid, bindValid },
+        bindValid.ok === true &&
+        rootNsVals.namespaceId === '' &&
+        singleSelectModal.valuesByStep[2].namespaceId === '',
+      '1.8 下拉框首项默认值同步写入提交状态（单候选直过校验），且显式选中空串「组织根路径兜底」在重渲染后稳定保持',
+      { singleReuseVals, singleBindVals, rootNsVals, stored2: singleSelectModal.valuesByStep[2], reuseValid, bindValid },
     )
   }
 
@@ -598,6 +609,7 @@ async function main(): Promise<void> {
       const g = globalThis as Record<string, any>
       g.modalFormFields = fieldsMod.modalFormFields
       g.isWizardFieldVisible = wizMod.isWizardFieldVisible
+      g.pruneHiddenWizardValues = wizMod.pruneHiddenWizardValues
       g.hydrateWizardModal = wizMod.hydrateWizardModal
       g.runWizardStepNext = wizMod.runWizardStepNext
       g.renderWizardStepper = wizMod.renderWizardStepper
@@ -684,8 +696,10 @@ async function main(): Promise<void> {
           submittedMerged?.organizationId === 'org-2' &&
           submittedMerged?.projectMode === 'create' &&
           submittedMerged?.repoMode === 'none' &&
-          !submittedMerged?.projectId &&
-          !submittedMerged?.repositoryId,
+          !('projectId' in submittedMerged) &&
+          !('repositoryId' in submittedMerged) &&
+          !('remoteProtocol' in submittedMerged) &&
+          !('visibility' in submittedMerged),
         '2.9 组织切换水合期间禁用下一步/提交并阻断运行时提交，水合完成后清理旧组织残留 ID 且提交时不夹带隐藏字段',
         { blockedDuringHydrate, submitCalls, submittedMerged },
       )
@@ -1129,12 +1143,11 @@ async function main(): Promise<void> {
     const YAML_REL = 'docs/agents/yunxiao.yaml'
 
     const baseRoutes = (extra?: any[]) => ([
+      ...(extra || []),
       { match: (u: string) => u.endsWith('/oapi/v1/platform/user'), reply: () => ({ status: 200, body: { id: 'u-1', name: 'Bryan', username: 'bryan', lastOrganization: ORG } }) },
       { method: 'POST', match: (u: string) => u.includes('/projects:search'), reply: () => ({ status: 200, body: [] }) },
       { match: (u: string) => u.includes('/projectTemplates'), reply: () => ({ status: 200, body: [{ id: 'tpl-scrum', name: 'Scrum 敏捷' }] }) },
-      { method: 'POST', match: (u: string) => u.includes('/projects:search'), reply: () => ({ status: 200, body: [] }) },
       { match: (u: string) => u.includes('/projects/' + PROJ), reply: () => ({ status: 200, body: { id: PROJ, name: 'planning', customCode: 'PLAN', logicalStatus: 'NORMAL' } }) },
-      ...(extra || []),
     ])
 
     /** 组装一次 initProject 调用所需的注入上下文与留痕容器。 */
@@ -1370,10 +1383,12 @@ async function main(): Promise<void> {
       const fsPort = makePortFs({})
       const envPort = makePortEnv({ YUNXIAO_TOKEN: 'pt-valid-token-123456' })
       const fetchPort = makePortFetch(baseRoutes([
+        { method: 'POST', match: (u: string) => u.endsWith('/projects'), reply: () => ({ status: 200, body: { id: PROJ, name: 'retry-real', customCode: 'PLAN' } }) },
         { method: 'POST', match: (u: string) => /\/repositories(\?|$)/.test(u), reply: () => ({ status: 200, body: { id: 8899009, pathWithNamespace: ORG + '/apps/retry-real' } }) },
         { match: (u: string) => u.includes('/repositories/8899009'), reply: () => ({ status: 200, body: { id: 8899009, pathWithNamespace: ORG + '/apps/retry-real', webUrl: 'https://codeup.aliyun.com/' + ORG + '/apps/retry-real', httpUrlToRepo: 'https://codeup.aliyun.com/' + ORG + '/apps/retry-real.git' } }) },
       ]))
       let pushAttempt = 0
+      const halfSavedOrgs: string[] = []
       const flow = publishMod.createPublishFlow({
         DEFAULT_CWD: '/ws/retry-real',
         resolveGit: async () => '/usr/bin/git',
@@ -1392,6 +1407,7 @@ async function main(): Promise<void> {
         repoKeys: {}, repoRoots: {}, setCache: () => {},
         makeCreateErrorClassifier: () => (_t: unknown, k: unknown) => String(k || 'network'),
         KIND_UNKNOWN: 'unknown',
+        onProjectCreated: async (info: any) => { halfSavedOrgs.push(info.organizationId) },
         openSession: async (_cwd: unknown, opts?: any) => ({
           ok: true, backendId: 'yunxiao',
           call: async (fn: any) => fn({
@@ -1406,7 +1422,7 @@ async function main(): Promise<void> {
       })
       const half: any = await flow.handleContractOp({
         op: 'initProject', cwd: '/ws/retry-real', name: 'retry-real', visibility: 'private',
-        organizationId: ORG, projectMode: 'reuse', projectId: PROJ, repoMode: 'create', remoteProtocol: 'https',
+        organizationId: ORG, projectMode: 'create', projectName: 'retry-real', customCode: 'PLAN', repoMode: 'create', remoteProtocol: 'https',
       })
       const g = globalThis as Record<string, any>
       g.buildWizardSuccessState = wizMod.buildWizardSuccessState
@@ -1447,7 +1463,8 @@ async function main(): Promise<void> {
           retrySuccess.links.length === 2 &&
           retrySuccess.links.some((l: any) => String(l.url).includes('/projex/project/' + PROJ)) &&
           retrySuccess.links.some((l: any) => String(l.url).includes('/apps/retry-real')) &&
-          String(retrySuccess?.hint?.zh || '').includes('PLAN-'),
+          String(retrySuccess?.hint?.zh || '').includes('PLAN-') &&
+          halfSavedOrgs.includes(ORG),
         '6.9 真实 initProject 首次推送失败返回 halfCreated:true，经 retryPushFlow 重推成功后完整保留 Projex + Codeup 双深链与提交关联提示',
         { half, pushAttempt, retrySuccess },
       )
@@ -1479,13 +1496,23 @@ async function main(): Promise<void> {
       })
       const customCodes = createBodies.map((body) => String(body.customCode || ''))
       const prefWrite = created.fsPort.writes.find((w) => w.path === '/home/u/.config/yunxiao/preferences.json')
+      const implicitReuse = await runInit({
+        cwd: '/ws/implicit-reuse',
+        homeDir: '/home/u',
+        input: { name: 'alpha', repoMode: 'none', organizationId: ORG },
+        routes: baseRoutes([
+          { method: 'POST', match: (u: string) => u.includes('/projects:search'), reply: () => ({ status: 200, body: [{ id: PROJ, name: 'alpha', customCode: 'ALPH', logicalStatus: 'NORMAL' }] }) },
+        ]),
+      })
+      const implicitPrefWrite = implicitReuse.fsPort.writes.find((w) => w.path === '/home/u/.config/yunxiao/preferences.json')
       check(
         created.res.ok === true && createBodies.length === 6 &&
           customCodes[0] === 'ALPHA' && customCodes[5] === 'ALPHAE' &&
           createBodies.every((body) => body.templateId === 'tpl-scrum') &&
           everyCreateUsedCurrentToken && created.res.data?.customCode === 'ALPHAE' &&
           String(created.fsPort.writes[0]?.text || '').includes('projectId: ' + newProjectId) &&
-          Boolean(prefWrite && prefWrite.text.includes(ORG)),
+          Boolean(prefWrite && prefWrite.text.includes(ORG)) &&
+          implicitReuse.res.ok === true && !implicitPrefWrite,
         '6.10 projectMode=create 优选 Scrum 模板，以当前令牌创建项目，在编号冲突后完成最多五次递增重试，并将所选 organizationId 记入 ~/.config/yunxiao/preferences.json',
         { ok: created.res.ok, attempts: createBodies.length, customCodes, everyCreateUsedCurrentToken, error: created.res.error },
       )

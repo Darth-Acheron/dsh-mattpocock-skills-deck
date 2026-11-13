@@ -182,10 +182,11 @@ export const modalFormFields = function (curSchema: any, ctx: any): any {
           h('span', { style: { fontSize: 10, color: 'var(--dsw-alias-label-caption,#8b8b95)' } }, '唯一可用项'),
         ])
       } else {
-        const rawCur: string = vals[f.name] !== undefined && vals[f.name] !== null ? String(vals[f.name]) : ''
-        const hasMatch: boolean = Boolean(rawCur && normOpts.some(function (o: { value: string; label: string }): boolean { return o.value === rawCur }))
+        const hasExplicit: boolean = vals[f.name] !== undefined && vals[f.name] !== null
+        const rawCur: string = hasExplicit ? String(vals[f.name]) : ''
+        const hasMatch: boolean = hasExplicit && normOpts.some(function (o: { value: string; label: string }): boolean { return o.value === rawCur })
         const curVal: string = hasMatch ? rawCur : (normOpts[0] ? normOpts[0].value : '')
-        if (String(vals[f.name] || '') !== curVal) {
+        if (!hasExplicit || String(vals[f.name]) !== curVal) {
           vals[f.name] = curVal
           if (isWizard && m && m.valuesByStep && m.valuesByStep[stepIndex]) {
             m.valuesByStep[stepIndex][f.name] = curVal

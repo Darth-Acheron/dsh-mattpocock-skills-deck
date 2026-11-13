@@ -25,12 +25,14 @@ import { emitReadDegraded } from '../support/read-log.js'
 /** 置备前从本地文件、环境变量与内存上下文收集到的存量坐标摘要（允许缺省，未配置时由向导或平台用户接口补齐）。 */
 export interface PartialInitCoords {
   organizationId: string; projectId: string; customCode: string; namespaceId?: number
-  templateId?: string; apiBaseUrl: string; webBaseUrl: string; hadValidFileCoords: boolean
+  templateId?: string; apiBaseUrl: string; webBaseUrl: string
 }
 
 /** 带有云效半成功重推与双深链上下文的扩展错误形状。 */
 export type YunxiaoInitTrackerError = TrackerError & {
   retryablePush?: boolean
+  projectCreated?: boolean
+  organizationId?: string
   repoUrl?: string
   projectUrl?: string
   customCode?: string
@@ -72,7 +74,7 @@ export async function readPartialInitCoords(
       value: {
         organizationId: v.organizationId, projectId: v.projectId, customCode: v.customCode || '',
         ...(v.namespaceId ? { namespaceId: v.namespaceId } : {}), ...(v.templateId ? { templateId: v.templateId } : {}),
-        apiBaseUrl: v.apiBaseUrl, webBaseUrl: v.webBaseUrl, hadValidFileCoords: true,
+        apiBaseUrl: v.apiBaseUrl, webBaseUrl: v.webBaseUrl,
       },
     }
   }
@@ -91,7 +93,6 @@ export async function readPartialInitCoords(
       ...(readEnv('YUNXIAO_TEMPLATE_ID') ? { templateId: readEnv('YUNXIAO_TEMPLATE_ID') } : {}),
       apiBaseUrl: readEnv('YUNXIAO_API_BASE_URL') || learned?.apiBaseUrl || DEFAULT_YUNXIAO_API_BASE_URL,
       webBaseUrl: readEnv('YUNXIAO_WEB_BASE_URL') || learned?.webBaseUrl || DEFAULT_YUNXIAO_WEB_BASE_URL,
-      hadValidFileCoords: false,
     },
   }
 }
@@ -142,7 +143,7 @@ export function buildYunxiaoLinksAndHint(params: {
 /** 在首次推送失败的错误对象上附加 retryablePush:true 与完整双深链/提示元数据，供一键重试推送成功后原样恢复成功弹窗。 */
 export function attachYunxiaoPushRetryMeta<T>(
   failResult: OpResult<T>,
-  meta: { webBaseUrl: string; organizationId: string; projectId: string; customCode: string; repoUrl: string },
+  meta: { webBaseUrl: string; organizationId: string; projectId: string; customCode: string; repoUrl: string; projectCreated?: boolean },
 ): OpResult<T> {
   if (!failResult.ok) {
     const builtLinks = buildYunxiaoLinksAndHint({
@@ -154,6 +155,7 @@ export function attachYunxiaoPushRetryMeta<T>(
     })
     const err = failResult.error as YunxiaoInitTrackerError
     err.retryablePush = true
+    if (meta.projectCreated) { err.projectCreated = true; err.organizationId = meta.organizationId }
     if (meta.repoUrl) err.repoUrl = meta.repoUrl
     err.projectUrl = builtLinks.projexUrl
     if (meta.customCode) err.customCode = meta.customCode

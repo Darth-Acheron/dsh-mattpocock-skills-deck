@@ -104,19 +104,21 @@ export function createActionDispatcher(ctx: any) {
           const msg = res.error ? (typeof res.error === 'string' ? res.error : (res.error.message || String(res.error))) : (res.message || 'RPC 业务失败：' + method)
           const err: any = new Error(String(msg).slice(0,600))
           err.code = kind; err.kind = kind; err.errorKind = kind
-          // #420/#426：保留 repoUrl/repo/halfCreated 上下文供上层展示（半成功链接、重试入口）——绝不静默
-          if (res.repoUrl) err.repoUrl = res.repoUrl
-          if (res.repo) err.repo = res.repo
-          if (res.halfCreated) err.halfCreated = true
+          const copyHalfMeta = (src: any, dst: any): void => {
+            if (!src || !dst) return
+            if (src.repoUrl) dst.repoUrl = src.repoUrl
+            if (src.repo) dst.repo = src.repo
+            if (src.halfCreated) dst.halfCreated = true
+            if (Array.isArray(src.links)) dst.links = src.links
+            if (src.hint) dst.hint = src.hint
+            if (src.projectUrl) dst.projectUrl = src.projectUrl
+            if (src.customCode) dst.customCode = src.customCode
+          }
+          // #420/#426：保留 repoUrl/repo/halfCreated 与双深链上下文供上层展示——绝不静默
+          copyHalfMeta(res, err)
           if (res.error && res.error.repoUrl) err.repoUrl = res.error.repoUrl
           const failure: any = { kind: kind, message: String(msg).slice(0,600) }
-          if (res.repoUrl) failure.repoUrl = res.repoUrl
-          if (res.repo) failure.repo = res.repo
-          if (res.halfCreated) failure.halfCreated = true
-          if (Array.isArray(res.links)) failure.links = res.links
-          if (res.hint) failure.hint = res.hint
-          if (res.projectUrl) failure.projectUrl = res.projectUrl
-          if (res.customCode) failure.customCode = res.customCode
+          copyHalfMeta(res, failure)
           return { ok: false, error: failure, action }
         }
         // #419/#425：成功结果透传给上层（向导成功弹窗需 repo:{owner,name} 拼真值链接）

@@ -134,7 +134,7 @@ export async function initProject(handle: RepoHandle, input: InitProjectInput, c
     const targetProjName = (input?.projectName ? String(input.projectName).trim() : '') || name
     const projProvisioned = await ensureOrProvisionProjexProject(reqCtx, organizationId, targetProjName, description, projexVisibility, explicitTplId, customCode, explicitProjMode === 'create')
     if (!projProvisioned.ok) return projProvisioned
-    projectId = projProvisioned.projectId; customCode = projProvisioned.customCode; provisionedNewProject = true
+    projectId = projProvisioned.projectId; customCode = projProvisioned.customCode; provisionedNewProject = projProvisioned.created
   }
   const refId = formatYunxiaoRefId(organizationId, projectId)
   const persistState = (builtIdentity: CodeupRepositoryIdentity | null) => persistYunxiaoWorkspaceState({
@@ -216,7 +216,7 @@ export async function initProject(handle: RepoHandle, input: InitProjectInput, c
           if (pushRes.code !== 0) {
             const codeupUrlFail = built.identity.webUrl || built.httpCloneUrl.replace(/\.git$/i, '').replace(/\/+$/, '')
             const existingPushFail = failYunxiao(pushRes, 'initProject: 已写入 docs/agents/yunxiao.yaml 并配置 origin，但 git push 失败，修复权限或网络后重推即可', pushRes, ctx)
-            return attachYunxiaoPushRetryMeta(existingPushFail, { webBaseUrl: partial.webBaseUrl, organizationId, projectId, customCode, repoUrl: codeupUrlFail })
+            return attachYunxiaoPushRetryMeta(existingPushFail, { webBaseUrl: partial.webBaseUrl, organizationId, projectId, customCode, repoUrl: codeupUrlFail, projectCreated: provisionedNewProject })
           }
         }
       }
@@ -257,7 +257,7 @@ export async function initProject(handle: RepoHandle, input: InitProjectInput, c
     if (pushRes.code !== 0) {
       const codeupUrlFail = built.identity.webUrl || built.httpCloneUrl.replace(/\.git$/i, '').replace(/\/+$/, '')
       const failOut = failYunxiao(pushRes, 'initProject: 远端代码库已创建且已写入 docs/agents/yunxiao.yaml，但 git push 失败，可一键重试推送', pushRes, ctx)
-      return attachYunxiaoPushRetryMeta(failOut, { webBaseUrl: partial.webBaseUrl, organizationId, projectId, customCode, repoUrl: codeupUrlFail })
+      return attachYunxiaoPushRetryMeta(failOut, { webBaseUrl: partial.webBaseUrl, organizationId, projectId, customCode, repoUrl: codeupUrlFail, projectCreated: provisionedNewProject })
     }
   }
 

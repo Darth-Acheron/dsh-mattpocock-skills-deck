@@ -185,10 +185,10 @@ export function createPublishFlow(deps: Deps) {
   // 半成功契约（#420/#426）要保住：远端仓库建起来了、只是推送没完成时，前端要拿到 repoUrl 才能给「重试推送」。
   //   房间在 already-exists 那一档会自己带 repoUrl；推失败那一档它只有 git 的失败原文（不带 URL）——
   //   可那时 set-url 已经把新远端写进了本地仓库，回读一次 origin 就能把这格补回来。
-  async function publishFailure(r: unknown, name: string, cwd: string, git: string, repoMode?: string) {
+  async function publishFailure(r: unknown, name: string, cwd: string, git: string, repoMode?: string, backendId?: string) {
     const rr = r as {
       error?: {
-        kind?: unknown; message?: unknown; repoUrl?: unknown; retryablePush?: unknown
+        kind?: unknown; message?: unknown; repoUrl?: unknown; retryablePush?: unknown; projectCreated?: unknown; organizationId?: unknown
         projectUrl?: unknown; customCode?: unknown; extraUrls?: unknown; hint?: unknown
       }
     } | null | undefined
@@ -205,6 +205,10 @@ export function createPublishFlow(deps: Deps) {
       } catch (e2) { /* 读不到远端就按「没有半成功」处理，不编造 URL */ }
     }
     const owner = repoUrl ? (repoUrl.split('/')[3] || '') : ''
+    const createdOrgId = typeof e.organizationId === 'string' && e.organizationId ? e.organizationId : owner
+    if (e.projectCreated === true && createdOrgId && typeof onProjectCreated === 'function') {
+      try { await onProjectCreated({ backendId: String(backendId || ''), organizationId: createdOrgId, cwd }) } catch {}
+    }
     // 半成功仅用于「远端仓库已创建、坐标已落盘且首次推送未完成」；bind/none 模式或坐标未落盘一律标为 false。
     const halfCreated = typeof e.retryablePush === 'boolean'
       ? (e.retryablePush && !nonPushMode && !!repoUrl)
@@ -308,7 +312,8 @@ export function createPublishFlow(deps: Deps) {
       const msg = String((eb && eb.message) || e).slice(0, 200)
       return { ok: false, errorKind: 'env', error: '写会话调用失败：' + msg }
     }
-    if (!r || !(r as { ok?: boolean }).ok) return publishFailure(r, name, cwd, git || 'git', repoMode)
+    const openedBackendId = String((opened as { backendId?: unknown }).backendId || '')
+    if (!r || !(r as { ok?: boolean }).ok) return publishFailure(r, name, cwd, git || 'git', repoMode, openedBackendId)
     // 成功：仓库身份取会话回包的 repoRef（房间按 getRepoKey → currentUser 的顺序定 owner），
     //   不再由宿主用 getRepoKey 重解析、也不再兜一次 gh api user —— 那两步是旧实现自己的解析链，房间已经做过。
     const ref = ((r as { data?: { refId?: unknown; name?: unknown; url?: unknown; projectUrl?: unknown; repoUrl?: unknown; customCode?: unknown; extraUrls?: unknown; hint?: unknown; projectCreated?: unknown } }).data) || {}
