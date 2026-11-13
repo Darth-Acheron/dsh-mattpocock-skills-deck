@@ -141,6 +141,10 @@ async function main(): Promise<void> {
   git(repoA, ['add', '-A'])
   git(repoA, ['commit', '-q', '-m', '属性规则'])
   fs.writeFileSync(path.join(repoA, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\necho hook-ran\nexit 0\n')
+// 钩子文件要带执行位：writeFileSync 不带权限，POSIX 上 git 会把不可执行的钩子当不存在（hint: ignored
+//   because it's not set as executable），「真的跑起了钩子」那组断言全部空转（#30 实测）；Windows 上
+//   chmodSync 不改判据。
+fs.chmodSync(path.join(repoA, '.git', 'hooks', 'pre-commit'), 0o755)
   fs.writeFileSync(path.join(repoA, '.git', 'hooks', 'pre-commit.sample'), '#!/bin/sh\nexit 0\n')
   const vcA = makeVc()
   const rd = await vcA.handleGitConfigRead({ cwd: repoA, path: 'a.txt', address: 'base@example.com' })
@@ -222,10 +226,12 @@ async function main(): Promise<void> {
   check(wrH.kind === 'done' && wrH.exitCode === 0 && wrH.truncated === false, 'E2 钩子正常退出：done、退出码 0、没截断')
   check(typeof wrH.command === 'string' && wrH.command.indexOf('hook run') >= 0, 'E3 结果里带 git 子命令名（界面照实显示跑了什么）')
   fs.writeFileSync(path.join(repoA, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\necho hook-failed\nexit 7\n')
+  fs.chmodSync(path.join(repoA, '.git', 'hooks', 'pre-commit'), 0o755)
   const ckFail = await vcA.handleGitConfigCheck({ cwd: repoA, op: 'hook-run', name: 'pre-commit' })
   const wrFail = await vcA.handleGitConfigWrite({ cwd: repoA, op: 'hook-run', ticketId: ckFail.ticket.id, requestId: 'e4', confirmed: true })
   check(wrFail.ok === true && wrFail.hookFailed === true && wrFail.exitCode === 7 && String(wrFail.output).indexOf('hook-failed') >= 0, 'E4 钩子自己退出码非零不算电话失败：照回 hookFailed 与退出码（界面不假装跑完）')
   fs.writeFileSync(path.join(repoA, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\necho hook-once\nexit 0\n')
+  fs.chmodSync(path.join(repoA, '.git', 'hooks', 'pre-commit'), 0o755)
   const ckOnce = await vcA.handleGitConfigCheck({ cwd: repoA, op: 'hook-run', name: 'pre-commit' })
   const beforeReplay = spawnLog.filter(function (s: string): boolean { return s.indexOf(' hook run ') >= 0 }).length
   const wrOnce = await vcA.handleGitConfigWrite({ cwd: repoA, op: 'hook-run', ticketId: ckOnce.ticket.id, requestId: 'e-once', confirmed: true })
