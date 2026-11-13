@@ -109,6 +109,28 @@ export interface InitProjectInput {
   name: string
   /** 可见性；省略按私有处理（实现里的默认值就是私有）。 */
   visibility?: 'public' | 'private'
+  /** 云效向导显式指定的组织 ID（可选；其他后端忽略）。 */
+  organizationId?: string
+  /** 云效向导 Projex 项目模式：复用已有项目或新建同名项目（可选）。 */
+  projectMode?: 'reuse' | 'existing' | 'create'
+  /** 云效向导显式选择的 Projex 项目 ID（可选）。 */
+  projectId?: string
+  /** 云效向导新建 Projex 项目名称（可选）。 */
+  projectName?: string
+  /** 云效向导新建 Projex 项目的 4~6 位代号（可选）。 */
+  customCode?: string
+  /** 云效向导显式选择的 Projex 项目模板 ID（可选）。 */
+  templateId?: string
+  /** 云效向导 Codeup 代码库模式：新建代码库、关联已有仓库或纯规划工作区（可选）。 */
+  repoMode?: 'create' | 'bind' | 'none' | 'bind-origin' | 'existing'
+  /** 云效向导显式选择的 Codeup 代码库 ID 或路径（可选）。 */
+  repositoryId?: string
+  /** 云效向导新建代码库所属的父代码组/命名空间 ID（可选）。 */
+  namespaceId?: number | string
+  /** 云效向导配置远端 origin 时采用的克隆协议（可选）。 */
+  remoteProtocol?: 'auto' | 'https' | 'ssh'
+  /** 仓库或项目描述（可选）。 */
+  description?: string
 }
 
 /** 关票的选项。 */

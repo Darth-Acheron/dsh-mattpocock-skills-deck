@@ -1441,6 +1441,15 @@
       "count": 1,
       "owner": "#1903（历史页四条能力）",
       "note": "装配扇入：备注的预检与执行共用一个业务叶子（票表与 requestId 结果表都在它自己的闭包里），外壳只在第一次拨电话时动态载入它，载入失败回明确失败信封；叶子不引用外壳。"
+    },
+    {
+      "file": "src/host/index.ts",
+      "spec": "./yunxiaoOnboarding.js",
+      "resolved": "src/host/yunxiaoOnboarding.ts",
+      "layer": "host",
+      "count": 1,
+      "owner": "#23（规格 #21 云效向导第 1 步令牌验真与资源发现）",
+      "note": "装配扇入：宿主入口动态加载云效向导宿主叶子 yunxiaoOnboarding.ts 并注册 wf.yunxiaoSaveToken 与 wf.yunxiaoDiscover 两条电话；叶子只经唯一装配点 builtins.ts 调用房间探针，不反向引用宿主入口。"
     }
   ]
 }

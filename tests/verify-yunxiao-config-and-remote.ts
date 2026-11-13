@@ -2,6 +2,7 @@
 /**
  * tests/verify-yunxiao-config-and-remote.ts —— Yunxiao backend 配置、脱敏、远端识别、票号标记与传输底座门禁（规格 #01）。
  *
+ * 门禁归属: src/tracker/rooms/yunxiao/model/yaml-flat.ts
  * 门禁归属: src/tracker/rooms/yunxiao/model/workspace-config.ts
  * 门禁归属: src/tracker/rooms/yunxiao/model/repo-identity.ts
  * 门禁归属: src/tracker/rooms/yunxiao/model/description-markers.ts
@@ -149,6 +150,46 @@ async function main(): Promise<void> {
     ioErrResolved.ok === false && ioErrResolved.reason === 'io-error',
     '1.4b resolveYunxiaoCoordinates 在非 ENOENT 读取异常（如 EACCES）时返回 io-error 而不静默吞掉',
     ioErrResolved,
+  )
+
+  // 1.4c 认证前的轻量连接配置：只取 apiBaseUrl/webBaseUrl，缺坐标不报错，但语法错误与内联凭证仍立即拒绝。
+  const resolveBaseUrls = cfgMod.resolveYunxiaoBaseUrls
+  const lightFs = (text: string) => ({
+    resolve: async (p: string) => '/ws-yunxiao-light/' + p,
+    readText: async () => text,
+    writeText: async () => {},
+  })
+  const lightNoCoords = typeof resolveBaseUrls === 'function'
+    ? await resolveBaseUrls({
+        cwd: '/ws-yunxiao-light',
+        fs: lightFs('version: 1\norganizationId: not-a-coordinate\napiBaseUrl: https://file-api.example.test/\nwebBaseUrl: https://file-web.example.test/'),
+        env: {
+          get: (k: string) => k === 'YUNXIAO_API_BASE_URL' ? 'https://env-api.example.test/' : undefined,
+          has: () => false,
+        },
+      })
+    : { ok: false, reason: 'missing-export' }
+  check(
+    lightNoCoords.ok === true &&
+      lightNoCoords.value.apiBaseUrl === 'https://env-api.example.test' &&
+      lightNoCoords.value.webBaseUrl === 'https://file-web.example.test',
+    '1.4c 轻量配置读取在坐标缺失或非法时仍返回自定义 apiBaseUrl/webBaseUrl，并遵守环境变量覆盖',
+    lightNoCoords,
+  )
+  const lightRejected: Array<{ expected: string; result: any }> = []
+  for (const [expected, text] of [
+    ['yaml-error', 'version: 1\napiBaseUrl: "https://unterminated.example.test'],
+    ['inline-secret', 'version: 1\ntoken: pt-not-allowed-in-workspace'],
+  ] as const) {
+    const result = typeof resolveBaseUrls === 'function'
+      ? await resolveBaseUrls({ cwd: '/ws-yunxiao-light', fs: lightFs(text), env: { get: () => undefined, has: () => false } })
+      : { ok: false, reason: 'missing-export' }
+    lightRejected.push({ expected, result })
+  }
+  check(
+    lightRejected.every((item) => item.result.ok === false && item.result.reason === item.expected),
+    '1.4d 轻量配置读取仍在认证网络请求前拦截 YAML 语法错误与 token/pat 等内联凭证键',
+    lightRejected,
   )
 
   // 1.5 三层只读凭证加载通道（取首行非空文本，不拼后续注释行）

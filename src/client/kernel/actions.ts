@@ -104,15 +104,21 @@ export function createActionDispatcher(ctx: any) {
           const msg = res.error ? (typeof res.error === 'string' ? res.error : (res.error.message || String(res.error))) : (res.message || 'RPC 业务失败：' + method)
           const err: any = new Error(String(msg).slice(0,600))
           err.code = kind; err.kind = kind; err.errorKind = kind
-          // #420/#426：保留 repoUrl/repo/halfCreated 上下文供上层展示（半成功链接、重试入口）——绝不静默
-          if (res.repoUrl) err.repoUrl = res.repoUrl
-          if (res.repo) err.repo = res.repo
-          if (res.halfCreated) err.halfCreated = true
+          const copyHalfMeta = (src: any, dst: any): void => {
+            if (!src || !dst) return
+            if (src.repoUrl) dst.repoUrl = src.repoUrl
+            if (src.repo) dst.repo = src.repo
+            if (src.halfCreated) dst.halfCreated = true
+            if (Array.isArray(src.links)) dst.links = src.links
+            if (src.hint) dst.hint = src.hint
+            if (src.projectUrl) dst.projectUrl = src.projectUrl
+            if (src.customCode) dst.customCode = src.customCode
+          }
+          // #420/#426：保留 repoUrl/repo/halfCreated 与双深链上下文供上层展示——绝不静默
+          copyHalfMeta(res, err)
           if (res.error && res.error.repoUrl) err.repoUrl = res.error.repoUrl
           const failure: any = { kind: kind, message: String(msg).slice(0,600) }
-          if (res.repoUrl) failure.repoUrl = res.repoUrl
-          if (res.repo) failure.repo = res.repo
-          if (res.halfCreated) failure.halfCreated = true
+          copyHalfMeta(res, failure)
           return { ok: false, error: failure, action }
         }
         // #419/#425：成功结果透传给上层（向导成功弹窗需 repo:{owner,name} 拼真值链接）
@@ -139,6 +145,10 @@ export function createActionDispatcher(ctx: any) {
           if (res.repoUrl) failure.repoUrl = res.repoUrl
           if (res.repo) failure.repo = res.repo
           if (res.halfCreated) failure.halfCreated = true
+          if (Array.isArray(res.links)) failure.links = res.links
+          if (res.hint) failure.hint = res.hint
+          if (res.projectUrl) failure.projectUrl = res.projectUrl
+          if (res.customCode) failure.customCode = res.customCode
           return { ok: false, error: failure, action }
         }
         return { ok: true, action, data: (res && typeof res === 'object' && res.ok === true) ? res : undefined }
@@ -175,7 +185,7 @@ export function createActionDispatcher(ctx: any) {
           }
           const res = await dispatch(merged)
           // 显式透传失败（防静默吞，保留 kind 供上层回跳）
-          if (!res.ok) { const err: any = new Error(res.error.message); err.code = res.error.kind; err.kind = res.error.kind; err.errorKind = res.error.kind; if (res.error.repoUrl) err.repoUrl = res.error.repoUrl; if (res.error.repo) err.repo = res.error.repo; if (res.error.halfCreated) err.halfCreated = true; throw err }
+          if (!res.ok) { const err: any = new Error(res.error.message); err.code = res.error.kind; err.kind = res.error.kind; err.errorKind = res.error.kind; if (res.error.repoUrl) err.repoUrl = res.error.repoUrl; if (res.error.repo) err.repo = res.error.repo; if (res.error.halfCreated) err.halfCreated = true; if (Array.isArray(res.error.links)) err.links = res.error.links; if (res.error.hint) err.hint = res.error.hint; if (res.error.projectUrl) err.projectUrl = res.error.projectUrl; if (res.error.customCode) err.customCode = res.error.customCode; throw err }
           // #419/#425：成功返回透传（含 data:{ok,repo}），弹窗层据此展示成功弹窗与真值链接
           return res
         })
@@ -197,8 +207,8 @@ export function createActionDispatcher(ctx: any) {
         if (typeof ctx.renderForm !== 'function') {
           return { ok: false, error: { kind: 'unsupported', message: 'renderForm not available' }, action }
         }
-        // 单步 wizard 当单页表单：与 form 同形态，仅改用 steps 载荷；提交时合并全步值后走 submitAction（label 透传，空时由 slotRenderer 回落为“向导”，保持 locale 封顶）
-        const wizardPayload = { type: 'wizard', steps: steps, label: action.label, submitAction: action.submitAction }
+        // 单步 wizard 当单页表单：与 form 同形态，仅改用 steps 载荷；提交时合并全步值后走 submitAction（label / initialStepIndex / hydrateRpc 透传，空时由 slotRenderer 回落为“向导”，保持 locale 封顶）
+        const wizardPayload = { type: 'wizard', steps: steps, label: action.label, initialStepIndex: action.initialStepIndex, hydrateRpc: action.hydrateRpc, submitAction: action.submitAction }
         await ctx.renderForm(wizardPayload, async (values: any) => {
           const merged = Object.assign({}, action.submitAction)
           if (values && typeof values === 'object') {
@@ -216,7 +226,7 @@ export function createActionDispatcher(ctx: any) {
             }
           }
           const res = await dispatch(merged)
-          if (!res.ok) { const err: any = new Error(res.error.message); err.code = res.error.kind; err.kind = res.error.kind; err.errorKind = res.error.kind; if (res.error.repoUrl) err.repoUrl = res.error.repoUrl; if (res.error.repo) err.repo = res.error.repo; if (res.error.halfCreated) err.halfCreated = true; throw err }
+          if (!res.ok) { const err: any = new Error(res.error.message); err.code = res.error.kind; err.kind = res.error.kind; err.errorKind = res.error.kind; if (res.error.repoUrl) err.repoUrl = res.error.repoUrl; if (res.error.repo) err.repo = res.error.repo; if (res.error.halfCreated) err.halfCreated = true; if (Array.isArray(res.error.links)) err.links = res.error.links; if (res.error.hint) err.hint = res.error.hint; if (res.error.projectUrl) err.projectUrl = res.error.projectUrl; if (res.error.customCode) err.customCode = res.error.customCode; throw err }
           // #419/#425：成功返回透传（含 data:{ok,repo}），弹窗层据此展示成功弹窗与真值链接
           return res
         })

@@ -288,7 +288,7 @@ const listedPhones = new Set()
 for (const f of FAMILIES) { if (f.check) listedPhones.add(f.check); for (const p of f.exec) listedPhones.add(p) }
 for (const p of ['wf.gitWriteCheck', 'wf.gitStage', 'wf.gitUnstage', 'wf.gitCommit', 'wf.gitPull', 'wf.gitFetch', 'wf.gitPush']) listedPhones.add(p)
 check(hostPhones >= listedPhones.size, '宿主注册的 wf.git* 电话从源码数出 ' + hostPhones + ' 条，覆盖本门禁登记的 ' + listedPhones.size + ' 条')
-check(read('tests/verify-settings-phones.ts').indexOf('nPhones === 125') >= 0, 'E9 宿主电话总数仍由 tests/verify-settings-phones.ts 钉在 125 条（#1776 M4b 的远端预检电话算进去了；#1806 的四条工作区电话 2026-11-03 已撤；#1903、#1890、#1923、#1922 各添的几条都算进去了，几处一起改）')
+check(read('tests/verify-settings-phones.ts').indexOf('nPhones === 127') >= 0, 'E9 宿主电话总数仍由 tests/verify-settings-phones.ts 钉在 127 条（#1776 M4b 的远端预检电话算进去了；#1806 的四条工作区电话 2026-11-03 已撤；#1903、#1890、#1923、#1922、#23 各添的几条都算进去了，几处一起改）')
 
 console.log('')
 console.log('反证：各改一份副本的一处，同一判据必须只报出那一处缺')

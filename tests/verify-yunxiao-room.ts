@@ -360,16 +360,54 @@ async function main(): Promise<void> {
     )
   }
 
-  console.log('\n== Slice 3：四步递进式 Preflight（本地坐标 -> 平台认证 -> Projex 项目 -> 按需 Codeup 仓库） ==')
+  console.log('\n== Slice 3：认证先行的四步 Preflight（平台认证 -> 本地坐标 -> Projex 项目 -> 按需 Codeup 仓库） ==')
   {
-    // 3.1 第 1 步失败：缺少或写错本地坐标（不发任何 HTTP 请求，直接返回 env）
+    // 3.1 本机令牌有效但没有工作区坐标：先调平台用户探针，再在第 2 关返回 env；自定义接入点必须在无坐标时也生效。
     let fetchCalls = 0
+    let firstRequestUrl = ''
     const rStep1 = await roomMod.yunxiaoBackend.create({} as any).preflight(
       { cwd: '/ws-pf-1' },
       {
         cwd: '/ws-pf-1',
-        fetch: async () => {
+        fetch: async (input: string | URL) => {
           fetchCalls += 1
+          firstRequestUrl = String(input)
+          return new Response(
+            JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao', lastOrganization: ORG_ID }),
+            { status: 200 },
+          )
+        },
+        platform: {
+          fs: makeFakeFs({
+            'docs/agents/yunxiao.yaml': 'version: 1\napiBaseUrl: https://yunxiao.example.test/\nwebBaseUrl: https://devops.example.test/',
+          }),
+          env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+        },
+      } as any,
+    )
+    const learnedStep1 = repoIdModelMod.getLearnedYunxiaoContext('/ws-pf-1')
+    check(
+      rStep1.ok === false &&
+        rStep1.error?.kind === 'env' &&
+        rStep1.stage === 'gh' &&
+        fetchCalls === 1 &&
+        firstRequestUrl === 'https://yunxiao.example.test/oapi/v1/platform/user' &&
+        learnedStep1?.currentUser?.id === '6a86ddf4dfcb465c20f193e2' &&
+        learnedStep1?.currentUser?.name === 'BryanShao' &&
+        learnedStep1?.currentUser?.lastOrganization === ORG_ID &&
+        Object.prototype.hasOwnProperty.call(learnedStep1 || {}, 'token') === false,
+      '3.1 令牌有效但组织与项目坐标缺失：用户探针仅一次，返回 gh/env，并立即缓存不含令牌的当前用户',
+      { rStep1, fetchCalls, firstRequestUrl, learnedStep1 },
+    )
+
+    // 3.2 认证必须先于坐标：即使没有任何本地坐标，缺令牌与 401 也都返回 auth；缺令牌不得发网络请求。
+    let noTokenFetchCalls = 0
+    const rStep2NoToken = await roomMod.yunxiaoBackend.create({} as any).preflight(
+      { cwd: '/ws-pf-2a' },
+      {
+        cwd: '/ws-pf-2a',
+        fetch: async () => {
+          noTokenFetchCalls += 1
           return new Response('{}', { status: 200 })
         },
         platform: {
@@ -378,33 +416,19 @@ async function main(): Promise<void> {
         },
       } as any,
     )
-    check(
-      rStep1.ok === false && rStep1.error?.kind === 'env' && fetchCalls === 0,
-      '3.1 Preflight 第 1 步：本地组织与项目坐标缺失时直接返回 env 档且零网络请求',
-      rStep1,
-    )
-
-    // 3.2 第 2 步失败：缺少令牌或 GET /oapi/v1/platform/user 返回 401 InvalidToken -> auth
-    const rStep2NoToken = await roomMod.yunxiaoBackend.create({} as any).preflight(
-      { cwd: '/ws-pf-2a' },
-      {
-        cwd: '/ws-pf-2a',
-        platform: {
-          fs: makeFakeFs({ 'docs/agents/yunxiao.yaml': VALID_YUNXIAO_YAML }),
-          env: makeFakeEnv({}),
-        },
-      } as any,
-    )
+    let invalidTokenFetchCalls = 0
     const rStep2InvalidToken = await roomMod.yunxiaoBackend.create({} as any).preflight(
       { cwd: '/ws-pf-2b' },
       {
         cwd: '/ws-pf-2b',
-        fetch: async () =>
-          new Response(JSON.stringify({ errorCode: 'InvalidToken', errorMessage: 'Invalid token.' }), {
+        fetch: async () => {
+          invalidTokenFetchCalls += 1
+          return new Response(JSON.stringify({ errorCode: 'InvalidToken', errorMessage: 'Invalid token.' }), {
             status: 401,
-          }),
+          })
+        },
         platform: {
-          fs: makeFakeFs({ 'docs/agents/yunxiao.yaml': VALID_YUNXIAO_YAML }),
+          fs: makeFakeFs({}),
           env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-expiredtoken123456' }),
         },
       } as any,
@@ -412,10 +436,91 @@ async function main(): Promise<void> {
     check(
       rStep2NoToken.ok === false &&
         rStep2NoToken.error?.kind === 'auth' &&
+        rStep2NoToken.stage === 'auth' &&
+        noTokenFetchCalls === 0 &&
         rStep2InvalidToken.ok === false &&
-        rStep2InvalidToken.error?.kind === 'auth',
-      '3.2 Preflight 第 2 步：缺失令牌或平台用户探针返回 401 InvalidToken 时准确归为 auth 档',
-      { rStep2NoToken, rStep2InvalidToken },
+        rStep2InvalidToken.error?.kind === 'auth' &&
+        rStep2InvalidToken.stage === 'auth' &&
+        invalidTokenFetchCalls === 1,
+      '3.2 无坐标时仍先判认证：缺令牌零网络请求并返回 auth/auth，平台用户探针 401 也返回 auth/auth',
+      { rStep2NoToken, noTokenFetchCalls, rStep2InvalidToken, invalidTokenFetchCalls },
+    )
+
+    // 3.2b 配置语法与内联明文凭证在任何网络请求前拒绝；坐标是否缺失不影响这条安全闸。
+    const rejectedConfigs = [
+      ['yaml-error', 'version: 1\napiBaseUrl: "https://unterminated.example.test'],
+      ['inline-secret', 'version: 1\npat: pt-not-allowed-in-workspace'],
+    ] as const
+    const rejectedResults: Array<{ reason: string; result: any; calls: number }> = []
+    for (const [reason, text] of rejectedConfigs) {
+      let calls = 0
+      const result = await roomMod.yunxiaoBackend.create({} as any).preflight(
+        { cwd: '/ws-pf-config-' + reason },
+        {
+          cwd: '/ws-pf-config-' + reason,
+          fetch: async () => {
+            calls += 1
+            return new Response('{}', { status: 200 })
+          },
+          platform: {
+            fs: makeFakeFs({ 'docs/agents/yunxiao.yaml': text }),
+            env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+          },
+        } as any,
+      )
+      rejectedResults.push({ reason, result, calls })
+    }
+    check(
+      rejectedResults.every((r) => r.result.ok === false && r.result.error?.kind === 'env' && r.result.stage === 'auth' && r.calls === 0),
+      '3.2b YAML 语法错误与 token/pat 等内联凭证键均在任何网络请求前返回 auth/env',
+      rejectedResults,
+    )
+
+    // 3.2c 用户探针的网络未知不得伪装成确定认证失败，也不得被缺坐标掩盖。
+    const rStep2Network = await roomMod.yunxiaoBackend.create({} as any).preflight(
+      { cwd: '/ws-pf-2c' },
+      {
+        cwd: '/ws-pf-2c',
+        fetch: async () => {
+          throw new Error('connect ETIMEDOUT: network unavailable')
+        },
+        platform: {
+          fs: makeFakeFs({}),
+          env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+        },
+      } as any,
+    )
+    check(
+      rStep2Network.ok === false && rStep2Network.error?.kind === 'network' && rStep2Network.stage === 'auth',
+      '3.2c 无坐标时用户探针网络异常返回 auth/network，保留诚实未知而不是误报 auth 或坐标错误',
+      rStep2Network,
+    )
+
+    // 3.2d 既有 handle.refId 坐标回退不能因为认证先行而丢失：配置文件缺席时仍能完成纯 Projex 预检。
+    const rHandleFallback = await roomMod.yunxiaoBackend.create({} as any).preflight(
+      { cwd: '/ws-pf-handle-fallback', refId: REF_ID },
+      {
+        cwd: '/ws-pf-handle-fallback',
+        fetch: async (input: string | URL) => {
+          const u = String(input)
+          if (u.endsWith('/oapi/v1/platform/user')) {
+            return new Response(JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao', lastOrganization: ORG_ID }), { status: 200 })
+          }
+          if (u.includes('/projects/' + PROJ_ID)) {
+            return new Response(JSON.stringify({ id: PROJ_ID, name: 'fallback-project', customCode: 'FALLBK' }), { status: 200 })
+          }
+          return new Response('unexpected url: ' + u, { status: 500 })
+        },
+        platform: {
+          fs: makeFakeFs({}),
+          env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+        },
+      } as any,
+    )
+    check(
+      rHandleFallback.ok === true,
+      '3.2d 本地配置文件缺席时，合法 handle.refId 仍回退提供组织与项目坐标并完成认证后预检',
+      rHandleFallback,
     )
 
     // 3.3 第 3 步失败：Projex GetProject 返回 HTTP 400 InvalidIdentifier.NotFound -> not-found；返回 403 UserNotInCurrentOrganization -> auth
@@ -472,9 +577,11 @@ async function main(): Promise<void> {
     check(
       rStep3NotFound.ok === false &&
         rStep3NotFound.error?.kind === 'not-found' &&
+        rStep3NotFound.stage === 'repo' &&
         rStep3WrongOrg.ok === false &&
-        rStep3WrongOrg.error?.kind === 'auth',
-      '3.3 Preflight 第 3 步：将 GetProject 的 HTTP 400 InvalidIdentifier.NotFound 精准映射为 not-found，403 跨组织越权映射为 auth',
+        rStep3WrongOrg.error?.kind === 'auth' &&
+        rStep3WrongOrg.stage === 'repo',
+      '3.3 Preflight 第 3 步：项目不存在与跨组织越权分别保留 not-found/auth 分类，并显式标记 repo 阶段',
       { rStep3NotFound, rStep3WrongOrg },
     )
 
@@ -688,6 +795,38 @@ async function main(): Promise<void> {
         learnedAlias?.codeupRepo?.pathWithNamespace === ORG_ID + '/Apple/enterpriseagentplatform/cdi-new-api',
       '4.2 双步 GetRepository：企业标识名首段 myCompany 触发 404 SYSTEM_NOT_FOUND_ERROR 后自动剥离首段重试，锁定权威 id 与 pathWithNamespace（忽略含空格的 nameWithNamespace）',
       { rPreflightWithAlias, requestedUrls, codeupRepo: learnedAlias?.codeupRepo },
+    )
+
+    // 4.3 已认证且坐标完整，但关联 Codeup 仓库低于 Reporter(20)：这是仓库访问失败，不得倒报成令牌失效。
+    const rLowCodeupAccess = await roomMod.yunxiaoBackend.create({} as any).preflight(
+      { cwd: '/ws-pf-low-access' },
+      {
+        cwd: '/ws-pf-low-access',
+        fetch: async (input: string | URL) => {
+          const u = String(input)
+          if (u.endsWith('/oapi/v1/platform/user')) {
+            return new Response(JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao', lastOrganization: ORG_ID }), { status: 200 })
+          }
+          if (u.includes('/projects/' + PROJ_ID)) {
+            return new Response(JSON.stringify({ id: PROJ_ID, name: 'sandbox', customCode: 'DCIAFS' }), { status: 200 })
+          }
+          return new Response(JSON.stringify({
+            id: 7360166,
+            pathWithNamespace: ORG_ID + '/Apple/enterpriseagentplatform/cdi-new-api',
+            webUrl: 'https://codeup.aliyun.com/' + ORG_ID + '/Apple/enterpriseagentplatform/cdi-new-api',
+            accessLevel: '10',
+          }), { status: 200 })
+        },
+        platform: {
+          fs: makeFakeFs({ 'docs/agents/yunxiao.yaml': VALID_YUNXIAO_YAML + '\nrepositoryId: "7360166"' }),
+          env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+        },
+      } as any,
+    )
+    check(
+      rLowCodeupAccess.ok === false && rLowCodeupAccess.error?.kind === 'auth' && rLowCodeupAccess.stage === 'repo',
+      '4.3 Codeup accessLevel 低于 20 时返回 repo/auth，不把权限不足伪装成资源不存在或令牌失效',
+      rLowCodeupAccess,
     )
   }
 
@@ -1691,7 +1830,7 @@ async function main(): Promise<void> {
     )
   }
 
-  console.log('\n== Slice 9：父子关系图谱（setParent 原生 PARENT 优先、Bug 400 自动降级 DSH-PARENT + ASSOCIATED、解除父子、自环拦截与 listSubIssues 双源合并） ==')
+  console.log('\n== Slice 9：父子关系图谱（setParent 原生 PARENT 优先、Bug 400 自动降级 DSH-PARENT + ASSOCIATED、更新请求停发 parentId 与同父幂等跳过、解除父子、自环拦截、字段不存在 400 判档与回执、listSubIssues 双源合并） ==')
   {
     markersMod.clearYunxiaoIssueKeyCache()
     repoIdModelMod.clearLearnedYunxiaoContexts()
@@ -1703,6 +1842,8 @@ async function main(): Promise<void> {
       url: 'https://devops.aliyun.com/projex/project/' + PROJ_ID,
     }
     const edgeRulesMod = await imp('src/deck/rules/edge-landing.ts')
+    const yunxiaoErrorsMod = await imp('src/tracker/rooms/yunxiao/errors.ts')
+    const edgeLandingMod = await imp('src/deck/shell/edge-landing.ts')
 
     const mapItem: any = {
       id: '25ac2befde335fcc2218d7c8bb',
@@ -1740,18 +1881,55 @@ async function main(): Promise<void> {
       gmtCreate: 1788777500000,
       gmtModified: 1788778500000,
     }
+    const mapItemB: any = {
+      id: 'daf74b58fe12a19443cae19b4b',
+      serialNumber: 'DCIAFS-5',
+      subject: '探索地图 5（换父目标父 B）',
+      description: '# Map 5\n',
+      formatType: 'MARKDOWN',
+      statusStageId: '2',
+      parentId: 'EMPTY_VALUE',
+      labels: [{ id: 'lbl-map', name: 'wayfinder:map', color: '#8B5CF6' }],
+      gmtCreate: 1788776500000,
+      gmtModified: 1788779500000,
+    }
 
     const store = new Map<string, any>([
       [mapItem.id, mapItem],
       [mapItem.serialNumber, mapItem],
+      [mapItemB.id, mapItemB],
+      [mapItemB.serialNumber, mapItemB],
       [taskItem.id, taskItem],
       [taskItem.serialNumber, taskItem],
       [bugItem.id, bugItem],
       [bugItem.serialNumber, bugItem],
     ])
     const relationCalls: Array<{ method: string; wid: string; relationType: string; targetId: string }> = []
-    const subRelationRecords: Array<{ id: string; relationType: string; resourceType: string; resourceId: string }> = []
+    type RelStubRow = { id: string; relationType: string; resourceType: string; resourceId: string }
+    const subRelationRecordsByParent = new Map<string, RelStubRow[]>([
+      [mapItem.id, []],
+      [mapItemB.id, []],
+    ])
+    const parentRelationRecordsByChild = new Map<string, RelStubRow[]>()
+    const upsertStubRel = (bucketMap: Map<string, RelStubRow[]>, ownerId: string, row: RelStubRow) => {
+      const list = bucketMap.get(ownerId) || []
+      if (!list.some((r) => r.resourceId === row.resourceId)) {
+        list.push(row)
+        bucketMap.set(ownerId, list)
+      }
+    }
+    const removeStubRel = (bucketMap: Map<string, RelStubRow[]>, ownerId: string, resourceId: string) => {
+      const list = bucketMap.get(ownerId) || []
+      const idx = list.findIndex((r) => r.resourceId === resourceId)
+      if (idx >= 0) list.splice(idx, 1)
+    }
     const parentPutBodies: Array<{ wid: string; body: any }> = []
+    // 打开后，下一条 Task 更新请求会被桩以「字段不存在」400 拒绝（复刻 MattDemo——维护者用于真机核验的云效项目——实测的错误体），用来验证判档与回执。
+    let failNextTaskPutWithField400 = false
+    // 打开后，POST relationRecords(PARENT) 返回 200 但故意不同步更新或强制覆写 taskItem.parentId，用来验证写后读回直核原生 parentId。
+    let overrideNextPostParentId: string | null = null
+    // 打开后，下一条 POST relationRecords(PARENT) 返回 MattDemo 真机实测的单父冲突 400（{"errorCode":"InvaildData.Failed","errorMessage":"工作项已存在父项"}），验证不被误降级为 ASSOCIATED。
+    let failNextPostParentWithExistingParent400 = false
 
     const parentCtx: any = {
       cwd: '/ws-parent',
@@ -1766,7 +1944,10 @@ async function main(): Promise<void> {
         if (relMatch) {
           const wid = decodeURIComponent(relMatch[1])
           if (method === 'GET' && u.includes('relationType=SUB')) {
-            return new Response(JSON.stringify(subRelationRecords), { status: 200 })
+            return new Response(JSON.stringify(subRelationRecordsByParent.get(wid) || []), { status: 200 })
+          }
+          if (method === 'GET' && u.includes('relationType=PARENT')) {
+            return new Response(JSON.stringify(parentRelationRecordsByChild.get(wid) || []), { status: 200 })
           }
           if (method === 'GET') {
             return new Response(JSON.stringify([]), { status: 200 })
@@ -1781,28 +1962,57 @@ async function main(): Promise<void> {
               )
             }
             if (wid === taskItem.id && b.relationType === 'PARENT') {
-              taskItem.parentId = b.workitemId
-              subRelationRecords.push({ id: 'rel-sub-3', relationType: 'SUB', resourceType: 'Task', resourceId: taskItem.id })
+              if (failNextPostParentWithExistingParent400) {
+                failNextPostParentWithExistingParent400 = false
+                return new Response(
+                  JSON.stringify({
+                    errorCode: 'InvaildData.Failed',
+                    errorMessage: '工作项已存在父项',
+                    errorMsg: '工作项已存在父项',
+                    success: false,
+                  }),
+                  { status: 400 },
+                )
+              }
+              if (overrideNextPostParentId !== null) {
+                taskItem.parentId = overrideNextPostParentId
+                overrideNextPostParentId = null
+              } else {
+                taskItem.parentId = b.workitemId
+                upsertStubRel(subRelationRecordsByParent, b.workitemId, {
+                  id: 'rel-sub-' + b.workitemId + '-3',
+                  relationType: 'SUB',
+                  resourceType: 'Task',
+                  resourceId: taskItem.id,
+                })
+                upsertStubRel(parentRelationRecordsByChild, taskItem.id, {
+                  id: 'rel-parent-3-' + b.workitemId,
+                  relationType: 'PARENT',
+                  resourceType: 'Req',
+                  resourceId: b.workitemId,
+                })
+              }
             }
             return new Response(JSON.stringify({ id: 'rel-' + wid }), { status: 200 })
           }
           if (method === 'DELETE') {
-            const urlObj = new URL(u)
-            const rType = urlObj.searchParams.get('relationType') || ''
-            const tId = urlObj.searchParams.get('workitemId') || ''
+            // 官方 DeleteWorkitemRelationRecord 把 relationType 与 workitemId 放在 JSON 请求体里（缺陷 02 真机核清）。
+            const b = JSON.parse(String(init?.body || '{}'))
+            const rType = String(b.relationType || '')
+            const tId = String(b.workitemId || '')
             relationCalls.push({ method: 'DELETE', wid, relationType: rType, targetId: tId })
             if (wid === taskItem.id && rType === 'PARENT') {
-              taskItem.parentId = ''
-              const idx = subRelationRecords.findIndex((r) => r.resourceId === taskItem.id)
-              if (idx >= 0) subRelationRecords.splice(idx, 1)
+              if (!tId || taskItem.parentId === tId) taskItem.parentId = ''
+              removeStubRel(subRelationRecordsByParent, tId, taskItem.id)
+              removeStubRel(parentRelationRecordsByChild, taskItem.id, tId)
             }
             return new Response(null, { status: 204 })
           }
         }
         if (u.endsWith('/workitems:search')) {
-          return new Response(JSON.stringify([mapItem, taskItem, bugItem]), {
+          return new Response(JSON.stringify([mapItem, mapItemB, taskItem, bugItem]), {
             status: 200,
-            headers: { 'x-page': '1', 'x-per-page': '100', 'x-total': '3', 'x-total-pages': '1', 'x-next-page': '2' },
+            headers: { 'x-page': '1', 'x-per-page': '100', 'x-total': '4', 'x-total-pages': '1', 'x-next-page': '2' },
           })
         }
         if (u.includes('/comments')) {
@@ -1819,24 +2029,46 @@ async function main(): Promise<void> {
           const item = store.get(wid)
           const b = JSON.parse(String(init?.body || '{}'))
           parentPutBodies.push({ wid, body: b })
-          if (wid === bugItem.id && b.parentId === mapItem.id) {
+          // 缺陷 02 的真实故障形状（MattDemo 实测）：Task 的更新请求体一旦带 parentId 字段，
+          // 云效毫秒级返回 400「workitem does not contains field : ["parentId"]」；不带 parentId、只改 description 则 204。
+          if ('parentId' in b) {
             return new Response(
-              JSON.stringify({ errorCode: 'InvaildData.Failed', errorMessage: '无法创建此关系, 不满足关系对应的类型约束！' }),
+              JSON.stringify({ errorCode: '400', errorMessage: 'workitem does not contains field : ["parentId"]' }),
+              { status: 400 },
+            )
+          }
+          if (failNextTaskPutWithField400) {
+            failNextTaskPutWithField400 = false
+            return new Response(
+              JSON.stringify({ errorCode: '400', errorMessage: 'workitem does not contains field : ["parentId"]' }),
               { status: 400 },
             )
           }
           if (item && typeof b.description === 'string') item.description = b.description
-          if (item && ('parentId' in b) && wid !== bugItem.id) item.parentId = b.parentId
           return new Response(null, { status: 204 })
         }
         return new Response('unexpected: ' + method + ' ' + u, { status: 500 })
       },
     }
 
-    // 9.1 Task 设置父票：成对写入 DSH-PARENT 与原生 PARENT 关系，通过 edgeVerdict('parent') 写后读回核对
+    // 9.1 Task 设置父票：更新请求只写正文文件头 DSH-PARENT 标记（不带 parentId 字段），原生 PARENT 关系记录负责原生层，写后读回核对
     const setTaskParent = await backend.setParent(repoRef, '3', '2', undefined, parentCtx)
     const getTaskBack = await backend.get(repoRef, '3', {}, parentCtx)
     const taskVerdict = edgeRulesMod.edgeVerdict('parent', '2', { issue: getTaskBack.data, dependencies: null })
+    const taskParentPutBodies = parentPutBodies.filter((c) => c.wid === taskItem.id).map((c) => c.body)
+    const taskPutCountAfterFirstSet = parentPutBodies.filter((c) => c.wid === taskItem.id).length
+    const taskParentRelationCountAfterFirstSet = relationCalls.filter(
+      (c) => c.method === 'POST' && c.wid === taskItem.id,
+    ).length
+
+    // 9.1b 同父重复设置（缺陷 02 的现场：读回的原生 parentId 已等于目标父票）：不发出任何更新请求，也不重复创建关系记录。
+    // 计数快照必须紧跟这次调用取：后面的解除与字段拒绝步骤会合法地再发更新请求，那时再取就对不上幂等口径了。
+    const repeatSetTaskParent = await backend.setParent(repoRef, '3', '2', undefined, parentCtx)
+    const taskPutCountAfterRepeatSet = parentPutBodies.filter((c) => c.wid === taskItem.id).length
+    const taskParentRelationCountAfterRepeatSet = relationCalls.filter(
+      (c) => c.method === 'POST' && c.wid === taskItem.id,
+    ).length
+    const taskNativeParentIdAfterRepeatSet = taskItem.parentId
 
     // 9.2 Bug 设置父票：原生 PARENT 返回 400 时自动保留 DSH-PARENT 并建立 ASSOCIATED 关联，读回 parentKey 仍为 "2"
     const setBugParent = await backend.setParent(repoRef, '4', '2', undefined, parentCtx)
@@ -1854,32 +2086,141 @@ async function main(): Promise<void> {
     const getColdParent = await backend.get(repoRef, '3', {}, parentCtx)
     taskItem.description = '<!-- DSH-PARENT: 2 -->\n# Task 3\n'
 
-    // 9.4 解除父票（parentKey = null）与自环拦截（parentKey === key -> conflict）
+    // 9.3c 换父场景（父 A #2 -> 父 B #5）：删除旧父 A 的 PARENT 关系、更新 DSH-PARENT: 5（不带 parentId）、创建新父 B 的 PARENT 关系，且新旧父 listSubIssues 同步更新
+    const reparentToB = await backend.setParent(repoRef, '3', '5', undefined, parentCtx)
+    const subIssuesMapAAfterReparent = await backend.listSubIssues(repoRef, '2', {}, parentCtx)
+    const subKeysMapAAfterReparent = subIssuesMapAAfterReparent.ok ? subIssuesMapAAfterReparent.data.items.map((i: any) => i.key).sort() : []
+    const subIssuesMapBAfterReparent = await backend.listSubIssues(repoRef, '5', {}, parentCtx)
+    const subKeysMapBAfterReparent = subIssuesMapBAfterReparent.ok ? subIssuesMapBAfterReparent.data.items.map((i: any) => i.key).sort() : []
+
+    // 9.3d 写后读回直核原生 parentId（防 DSH-PARENT 回退假阴性）：
+    // (1) 原生 PARENT 关系创建返回 200 但读回的 raw.parentId 为空串 ""；
+    // (2) 原生 PARENT 关系创建返回 200 但读回的 raw.parentId 仍滞留在未缓存的旧父 ID；
+    // (3) Bug 降级 ASSOCIATED 但此前残留了未清除的旧原生 parentId。
+    overrideNextPostParentId = ''
+    const reparentDesyncEmptyRes = await backend.setParent(repoRef, '3', '2', undefined, parentCtx)
+    // 恢复到父 B #5，并模拟冷缓存下残留未缓存的旧父 ID
+    taskItem.parentId = '99999999999999999999999999'
+    taskItem.description = '# Task 3 native old parent only\n'
+    markersMod.clearYunxiaoIssueKeyCache()
+    overrideNextPostParentId = '99999999999999999999999999'
+    const reparentDesyncUncachedOldRes = await backend.setParent(repoRef, '3', '5', undefined, parentCtx)
+    // Bug 降级 ASSOCIATED 时若读回仍残留旧原生 parentId，同样必须报 conflict
+    bugItem.parentId = mapItem.id
+    const bugReparentStaleNativeRes = await backend.setParent(repoRef, '4', '5', undefined, parentCtx)
+    bugItem.parentId = null
+    // 单父冲突 400（真机实测「工作项已存在父项」，同为 InvaildData.Failed）：isRelationMatrixConstraintError 判为 false，setParent 不误发 ASSOCIATED 而是直接返回 conflict
+    const assocCountBeforeSingleParent400 = relationCalls.filter(
+      (c) => c.method === 'POST' && c.wid === taskItem.id && c.relationType === 'ASSOCIATED',
+    ).length
+    failNextPostParentWithExistingParent400 = true
+    const singleParentConflictRes = await backend.setParent(repoRef, '3', '2', undefined, parentCtx)
+    const assocCountAfterSingleParent400 = relationCalls.filter(
+      (c) => c.method === 'POST' && c.wid === taskItem.id && c.relationType === 'ASSOCIATED',
+    ).length
+    const isMatrixOnTypeConstraint = yunxiaoErrorsMod.isRelationMatrixConstraintError({
+      ok: false,
+      status: 400,
+      stderr: JSON.stringify({ errorCode: 'InvaildData.Failed', errorMessage: '无法创建此关系, 不满足关系对应的类型约束！' }),
+      stdout: '',
+    })
+    const isMatrixOnSingleParentConflict = yunxiaoErrorsMod.isRelationMatrixConstraintError({
+      ok: false,
+      status: 400,
+      stderr: JSON.stringify({ errorCode: 'InvaildData.Failed', errorMessage: '工作项已存在父项' }),
+      stdout: '',
+    })
+    // 9.3e 当子票上残留了 raw.parentId 与 DSH-PARENT 均未体现的孤立 PARENT 关系记录（指向 mapItemB #5）时，切换到 #2 仍能通过 ListWorkitemRelationRecords(PARENT) 收集并清理该残留记录
+    taskItem.parentId = null
+    taskItem.description = '# Task 3 with orphan PARENT relation record\n'
+    parentRelationRecordsByChild.set(taskItem.id, [
+      { id: 'rel-orphan-parent-5', relationType: 'PARENT', resourceType: 'Req', resourceId: mapItemB.id },
+    ])
+    const relCallCountBeforeOrphan = relationCalls.length
+    const reparentFromOrphanRelRes = await backend.setParent(repoRef, '3', '2', undefined, parentCtx)
+    const orphanParentDeleted = relationCalls
+      .slice(relCallCountBeforeOrphan)
+      .some((c) => c.method === 'DELETE' && c.wid === taskItem.id && c.relationType === 'PARENT' && c.targetId === mapItemB.id)
+    // 恢复正常状态供后续 9.4 解除测试使用
+    await backend.setParent(repoRef, '4', '2', undefined, parentCtx)
+
+    // 9.4 解除父票（parentKey = null，更新请求同样不带 parentId）与自环拦截（parentKey === key -> conflict）
+    const taskPutCountBeforeClear = parentPutBodies.filter((c) => c.wid === taskItem.id).length
     const clearTaskParent = await backend.setParent(repoRef, '3', null, undefined, parentCtx)
+    const taskClearPutBodies = parentPutBodies
+      .filter((c) => c.wid === taskItem.id)
+      .slice(taskPutCountBeforeClear)
+      .map((c) => c.body)
     const clearBugParent = await backend.setParent(repoRef, '4', null, undefined, parentCtx)
     const selfParentRes = await backend.setParent(repoRef, '3', '3', undefined, parentCtx)
+
+    // 9.5 「字段不存在」400 的判档与回执（缺陷 02 的误报链路）：判成 unsupported、回执 backend-unsupported，不再是 network / backend-timeout
+    failNextTaskPutWithField400 = true
+    const fieldRejectedSet = await backend.setParent(repoRef, '3', '2', undefined, parentCtx)
+    const fieldRejectedReceipt = edgeLandingMod.failureFields(fieldRejectedSet, 'write')
+    const fieldRejectedVerdict = yunxiaoErrorsMod.classifyYunxiaoError({
+      status: 400,
+      stderr: JSON.stringify({ errorCode: '400', errorMessage: 'workitem does not contains field : ["parentId"]' }),
+    })
 
     const c1 =
       setTaskParent.ok === true &&
       setTaskParent.data.parentKey === '2' &&
       taskVerdict === 'landed' &&
-      parentPutBodies.some((p) => p.wid === taskItem.id && p.body.parentId === mapItem.id) &&
+      taskParentPutBodies.length === 1 &&
+      !('parentId' in (taskParentPutBodies[0] || {})) &&
+      taskParentPutBodies[0]?.description.includes('DSH-PARENT: 2') &&
+      relationCalls.some((c) => c.method === 'POST' && c.wid === taskItem.id && c.relationType === 'PARENT' && c.targetId === mapItem.id) &&
       getColdParent.ok === true &&
       getColdParent.data.parentKey === '2'
+    const c1b =
+      repeatSetTaskParent.ok === true &&
+      repeatSetTaskParent.data.parentKey === '2' &&
+      taskPutCountAfterRepeatSet === taskPutCountAfterFirstSet &&
+      taskParentRelationCountAfterRepeatSet === taskParentRelationCountAfterFirstSet &&
+      taskNativeParentIdAfterRepeatSet === mapItem.id
     const c2 = setBugParent.ok === true && setBugParent.data.parentKey === '2' && bugVerdict === 'landed' &&
-      bugParentPutBodies.length === 2 &&
-      bugParentPutBodies[0]?.parentId === mapItem.id &&
+      bugParentPutBodies.length === 1 &&
+      !('parentId' in (bugParentPutBodies[0] || {})) &&
       bugParentPutBodies[0]?.description.includes('DSH-PARENT: 2') &&
-      !('parentId' in (bugParentPutBodies[1] || {})) &&
-      bugParentPutBodies[1]?.description.includes('DSH-PARENT: 2') &&
       relationCalls.some((c) => c.method === 'POST' && c.wid === bugItem.id && c.relationType === 'ASSOCIATED' && c.targetId === mapItem.id)
     const c3 = subIssuesRes.ok === true && JSON.stringify(subKeys) === JSON.stringify(['3', '4']) && subIssuesRes.data.total === 2 && subIssuesRes.data.fetched === 2
-    const c4 = clearTaskParent.ok === true && clearTaskParent.data.parentKey === null && clearBugParent.ok === true && clearBugParent.data.parentKey === null && !taskItem.description.includes('DSH-PARENT') && !bugItem.description.includes('DSH-PARENT')
+    const c4 = clearTaskParent.ok === true && clearTaskParent.data.parentKey === null && clearBugParent.ok === true && clearBugParent.data.parentKey === null && !taskItem.description.includes('DSH-PARENT') && !bugItem.description.includes('DSH-PARENT') &&
+      taskClearPutBodies.length === 1 && !('parentId' in (taskClearPutBodies[0] || {})) && taskItem.parentId === ''
     const c5 = selfParentRes.ok === false && selfParentRes.error.kind === 'conflict'
+    const c6 =
+      fieldRejectedSet.ok === false &&
+      fieldRejectedSet.error.kind === 'unsupported' &&
+      String(fieldRejectedSet.error.raw || '').includes('workitem does not contains field') &&
+      fieldRejectedReceipt.code === 'backend-unsupported' &&
+      fieldRejectedReceipt.errorKind === 'unsupported' &&
+      fieldRejectedVerdict.kind === 'unsupported' &&
+      fieldRejectedVerdict.fallback === false
+    const c7Reparent =
+      reparentToB.ok === true &&
+      reparentToB.data.parentKey === '5' &&
+      relationCalls.some((c) => c.method === 'DELETE' && c.wid === taskItem.id && c.relationType === 'PARENT' && c.targetId === mapItem.id) &&
+      relationCalls.some((c) => c.method === 'POST' && c.wid === taskItem.id && c.relationType === 'PARENT' && c.targetId === mapItemB.id) &&
+      JSON.stringify(subKeysMapAAfterReparent) === JSON.stringify(['4']) &&
+      JSON.stringify(subKeysMapBAfterReparent) === JSON.stringify(['3']) &&
+      reparentDesyncEmptyRes.ok === false &&
+      reparentDesyncEmptyRes.error.kind === 'conflict' &&
+      reparentDesyncUncachedOldRes.ok === false &&
+      reparentDesyncUncachedOldRes.error.kind === 'conflict' &&
+      bugReparentStaleNativeRes.ok === false &&
+      bugReparentStaleNativeRes.error.kind === 'conflict' &&
+      isMatrixOnTypeConstraint === true &&
+      isMatrixOnSingleParentConflict === false &&
+      singleParentConflictRes.ok === false &&
+      singleParentConflictRes.error.kind === 'conflict' &&
+      assocCountAfterSingleParent400 === assocCountBeforeSingleParent400 &&
+      reparentFromOrphanRelRes.ok === true &&
+      reparentFromOrphanRelRes.data.parentKey === '2' &&
+      orphanParentDeleted === true
     check(
-      c1 && c2 && c3 && c4 && c5,
-      '9.1 setParent 成对双写 DSH-PARENT 与原生 PARENT（Bug 400 自动降级 ASSOCIATED）、解除父子与自环拦截，listSubIssues 合并原生 SUB 与 DSH-PARENT 扫描结果',
-      { c1, c2, c3, c4, c5, taskVerdict, bugVerdict, bugParentPutBodies, subKeys },
+      c1 && c1b && c2 && c3 && c4 && c5 && c6 && c7Reparent,
+      '9.1 setParent 写 DSH-PARENT 与原生 PARENT（更新请求停发 parentId）、换父（父 A -> 父 B）三处同步与写后读回原生 parentId 直核、同父重复设置幂等跳过、解除父子与自环拦截、字段不存在 400 判成 unsupported 且回执不再误报 backend-timeout、listSubIssues 合并原生 SUB 与 DSH-PARENT 扫描结果',
+      { c1, c1b, c2, c3, c4, c5, c6, c7Reparent, reparentToB, subKeysMapAAfterReparent, subKeysMapBAfterReparent, reparentDesyncEmptyRes, reparentDesyncUncachedOldRes, bugReparentStaleNativeRes },
     )
   }
 
@@ -2021,9 +2362,10 @@ async function main(): Promise<void> {
             return new Response(JSON.stringify({ id: 'rel-ok' }), { status: 200 })
           }
           if (method === 'DELETE') {
-            const urlObj = new URL(u)
-            const rType = urlObj.searchParams.get('relationType') || ''
-            const tId = urlObj.searchParams.get('workitemId') || ''
+            // 官方 DeleteWorkitemRelationRecord 把 relationType 与 workitemId 放在 JSON 请求体里（缺陷 02 真机核清）。
+            const b = JSON.parse(String(init?.body || '{}'))
+            const rType = String(b.relationType || '')
+            const tId = String(b.workitemId || '')
             relWriteCalls.push({ method: 'DELETE', wid: realWid, relationType: rType, targetId: tId })
             const list = getRelList(realWid)
             const idx = list.findIndex((r) => r.relationType === rType && r.resourceId === tId)
@@ -2590,7 +2932,7 @@ async function main(): Promise<void> {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // Slice 12：面板三阶段环境检查（yunxiao:configured / yunxiao:authed / yunxiao:repoAccess）、首开引导链与技能说明模板
+  // Slice 12：面板三阶段环境检查（yunxiao:authed / yunxiao:configured / yunxiao:repoAccess）、首开引导链与技能说明模板
   // ══════════════════════════════════════════════════════════════════════════
   console.log('\n== Slice 12：面板三阶段环境检查目录、宿主谓词求值、viewerOnce 后端透传、首开引导链与技能说明模板 ==')
   {
@@ -2607,15 +2949,15 @@ async function main(): Promise<void> {
     check(
       yxCat.filter((c: any) => c.scope === 'generic').length === 5 &&
         JSON.stringify(yxBackendItems.map((c: any) => c.id)) ===
-          JSON.stringify(['yunxiao:configured', 'yunxiao:authed', 'yunxiao:repoAccess']) &&
+          JSON.stringify(['yunxiao:authed', 'yunxiao:configured', 'yunxiao:repoAccess']) &&
         catDirsMod.scopeOf('yunxiao:configured') === 'backend' &&
         catDirsMod.scopeOf('yunxiao:authed') === 'backend' &&
         catDirsMod.scopeOf('yunxiao:repoAccess') === 'backend' &&
         JSON.stringify(yxGuideSteps.map((s: any) => s.id)) ===
           JSON.stringify([
             'selection:backendSelected',
-            'yunxiao:configured',
             'yunxiao:authed',
+            'yunxiao:configured',
             'yunxiao:repoAccess',
             'tracker:initialized',
             'skill:wayfinder',
@@ -2628,7 +2970,356 @@ async function main(): Promise<void> {
       },
     )
 
-    // 12.2 probeChainEnv.viewer() 将当前 backendId 传给 session.getCurrentUser（而非硬编码 github），且三项谓词在 check-chain-evaluation 中求值准确
+    // 12.2 三个宿主谓词严格执行认证先行的四阶段真值表；repo 的 not-found 与权限不足都是确定仓库失败。
+    const yxStageCases = [
+      { stage: 'auth', kind: 'auth', expected: ['fail', 'pending', 'pending'] },
+      { stage: 'gh', kind: 'env', expected: ['pass', 'fail', 'pending'] },
+      { stage: 'repo', kind: 'not-found', expected: ['pass', 'pass', 'fail'] },
+      { stage: 'repo', kind: 'auth', expected: ['pass', 'pass', 'fail'] },
+      { stage: 'pass', kind: '', expected: ['pass', 'pass', 'pass'] },
+    ]
+    const yxStageRows = yxStageCases.map((item) => ({
+      stage: item.stage,
+      kind: item.kind,
+      actual: [
+        envMapMod.yunxiaoAuthVerdict({ stage: item.stage, kind: item.kind, refId: REF_ID }, true).status,
+        envMapMod.yunxiaoConfigVerdict({ stage: item.stage, kind: item.kind, refId: REF_ID }, true).status,
+        envMapMod.yunxiaoRepoAccessVerdict({ stage: item.stage, kind: item.kind, refId: REF_ID }, true).status,
+      ],
+      expected: item.expected,
+    }))
+    check(
+      yxStageRows.every((row) => JSON.stringify(row.actual) === JSON.stringify(row.expected)),
+      '12.2 auth/gh/repo/pass 四阶段分别得到认证、配置、仓库三项的确定状态，网络未知仍由 auth+network 单独保持 pending',
+      yxStageRows,
+    )
+    const yxNetworkUnknown = [
+      { stage: 'auth', expected: ['pending', 'pending', 'pending'] },
+      { stage: 'repo', expected: ['pass', 'pass', 'pending'] },
+    ].map((item) => ({
+      stage: item.stage,
+      actual: [
+        envMapMod.yunxiaoAuthVerdict({ stage: item.stage, kind: 'network', refId: REF_ID }, true).status,
+        envMapMod.yunxiaoConfigVerdict({ stage: item.stage, kind: 'network', refId: REF_ID }, true).status,
+        envMapMod.yunxiaoRepoAccessVerdict({ stage: item.stage, kind: 'network', refId: REF_ID }, true).status,
+      ],
+      expected: item.expected,
+    }))
+    check(
+      yxNetworkUnknown.every((row) => JSON.stringify(row.actual) === JSON.stringify(row.expected)),
+      '12.2b 网络未知只让当前及后续检查保持 pending，已通过的认证或配置不倒退，也不伪装成确定失败',
+      yxNetworkUnknown,
+    )
+
+    // 12.2c 真实 Yunxiao preflight 经 probeChainEnv 映射后再由三个谓词读取，杜绝手工 stage 造成的覆盖假绿。
+    async function runRealYunxiaoChain(input: {
+      cwd: string
+      yaml?: string
+      fetch: (input: string | URL) => Promise<Response>
+    }): Promise<any> {
+      let seenPreflight: any = null
+      const files = typeof input.yaml === 'string' ? { 'docs/agents/yunxiao.yaml': input.yaml } : {}
+      const probe = envMapMod.probeChainEnv(
+        {
+          getRepoKey: async () => null,
+          openSession: async () => ({
+            ok: true,
+            backendId: 'yunxiao',
+            call: async (fn: any) =>
+              fn(
+                {
+                  preflight: async (handle: any, ctx: any) => {
+                    seenPreflight = await roomMod.yunxiaoBackend.create({} as any).preflight(handle, ctx)
+                    return seenPreflight
+                  },
+                  getCurrentUser: async () => ({ ok: false }),
+                },
+                {
+                  cwd: input.cwd,
+                  platform: {
+                    fs: makeFakeFs(files),
+                    env: makeFakeEnv({ YUNXIAO_TOKEN: 'pt-validtoken12345678' }),
+                  },
+                  fetch: input.fetch,
+                },
+              ),
+          }),
+        },
+        input.cwd,
+        { backendId: 'yunxiao' },
+      )
+      const reply = await probe.preflightOnce()
+      const views = [
+        envMapMod.yunxiaoAuthVerdict(reply, true),
+        envMapMod.yunxiaoConfigVerdict(reply, true),
+        envMapMod.yunxiaoRepoAccessVerdict(reply, true),
+      ]
+      return {
+        preflight: seenPreflight,
+        reply,
+        statuses: views.map((view: any) => view.status),
+        details: views.map((view: any) => String(view.detail || '')),
+        asked: probe.asked(),
+      }
+    }
+
+    let configNetworkCalls = 0
+    const configChain = await runRealYunxiaoChain({
+      cwd: '/ws-chain-config',
+      yaml: `version: 1
+apiBaseUrl: "https://unterminated.example.test`,
+      fetch: async () => {
+        configNetworkCalls += 1
+        return new Response('{}', { status: 200 })
+      },
+    })
+    const configMessage = String(configChain.preflight?.error?.message || '')
+    check(
+      configChain.preflight?.ok === false &&
+        configChain.preflight?.stage === 'auth' &&
+        configChain.preflight?.error?.kind === 'env' &&
+        configChain.reply?.stage === 'auth' &&
+        JSON.stringify(configChain.statuses) === JSON.stringify(['pending', 'pending', 'pending']) &&
+        configNetworkCalls === 0 &&
+        configMessage.length > 0 &&
+        configChain.details.some((detail: string) => detail.includes(configMessage)),
+      '12.2c 认证前 YAML 配置错误经真实宿主链路保持 auth/env，三项均 pending 且界面展示真实配置错误',
+      { ...configChain, configNetworkCalls },
+    )
+
+    repoIdModelMod.clearLearnedYunxiaoContexts()
+    let noCoordsUserCalls = 0
+    const noCoordsChain = await runRealYunxiaoChain({
+      cwd: '/ws-chain-no-coords',
+      yaml: 'version: 1',
+      fetch: async () => {
+        noCoordsUserCalls += 1
+        return new Response(
+          JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao', lastOrganization: ORG_ID }),
+          { status: 200 },
+        )
+      },
+    })
+    const learnedNoCoords = repoIdModelMod.getLearnedYunxiaoContext('/ws-chain-no-coords')
+    check(
+      noCoordsChain.preflight?.stage === 'gh' &&
+        noCoordsChain.preflight?.error?.kind === 'env' &&
+        noCoordsChain.reply?.stage === 'gh' &&
+        JSON.stringify(noCoordsChain.statuses) === JSON.stringify(['pass', 'fail', 'pending']) &&
+        noCoordsUserCalls === 1 &&
+        noCoordsChain.asked === 1 &&
+        learnedNoCoords?.currentUser?.id === '6a86ddf4dfcb465c20f193e2' &&
+        learnedNoCoords?.currentUser?.name === 'BryanShao' &&
+        learnedNoCoords?.currentUser?.lastOrganization === ORG_ID &&
+        Object.prototype.hasOwnProperty.call(learnedNoCoords || {}, 'token') === false,
+      '12.2d 有效令牌但无坐标经真实链路得到 pass/fail/pending，只问一次用户并缓存不含令牌的身份',
+      { ...noCoordsChain, noCoordsUserCalls, learnedNoCoords },
+    )
+
+    const projectNetworkChain = await runRealYunxiaoChain({
+      cwd: '/ws-chain-project-network',
+      yaml: VALID_YUNXIAO_YAML,
+      fetch: async (input: string | URL) => {
+        const u = String(input)
+        if (u.endsWith('/oapi/v1/platform/user')) {
+          return new Response(JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao' }), { status: 200 })
+        }
+        throw new Error('connect ETIMEDOUT: Projex network unavailable')
+      },
+    })
+    const codeupNetworkChain = await runRealYunxiaoChain({
+      cwd: '/ws-chain-codeup-network',
+      yaml: `${VALID_YUNXIAO_YAML}
+repositoryId: "7360166"`,
+      fetch: async (input: string | URL) => {
+        const u = String(input)
+        if (u.endsWith('/oapi/v1/platform/user')) {
+          return new Response(JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao' }), { status: 200 })
+        }
+        if (u.includes('/projects/' + PROJ_ID)) {
+          return new Response(JSON.stringify({ id: PROJ_ID, name: 'sandbox', customCode: 'DCIAFS' }), { status: 200 })
+        }
+        throw new Error('connect ETIMEDOUT: Codeup network unavailable')
+      },
+    })
+    check(
+      [projectNetworkChain, codeupNetworkChain].every((row) =>
+        row.preflight?.stage === 'repo' &&
+        row.preflight?.error?.kind === 'network' &&
+        row.reply?.stage === 'repo' &&
+        JSON.stringify(row.statuses) === JSON.stringify(['pass', 'pass', 'pending']) &&
+        String(row.reply?.message || '').length > 0 &&
+        row.details[2].includes(String(row.reply?.message || '')) &&
+        !row.details[2].includes('可能尚未创建')
+      ),
+      '12.2e Projex 与 Codeup 网络未知均经真实链路保留 repo/network，已通过的认证和配置不倒退且展示真实错误',
+      { projectNetworkChain, codeupNetworkChain },
+    )
+
+    // 12.2f 项目与仓库共用 repo 判定分支：除 not-found/auth 外，解析、限流等错误都只能保留未知并展示原文。
+    const repoUnknownCases = [
+      {
+        caseName: 'Projex 200 错误 JSON 形状',
+        key: 'projex-parse',
+        withCodeup: false,
+        body: JSON.stringify({ unexpected: true }),
+        status: 200,
+        expectedKind: 'parse',
+        expectedMessage: 'Yunxiao Projex GetProject 回包不是有效的项目对象',
+      },
+      {
+        caseName: 'Projex HTTP 429',
+        key: 'projex-rate-limit',
+        withCodeup: false,
+        body: JSON.stringify({ errorCode: 'Throttling', errorMessage: 'Projex request quota exhausted; retry after 60 seconds' }),
+        status: 429,
+        expectedKind: 'rate-limit',
+        expectedMessage: 'Projex request quota exhausted; retry after 60 seconds',
+      },
+      {
+        caseName: 'Codeup 200 非 JSON 回包',
+        key: 'codeup-parse',
+        withCodeup: true,
+        body: 'Unexpected token < in JSON at position 0',
+        status: 200,
+        expectedKind: 'parse',
+        expectedMessage: 'Unexpected token < in JSON at position 0',
+      },
+    ] as const
+    for (const item of repoUnknownCases) {
+      const row = await runRealYunxiaoChain({
+        cwd: '/ws-chain-' + item.key,
+        yaml: VALID_YUNXIAO_YAML + (item.withCodeup ? '\nrepositoryId: "7360166"' : ''),
+        fetch: async (input: string | URL) => {
+          const u = String(input)
+          if (u.endsWith('/oapi/v1/platform/user')) {
+            return new Response(JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao' }), { status: 200 })
+          }
+          if (item.withCodeup && u.includes('/projects/' + PROJ_ID)) {
+            return new Response(JSON.stringify({ id: PROJ_ID, name: 'sandbox', customCode: 'DCIAFS' }), { status: 200 })
+          }
+          return new Response(item.body, { status: item.status })
+        },
+      })
+      check(
+        row.preflight?.ok === false &&
+          row.preflight?.stage === 'repo' &&
+          row.preflight?.error?.kind === item.expectedKind &&
+          row.reply?.stage === 'repo' &&
+          row.reply?.kind === item.expectedKind &&
+          row.reply?.message === row.preflight?.error?.message &&
+          JSON.stringify(row.statuses) === JSON.stringify(['pass', 'pass', 'pending']) &&
+          row.details[2].includes(item.expectedMessage) &&
+          !row.details[2].includes('可能尚未创建') &&
+          row.asked === 1,
+        '12.2f ' + item.caseName + ' 经真实链路得到 repo/' + item.expectedKind + '，三项为 pass/pass/pending 且展示真实错误',
+        row,
+      )
+    }
+
+    const codeupAccessChains: Array<{ caseName: string; row: any }> = []
+    for (const [caseName, accessLevel] of [['low', '10'], ['missing', undefined], ['non-numeric', 'not-a-number']] as const) {
+      const row = await runRealYunxiaoChain({
+        cwd: '/ws-chain-access-' + caseName,
+        yaml: `${VALID_YUNXIAO_YAML}
+repositoryId: "7360166"`,
+        fetch: async (input: string | URL) => {
+          const u = String(input)
+          if (u.endsWith('/oapi/v1/platform/user')) {
+            return new Response(JSON.stringify({ id: '6a86ddf4dfcb465c20f193e2', name: 'BryanShao' }), { status: 200 })
+          }
+          if (u.includes('/projects/' + PROJ_ID)) {
+            return new Response(JSON.stringify({ id: PROJ_ID, name: 'sandbox', customCode: 'DCIAFS' }), { status: 200 })
+          }
+          return new Response(JSON.stringify({
+            id: 7360166,
+            pathWithNamespace: ORG_ID + '/Apple/enterpriseagentplatform/cdi-new-api',
+            webUrl: 'https://codeup.aliyun.com/' + ORG_ID + '/Apple/enterpriseagentplatform/cdi-new-api',
+            ...(accessLevel === undefined ? {} : { accessLevel }),
+          }), { status: 200 })
+        },
+      })
+      codeupAccessChains.push({ caseName, row })
+    }
+    check(
+      codeupAccessChains.every(({ row }) =>
+        row.preflight?.stage === 'repo' &&
+        row.preflight?.error?.kind === 'auth' &&
+        row.reply?.stage === 'repo' &&
+        row.reply?.kind === 'auth' &&
+        JSON.stringify(row.statuses) === JSON.stringify(['pass', 'pass', 'fail'])
+      ),
+      '12.2g Codeup accessLevel=10、缺失与非数字经真实链路均为 repo/auth，宿主只判仓库失败',
+      codeupAccessChains,
+    )
+
+    // 12.2h 未提供显式阶段的其他后端继续按 kind 回退；非法显式值不得进入宿主谓词。
+    async function mapFakePreflight(result: any, backendId: string): Promise<any> {
+      const probe = envMapMod.probeChainEnv(
+        {
+          getRepoKey: async () => ({ owner: 'acme', name: 'deck' }),
+          openSession: async () => ({
+            ok: true,
+            backendId,
+            call: async (fn: any) => fn({ preflight: async () => result }, {}),
+          }),
+        },
+        '/ws-chain-fake-' + backendId,
+        { backendId },
+      )
+      return probe.preflightOnce()
+    }
+    const legacyNetworkReply = await mapFakePreflight({ ok: false, error: { kind: 'network', message: 'offline' } }, 'github')
+    const legacyEnvReply = await mapFakePreflight({ ok: false, error: { kind: 'env', message: 'gh not found' } }, 'github')
+    const invalidStageReply = await mapFakePreflight(
+      { ok: false, stage: 'anchor-lookup', error: { kind: 'not-found', message: 'missing' } },
+      'yunxiao',
+    )
+    check(
+      legacyNetworkReply.stage === 'auth' &&
+        envMapMod.ghAuthVerdict(legacyNetworkReply, true).status === 'pending' &&
+        envMapMod.repoAccessVerdict(legacyNetworkReply, true).status === 'pending' &&
+        legacyEnvReply.stage === 'gh' &&
+        envMapMod.ghAuthVerdict(legacyEnvReply, true).status === 'pending' &&
+        envMapMod.repoAccessVerdict(legacyEnvReply, true).status === 'pending' &&
+        invalidStageReply.stage === 'repo' &&
+        invalidStageReply.kind === 'not-found',
+      '12.2h 其他后端无 stage 时保持 kind-only 回退，anchor-lookup 等非法预检阶段被忽略',
+      { legacyNetworkReply, legacyEnvReply, invalidStageReply },
+    )
+
+    // 12.3 三项检查共用同一组「令牌 → 项目 → 仓库」三步向导声明，随后刷新检查链，不再注入聊天提示词。
+    const yxFixIds = ['yunxiao:authed', 'yunxiao:configured', 'yunxiao:repoAccess']
+    const expectedInitialSteps = [0, 1, 1]
+    const yxWizards = yxFixIds.map((id) => roomMod.fixes[id]?.actions?.[0])
+    const expectedStepTitles = ['连接云效个人访问令牌', '组织与 Projex 项目', 'Codeup 仓库与打通']
+    check(
+      yxWizards.every((wizard: any, index: number) =>
+        wizard?.type === 'wizard' &&
+        wizard.initialStepIndex === expectedInitialSteps[index] &&
+        wizard.hydrateRpc?.method === 'wf.yunxiaoDiscover' &&
+        wizard.steps?.length === 3 &&
+        JSON.stringify(wizard.steps.map((step: any) => step.title?.zh)) === JSON.stringify(expectedStepTitles) &&
+        wizard.steps[0]?.stepAction?.method === 'wf.yunxiaoSaveToken' &&
+        wizard.steps[0]?.schema?.[0]?.name === 'token' &&
+        wizard.steps[0]?.schema?.[0]?.type === 'password' &&
+        wizard.steps[0]?.schema?.[0]?.helperLink?.url === 'https://account-devops.aliyun.com/settings/personalAccessToken' &&
+        wizard.steps[0]?.schema?.[0]?.helperLines?.length === 3 &&
+        wizard.submitAction?.type === 'contract-op' &&
+        wizard.submitAction?.op === 'initProject'
+      ) &&
+        yxWizards.every((wizard: any) => JSON.stringify(wizard.steps) === JSON.stringify(yxWizards[0].steps)) &&
+        yxFixIds.every((id) =>
+          roomMod.fixes[id]?.actions?.length === 2 &&
+          roomMod.fixes[id].actions[1]?.type === 'refresh' &&
+          roomMod.fixes[id].actions[1]?.target === 'chain' &&
+          roomMod.fixes[id].actions.every((action: any) => action.type !== 'inject-prompt')
+        ),
+      '12.3 三项修复动作共享三步 Yunxiao onboarding wizard（含第 1 步 password 令牌字段、深链、3 行权限口诀、wf.yunxiaoSaveToken 与 wf.yunxiaoDiscover），初始步为 0/1/1，随后 refresh(chain)，无 inject-prompt',
+      yxFixIds.map((id) => roomMod.fixes[id]),
+    )
+
+    // 12.4 probeChainEnv.viewer() 将当前 backendId 传给 session.getCurrentUser（而非硬编码 github），且三项谓词在 check-chain-evaluation 中求值准确
     let seenViewerBackend = ''
     const probe = envMapMod.probeChainEnv(
       {
@@ -2751,7 +3442,7 @@ async function main(): Promise<void> {
         yxTemplateDoc.md.includes('# Issue tracker: Yunxiao') &&
         typeof yxTemplateDoc.mdZh === 'string' &&
         yxTemplateDoc.mdZh.length > 0,
-      '12.2 viewerOnce 透传当前 backendId=yunxiao，宿主检查链三项云效谓词全部求值为 pass，且 skillDoc 支持 issue-tracker-yunxiao.md 英文与中文模板读取',
+      '12.4 viewerOnce 透传当前 backendId=yunxiao，宿主检查链三项云效谓词全部求值为 pass，且 skillDoc 支持 issue-tracker-yunxiao.md 英文与中文模板读取',
       {
         viewerRes,
         seenViewerBackend,
@@ -2762,7 +3453,7 @@ async function main(): Promise<void> {
       },
     )
 
-    // 12.3 YUNXIAO_LIVE_VERIFY=1 环境变量门控的可选云效真机沙箱冒烟脚本（不设置或为 0 时安全跳过且不阻塞离线主链，开启时可通过注入 fetch 跑完探针与生命周期）
+    // 12.5 YUNXIAO_LIVE_VERIFY=1 环境变量门控的可选云效真机沙箱冒烟脚本（不设置或为 0 时安全跳过且不阻塞离线主链，开启时可通过注入 fetch 跑完探针与生命周期）
     const sandboxMod = await imp('scripts/real-machine/commands/yunxiao-sandbox.mts')
     const skippedRun = await sandboxMod.runYunxiaoLiveSmoke({
       env: {},
@@ -2872,7 +3563,7 @@ async function main(): Promise<void> {
         liveRun.lifecycle?.blockedWired === true &&
         liveRun.lifecycle?.closedState === 'closed' &&
         liveWriteCalls >= 3,
-      '12.3 yunxiao-sandbox.mts 受 YUNXIAO_LIVE_VERIFY=1 严格门控：未设置时安全跳过（exit 0），开启时完整执行 preflight、权限核验与沙箱工作项生命周期冒烟',
+      '12.5 yunxiao-sandbox.mts 受 YUNXIAO_LIVE_VERIFY=1 严格门控：未设置时安全跳过（exit 0），开启时完整执行 preflight、权限核验与沙箱工作项生命周期冒烟',
       { skippedRun, liveRun, liveWriteCalls },
     )
   }

@@ -36,6 +36,7 @@ export const READ_DEGRADED_REASONS = Object.freeze([
   'matches:tracker-doc',
   'matches:unknown',
   'coordinates:read-fail',
+  'coordinates:pref-write-fail',
   'preflight:config',
   'preflight:auth',
   'preflight:project',

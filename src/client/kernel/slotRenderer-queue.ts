@@ -16,7 +16,7 @@ const SR_ACTION_TYPE: any = Object.freeze({ FORM: 'form', INJECT_PROMPT: 'inject
 // 确保 st 上有 formModal 槽位状态，单例一次一张，排队走 st._formModalQueue；向导额外带 steps 与分步值。
 export function ensureFormModal(st: any): any {
   if (!st) return null
-  if (!st.formModal) st.formModal = { open: false, schema: [], submitAction: null, onSubmit: null, label: '', stepId: '', pending: false, isWizard: false, steps: null, stepIndex: 0, valuesByStep: null, fail: null, success: null }
+  if (!st.formModal) st.formModal = { open: false, schema: [], submitAction: null, onSubmit: null, label: '', stepId: '', pending: false, isWizard: false, steps: null, stepIndex: 0, initialStepIndex: 0, hydrateRpc: null, optionsByField: {}, defaultsByField: {}, bannersByField: {}, hydrating: false, authenticated: false, valuesByStep: null, fail: null, success: null }
   if (!st._formModalQueue) st._formModalQueue = []
   return st.formModal
 }
@@ -29,8 +29,10 @@ function _normSteps(raw: any): any[] {
   for (let i: number = 0; i < raw.length; i++) {
     const s: any = raw[i] || {}
     const schema: any = Array.isArray(s.schema) ? s.schema : (Array.isArray(s.fields) ? s.fields : [])
-    const title: string = typeof s.title === 'string' ? s.title : (typeof s.label === 'string' ? s.label : '')
-    out.push({ title: title, schema: schema })
+    const rawTitle: any = s.title !== undefined && s.title !== null ? s.title : s.label
+    const title: string = (rawTitle && typeof rawTitle === 'object' && !Array.isArray(rawTitle)) ? String(rawTitle.zh || rawTitle.en || rawTitle.fallback || '') : (typeof rawTitle === 'string' ? rawTitle : '')
+    const stepAction: any = (s.stepAction && typeof s.stepAction === 'object') ? s.stepAction : null
+    out.push({ title: title, schema: schema, stepAction: stepAction })
   }
   return out
 }
@@ -51,9 +53,19 @@ export function openFormModal(st: any, formAction: any, onSubmit: any): void {
   if (isWizard) {
     const steps: any[] = _normSteps(action.steps)
     if (!steps.length) return
+    const rawInitIdx: number = typeof action.initialStepIndex === 'number' && Number.isFinite(action.initialStepIndex) ? Math.floor(action.initialStepIndex) : 0
+    const clampedIdx: number = Math.max(0, Math.min(steps.length - 1, rawInitIdx))
     m.isWizard = true
     m.steps = steps
-    m.stepIndex = 0
+    m.initialStepIndex = clampedIdx
+    m.stepIndex = clampedIdx
+    m.authenticated = clampedIdx >= 1
+    m.hydrateRpc = (action.hydrateRpc && typeof action.hydrateRpc === 'object') ? action.hydrateRpc : null
+    m.optionsByField = {}
+    m.defaultsByField = {}
+    m.bannersByField = {}
+    m.hydrating = false
+    m._userNavigated = false
     m.valuesByStep = []
     for (let i: number = 0; i < steps.length; i++) {
       const init: any = {}
@@ -72,6 +84,13 @@ export function openFormModal(st: any, formAction: any, onSubmit: any): void {
     m.isWizard = false
     m.steps = null
     m.stepIndex = 0
+    m.initialStepIndex = 0
+    m.hydrateRpc = null
+    m.optionsByField = {}
+    m.defaultsByField = {}
+    m.bannersByField = {}
+    m.hydrating = false
+    m.authenticated = false
     m.valuesByStep = null
     m.open = true
     m.schema = Array.isArray(action.schema) ? action.schema : (Array.isArray(action.fields) ? action.fields : [])
@@ -121,7 +140,7 @@ export function createModalRenderForm(st: any): any {
   return function (schema: any, onSubmit: any): void {
     // 兼容：若 schema 是 wizard 形状（{steps}），则按 wizard；否则按 form
     if (schema && typeof schema === 'object' && !Array.isArray(schema) && Array.isArray(schema.steps)) {
-      openFormModal(st, { type: 'wizard', steps: schema.steps, label: schema.label || '向导', submitAction: schema.submitAction }, onSubmit)
+      openFormModal(st, { type: 'wizard', steps: schema.steps, label: schema.label || '向导', initialStepIndex: schema.initialStepIndex, hydrateRpc: schema.hydrateRpc, submitAction: schema.submitAction }, onSubmit)
       return
     }
     const fakeAction: any = { type: SR_ACTION_TYPE.FORM, schema: schema, submitAction: null, label: '填写表单' }

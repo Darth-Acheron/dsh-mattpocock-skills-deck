@@ -17,8 +17,8 @@ async function main() {
   const catalog = await import(require('url').pathToFileURL(path.join(ROOT, 'src', 'shared', 'tracker', 'check-catalog-dirs.js')).href)
 
   // #1190：GitLab 三步（glab:installed/authed/repoAccess）进清单，与 gh 三步同形（同横幅、同通用键、各自只适用自家后端）。
-  //   规格 #02 / #05：Yunxiao 三步（yunxiao:configured/authed/repoAccess）接在 glab 之后，各后端过滤后相对顺序不变。
-  const ORDER = ['selection:backendSelected', 'gh:installed', 'gh:authed', 'gh:remote', 'glab:installed', 'glab:authed', 'glab:repoAccess', 'yunxiao:configured', 'yunxiao:authed', 'yunxiao:repoAccess', 'tracker:initialized', 'skill:wayfinder']
+  //   规格 #21 / #22：Yunxiao 三步改为认证先行（authed/configured/repoAccess），各后端过滤后相对顺序不变。
+  const ORDER = ['selection:backendSelected', 'gh:installed', 'gh:authed', 'gh:remote', 'glab:installed', 'glab:authed', 'glab:repoAccess', 'yunxiao:authed', 'yunxiao:configured', 'yunxiao:repoAccess', 'tracker:initialized', 'skill:wayfinder']
   const idOf = (arr: any[]): string[] => arr.map((s) => String(s.id))
 
   // —— 场景 1：清单本身 = 维护者 2026-09-19 定的那一条顺序 ——
@@ -64,7 +64,7 @@ async function main() {
   assert.deepStrictEqual(idOf(guide.guideStepsFor('markdown')), ['selection:backendSelected', 'tracker:initialized', 'skill:wayfinder'], 'markdown 只拿到通用那三步（不插仓库段）')
   // #1190 起 gitlab 不再与 markdown 同形：自家三步进清单（装/登录/仓库），通用三步照旧。
   assert.deepStrictEqual(idOf(guide.guideStepsFor('gitlab')), ['selection:backendSelected', 'glab:installed', 'glab:authed', 'glab:repoAccess', 'tracker:initialized', 'skill:wayfinder'], 'gitlab 拿到自家三步 + 通用三步（gh 三步不混入）')
-  assert.deepStrictEqual(idOf(guide.guideStepsFor('yunxiao')), ['selection:backendSelected', 'yunxiao:configured', 'yunxiao:authed', 'yunxiao:repoAccess', 'tracker:initialized', 'skill:wayfinder'], 'yunxiao 拿到自家三步 + 通用三步（gh/glab 三步不混入）')
+  assert.deepStrictEqual(idOf(guide.guideStepsFor('yunxiao')), ['selection:backendSelected', 'yunxiao:authed', 'yunxiao:configured', 'yunxiao:repoAccess', 'tracker:initialized', 'skill:wayfinder'], 'yunxiao 拿到认证先行的自家三步 + 通用三步（gh/glab 三步不混入）')
   assert.deepStrictEqual(guide.guideStepsFor(null), [], '后端没定时返回空数组')
   assert.deepStrictEqual(guide.guideStepsFor(''), [], '后端为空串时返回空数组')
   assert.deepStrictEqual(guide.guideStepsFor('其它'), [], '未知后端返回空数组')
@@ -115,7 +115,7 @@ async function main() {
   assert.strictEqual(glOrdered.length, catalog.catalogFor('gitlab').length, 'GitLab：一行不多、一行不少')
 
   const yxOrdered = guide.orderStepsByGuide(guide.guideStepsFor('yunxiao'), chainStepsOf('yunxiao'))
-  assert.deepStrictEqual(idOf(yxOrdered), ['yunxiao:configured', 'yunxiao:authed', 'yunxiao:repoAccess', 'tracker:initialized', 'skill:wayfinder', 'skill:setup-matt-pocock-skills', 'skill:ask-matt', 'env:home'], 'Yunxiao 清单步骤上移：自家三步与通用两步在前，其余按目录顺序在后')
+  assert.deepStrictEqual(idOf(yxOrdered), ['yunxiao:authed', 'yunxiao:configured', 'yunxiao:repoAccess', 'tracker:initialized', 'skill:wayfinder', 'skill:setup-matt-pocock-skills', 'skill:ask-matt', 'env:home'], 'Yunxiao 清单步骤上移：认证、配置、仓库依次在前，其余按目录顺序在后')
   assert.strictEqual(yxOrdered.length, catalog.catalogFor('yunxiao').length, 'Yunxiao：一行不多、一行不少')
 
   // 后端没定时（清单为空）：原样返回，不崩
@@ -166,7 +166,14 @@ async function main() {
   assert.strictEqual(guide.GUIDE_STEPS.filter((s) => s.blocksSetup).length, 3, '三家远端后端的仓库步骤都挡初始化全文（gh:remote、glab:repoAccess、yunxiao:repoAccess）')
   assert.deepStrictEqual(guide.GUIDE_STEPS.filter((s) => s.blocksSetup).map((s) => s.id), ['gh:remote', 'glab:repoAccess', 'yunxiao:repoAccess'], '挡初始化的就是三家远端后端的仓库步骤（不多不少）')
   assert.strictEqual(ghStep.blocksSetup, false, 'gh 没装不挡初始化全文（挡住的是仓库那一步）')
-  ok('清单里的注入原话逐字一致，且只有两家后端的「仓库」步骤挡初始化全文')
+  for (const id of ['yunxiao:authed', 'yunxiao:configured', 'yunxiao:repoAccess']) {
+    const step = guide.GUIDE_STEPS.find((s) => s.id === id)
+    assert.strictEqual(step.missing.type, 'fixes-action', id + ' 的主入口使用后端声明的面板内向导，不向聊天框注入提示词')
+    assert.strictEqual(guide.guideInjectPromptOf(id), '', id + ' 不再声明聊天提示词')
+  }
+  const yxAuthStep = guide.GUIDE_STEPS.find((s) => s.id === 'yunxiao:authed')
+  assert.strictEqual(guide.guideMissingOf(yxAuthStep, [{ id: 'yunxiao:authed', status: 'pending' }]).type, 'recheck', '云效令牌状态未知时只重查，不把网络未知当成确定未登录')
+  ok('云效三步统一走面板修复动作，且只有三家后端的「仓库」步骤挡初始化全文')
 
   // —— 场景 9：门禁已接入 verify 链（#1125 起问规划函数，不再读 package.json 长串） ——
   const { isGatePlanned } = require('../scripts/lib/discover-gates.ts')

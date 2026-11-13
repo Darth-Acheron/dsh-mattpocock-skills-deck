@@ -8,6 +8,9 @@
  *      Yunxiao Projex 返回 HTTP 400 InvaildData.Failed（"无法创建此关系" / "不能流转到目标状态"），属于业务冲突（conflict）。
  *   3. 跨组织访问时返回 HTTP 403 Forbidden.InvalidUser.UserNotInCurrentOrganization，通用表已将 403 归为 auth，
  *      而无状态码的云效令牌缺失提示与 yunxiao.yaml 本地配置错误则通过 phrase 层精准归入 auth 与 env。
+ *   4. 实测证实（缺陷 02）UpdateWorkitem 对 Task 类工作项不接受 parentId 字段，毫秒级返回 HTTP 400
+ *      （"workitem does not contains field : [\"parentId\"]"）；若不设前置规则，通用表会把它落入 fallback
+ *      （network），写阶段回执再映射成 backend-timeout——一次服务端明确拒绝被误报成超时，把排查方向带偏到网络。
  */
 
 import { ERROR_KIND } from '../../contract/vocabulary.js'
@@ -48,15 +51,29 @@ export const YUNXIAO_ERROR_RULES: readonly ErrorRule[] = [
     layer: 'fact',
     when: (f) =>
       f.status === 400 &&
-      /无法创建此关系|不满足关系对应的类型约束|不能流转到目标状态|InvaildData\.Failed|InvalidData\.Failed/i.test(
+      /无法创建此关系|不满足关系对应的类型约束|工作项已存在父项|不能流转到目标状态|InvaildData\.Failed|InvalidData\.Failed/i.test(
         String(f.text || ''),
       ),
     example: {
       status: 400,
       text: '{"errorCode":"InvaildData.Failed","errorMessage":"无法创建此关系, 不满足关系对应的类型约束！"}',
     },
-    note: '真机实测（Wayfinder #11）：企业默认关系矩阵拒绝 DEPEND_ON / PARENT 或工作流禁止状态迁移时返回 HTTP 400，'
-      + '归入 conflict 供上层触发关系降级双写或提示状态冲突',
+    note: '真机实测：企业默认关系矩阵拒绝 DEPEND_ON / PARENT、单父冲突（工作项已存在父项）或工作流禁止状态迁移时返回 HTTP 400，'
+      + '归入 conflict 供上层触发关系降级双写或提示冲突',
+  },
+  {
+    kind: ERROR_KIND.UNSUPPORTED as ErrorKind,
+    layer: 'fact',
+    when: (f) =>
+      f.status === 400 &&
+      /does not contains field/i.test(String(f.text || '')),
+    example: {
+      status: 400,
+      text: '{"errorCode":"400","errorMessage":"workitem does not contains field : [\"parentId\"]"}',
+    },
+    note: '真机实测（缺陷 02，MattDemo——维护者用于真机核验的云效项目——的 Task）：UpdateWorkitem 对不含某字段的类型毫秒级返回这种 400，'
+      + '这是后端明确的字段合同拒绝，归入 unsupported 让写阶段回执停（backend-unsupported）而不是误导去查网络超时；'
+      + '原文里的 errorCode / errorMessage 随失败结果的 raw 原样保留',
   },
   {
     kind: ERROR_KIND.AUTH as ErrorKind,
@@ -159,14 +176,19 @@ export function asRecord(v: unknown): Record<string, unknown> | null {
   return null
 }
 
-/** 判断关系写接口失败是否属于云效企业关系矩阵类型约束限制（HTTP 400）。 */
+/**
+ * 判断关系写接口失败是否属于云效企业关系矩阵类型约束限制（HTTP 400）：
+ * 仅匹配类型间关系矩阵未开启的明确报错（「无法创建此关系」/「不满足关系对应的类型约束」），
+ * 排除同样携带 InvaildData.Failed 的单父冲突（「工作项已存在父项」，维护者用于真机核验的云效项目 MattDemo 实测）等其它业务冲突，
+ * 避免换父时将旧父未清净的单父冲突静默误降级为 ASSOCIATED。
+ */
 export function isRelationMatrixConstraintError(
   res: { ok?: boolean; status?: number; stderr?: string; stdout?: string } | null | undefined,
 ): boolean {
   if (!res || res.ok) return false
   if (res.status !== 400) return false
   const text = String(res.stderr || res.stdout || '')
-  return /无法创建此关系|不满足关系对应的类型约束|InvaildData\.Failed|InvalidData\.Failed|relation/i.test(text)
+  return /无法创建此关系|不满足关系对应的类型约束/i.test(text)
 }
 
 export default classifyYunxiaoError

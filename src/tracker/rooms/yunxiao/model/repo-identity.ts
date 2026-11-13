@@ -191,6 +191,9 @@ export function parseCodeupRepo(
   }
 }
 
+/** 同 parseCodeupRepo 的另一个入口名：房间外部按「远端 URL 解析」的语义调用。 */
+export { parseCodeupRepo as parseCodeupRemoteUrl }
+
 /**
  * 将 GetRepository 或 CreateRepository 的响应对象归一化为权威 Codeup repository identity。
  * 严格读取数字 id 与 pathWithNamespace（剥离可能附带的 .git），并将字符串或数字 accessLevel 统一转为 number。
@@ -273,11 +276,15 @@ export function learnYunxiaoContext(
   patch: Partial<LearnedYunxiaoContext> & { organizationId: string; projectId: string },
 ): LearnedYunxiaoContext | null {
   const key = normalizeCacheKey(cwdOrRefId)
-  if (!key || !patch.organizationId || !patch.projectId) return null
+  // 认证先行时，取得 currentUser 的那一刻可能还没有组织与项目坐标；只允许这种身份补丁先落缓存，
+  // 其他补丁仍必须同时给出完整坐标。已有坐标不被这次空值覆盖，后续坐标成功后再正常补齐。
+  if (!key || (!patch.currentUser && (!patch.organizationId || !patch.projectId))) return null
   const prev = learnedContexts.get(key)
   const next: LearnedYunxiaoContext = {
     ...(prev || {}),
     ...patch,
+    organizationId: patch.organizationId || prev?.organizationId || '',
+    projectId: patch.projectId || prev?.projectId || '',
   }
   if (learnedContexts.has(key)) learnedContexts.delete(key)
   learnedContexts.set(key, next)

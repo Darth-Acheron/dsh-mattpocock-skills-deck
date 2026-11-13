@@ -11,7 +11,8 @@
 import { yunxiaoClient } from './client.js'
 import type { YunxiaoCtx, YunxiaoHttpResult } from './client.js'
 import {
-  allWorkitemTypesPath, codeupRepositoriesCreatePath, codeupRepositoryPath,
+  allWorkitemTypesPath, codeupNamespacesListPath, codeupRepositoriesCreatePath,
+  codeupRepositoriesListPath, codeupRepositoryPath,
   platformOrganizationsPath, platformUserPath, projectLabelItemPath, projectLabelsPath,
   projectMembersPath, projectPath, projectsCreatePath, projectsSearchPath, projectTemplatesPath,
   projectWorkitemTypesPath, workitemCommentsPath, workitemFieldConfigPath, workitemPath,
@@ -140,10 +141,20 @@ export function requestWorkitemRelationRecordCreate(opCtx: MaybeCtx, organizatio
   return yunxiaoClient(opCtx).request(workitemRelationRecordsPath(organizationId, workitemId), { method: 'POST', body: { relationType, workitemId: targetWorkitemId }, timeoutMs, cmd: 'projex:relation-create', bucket: 'write' })
 }
 
-/** 删除工作项关联关系记录：DELETE .../workitems/{workitemId}/relationRecords（返回 204）。 */
+/**
+ * 删除工作项关联关系记录：DELETE .../workitems/{workitemId}/relationRecords（返回 204）。
+ * relationType 与目标 workitemId 按 DeleteWorkitemRelationRecord 官方文档放在 JSON 请求体里；
+ * 真机实测（缺陷 02）把二者放进查询串时服务端返回 400「Request parameters are invalid」，
+ * 而这条 400 此前会被上层尽力删除的容错吞掉，导致解除父子时原生 parentId 一直清不掉。
+ */
 export function requestWorkitemRelationRecordDelete(opCtx: MaybeCtx, organizationId: string, workitemId: string, relationType: YunxiaoRelationType, targetWorkitemId: string, timeoutMs: number): Promise<YunxiaoHttpResult> {
-  const q = 'relationType=' + encodeURIComponent(relationType) + '&workitemId=' + encodeURIComponent(targetWorkitemId)
-  return yunxiaoClient(opCtx).request(workitemRelationRecordsPath(organizationId, workitemId, q), { method: 'DELETE', timeoutMs, cmd: 'projex:relation-delete', bucket: 'write' })
+  return yunxiaoClient(opCtx).request(workitemRelationRecordsPath(organizationId, workitemId), {
+    method: 'DELETE',
+    body: { relationType, workitemId: targetWorkitemId },
+    timeoutMs,
+    cmd: 'projex:relation-delete',
+    bucket: 'write',
+  })
 }
 
 /** 查询项目标签列表：GET .../projects/{projectId}/labels（无标签时返回 204）。 */
@@ -171,4 +182,14 @@ export interface YunxiaoCreateRepoBody { name: string; path: string; visibility:
 /** 创建 Codeup 代码库（CreateRepository）：POST .../codeup/organizations/{orgId}/repositories?createParentPath=true。 */
 export function requestCodeupRepositoryCreate(opCtx: MaybeCtx, organizationId: string, body: YunxiaoCreateRepoBody, timeoutMs: number): Promise<YunxiaoHttpResult> {
   return yunxiaoClient(opCtx).request(codeupRepositoriesCreatePath(organizationId, true), { method: 'POST', body, timeoutMs, cmd: 'codeup:repo-create', bucket: 'write' })
+}
+
+/** 查询组织下可访问的 Codeup 代码库列表：GET .../codeup/organizations/{orgId}/repositories。 */
+export function requestCodeupRepositoriesList(opCtx: MaybeCtx, organizationId: string, query: string, timeoutMs: number): Promise<YunxiaoHttpResult> {
+  return yunxiaoClient(opCtx).request(codeupRepositoriesListPath(organizationId, query), { method: 'GET', timeoutMs, cmd: 'codeup:repos-list', bucket: 'read' })
+}
+
+/** 查询组织下可用的 Codeup 命名空间（代码组）列表：GET .../codeup/organizations/{orgId}/namespaces。 */
+export function requestCodeupNamespacesList(opCtx: MaybeCtx, organizationId: string, query: string, timeoutMs: number): Promise<YunxiaoHttpResult> {
+  return yunxiaoClient(opCtx).request(codeupNamespacesListPath(organizationId, query), { method: 'GET', timeoutMs, cmd: 'codeup:namespaces-list', bucket: 'read' })
 }

@@ -129,30 +129,46 @@ export type Show = {
 }
 
 /**
- * FieldSchema — form 动作的字段模式（v1 完整，含校验元数据）。
+ * FieldSchema — 表单与向导步骤共用的声明式字段模式（含动态选项、条件显隐与校验元数据）。
  * @typedef {Object} FieldSchema
- * @property {string} name 字段名（提交时 key）
- * @property {'text'|'number'|'date'|'single'|'multi'|'directory'|'file'} [type]
- * @property {string} [label] 人读标签（兼容 labelKey）
- * @property {string} [labelKey] i18n 键
- * @property {boolean} [required]
- * @property {string[]} [options] single/multi 候选
- * @property {string} [placeholderKey]
- * @property {string} [placeholder]
- * @property {string} [defaultValue]
- * @property {string} [pattern]
+ * @property {string} name 字段名（提交时的键名）
+ * @property {'text'|'number'|'date'|'single'|'radio'|'multi'|'directory'|'file'|'password'|'select'} [type] 控件类型
+ * @property {FieldText} [label] 人读双语或纯文本标签（兼容 labelKey）
+ * @property {string} [labelKey] 词表键名
+ * @property {boolean} [required] 是否必填（隐藏字段自动跳过校验）
+ * @property {FieldOption[]} [options] 单选、多选或下拉候选列表
+ * @property {{field:string, equals?:string|string[], in?:string[], notEquals?:string}} [visibleWhen] 条件显隐规则（in 与数组 equals 均表示命中任一候选即显示）
+ * @property {{level:'warn'|'info'|'warning', kind?:'warn'|'info'|'warning', text:FieldText}} [banner] 字段下方内联警告或提示横幅
+ * @property {string} [placeholderKey] 占位符词表键名
+ * @property {FieldText} [placeholder] 占位提示文本
+ * @property {string} [defaultValue] 静态初始默认值
+ * @property {string} [pattern] 正则校验表达式
  */
+export type FieldText = string | { zh: string; en: string }
+
+export type FieldOption = string | { value: string; label: FieldText }
+
 export type FieldSchema = {
   name: string
-  type?: 'text' | 'number' | 'date' | 'single' | 'multi' | 'directory' | 'file'
-  label?: string
+  type?: 'text' | 'number' | 'date' | 'single' | 'radio' | 'multi' | 'directory' | 'file' | 'password' | 'select'
+  label?: FieldText
   labelKey?: string
   required?: boolean
-  options?: string[]
+  options?: FieldOption[]
+  optionSubs?: Record<string, FieldText>
+  readOnlyWhenSingle?: boolean
+  visibleWhen?: { field: string; equals?: string | string[]; in?: string[]; notEquals?: string }
+  helperLink?: { label: FieldText; url: string }
+  helperLines?: FieldText[]
+  banner?: { level: 'warn' | 'info' | 'warning'; kind?: 'warn' | 'info' | 'warning'; text: FieldText }
+  rehydrateOnChange?: boolean
   placeholderKey?: string
-  placeholder?: string
+  placeholder?: FieldText
   defaultValue?: string
+  defaultFrom?: string
+  preview?: FieldText
   pattern?: string
+  maxLength?: number
 }
 
 /**
@@ -200,7 +216,9 @@ export type Action = {
   fields?: FieldSchema[]
   submitAction?: Action
   submit?: { type?: string; endpoint?: string; method?: string }
-  steps?: Array<{ title?: string; schema: FieldSchema[] }>
+  initialStepIndex?: number
+  hydrateRpc?: { method: string; params?: Record<string, unknown> }
+  steps?: Array<{ title?: FieldText; schema: FieldSchema[]; stepAction?: { type: 'rpc'; method: string; params?: Record<string, unknown> } }>
   form?: { title?: string; desc?: string; fields?: FieldSchema[]; submit?: { type?: string; endpoint?: string; method?: string } }
   target?: 'chain' | 'snapshot'
 }

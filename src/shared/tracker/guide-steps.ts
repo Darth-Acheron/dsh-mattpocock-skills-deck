@@ -153,23 +153,23 @@ export const GUIDE_STEPS: ReadonlyArray<GuideStep> = Object.freeze([
     blocksSetup: true,
   },
   {
-    // 规格 #02 / #05：云效本地坐标已配置（docs/agents/yunxiao.yaml 或 YUNXIAO_* 环境变量）。
-    id: 'yunxiao:configured',
-    checks: ['yunxiao:configured'],
-    backends: ['yunxiao'],
-    ready: STEP_READY.CHAIN,
-    banner: BANNER.ghCli,
-    missing: MISSING.installCli,
-    blocksSetup: false,
-  },
-  {
-    // 规格 #02 / #05：云效个人访问令牌（x-yunxiao-token）已配置且有效。
+    // #22：认证先行，三项都使用后端声明的面板内向导，不向聊天框注入令牌或坐标提示词。
     id: 'yunxiao:authed',
     checks: ['yunxiao:authed'],
     backends: ['yunxiao'],
     ready: STEP_READY.CHAIN,
     banner: BANNER.ghAuth,
-    missing: MISSING.cliLogin,
+    missing: MISSING.repoRemoteFix,
+    blocksSetup: false,
+  },
+  {
+    // 认证通过后，再配置云效本地坐标（docs/agents/yunxiao.yaml 或 YUNXIAO_* 环境变量）。
+    id: 'yunxiao:configured',
+    checks: ['yunxiao:configured'],
+    backends: ['yunxiao'],
+    ready: STEP_READY.CHAIN,
+    banner: BANNER.ghCli,
+    missing: MISSING.repoRemoteFix,
     blocksSetup: false,
   },
   {
@@ -278,8 +278,8 @@ export function guideStepState(step: GuideStep | null | undefined, chainSteps: A
  */
 export function guideBannerOf(step: GuideStep | null | undefined, chainSteps: Array<ChainStepRef> | null | undefined): GuideBanner | null {
   try {
-    // #1190：不认步骤名（gh:authed / glab:authed），认「这一步是不是按通用登录键注入」——两后端登录步同为 cliLogin。
-    if (step && step.missing && (step.missing as GuideMissing).prompt === 'cliLogin' && guideStepState(step, chainSteps) === 'pending') return BANNER.ghAuthUnknown
+    // 通用 CLI 登录步按 cliLogin 识别；云效已改用面板向导，所以用稳定的检查 id 保留同样的未知态重查语义。
+    if (step && step.missing && ((step.missing as GuideMissing).prompt === 'cliLogin' || step.id === 'yunxiao:authed') && guideStepState(step, chainSteps) === 'pending') return BANNER.ghAuthUnknown
     return (step && step.banner) || null
   } catch (e) { return (step && step.banner) || null }
 }
@@ -290,8 +290,8 @@ export function guideBannerOf(step: GuideStep | null | undefined, chainSteps: Ar
  */
 export function guideMissingOf(step: GuideStep | null | undefined, chainSteps: Array<ChainStepRef> | null | undefined): GuideMissing | null {
   try {
-    // #1190：同上，不认步骤名，认通用登录键。
-    if (step && step.missing && (step.missing as GuideMissing).prompt === 'cliLogin' && guideStepState(step, chainSteps) === 'pending') return MISSING.loginRecheck
+    // 云效认证的网络未知也只提供重查，不打开会把未知当成确定失败的修复流程。
+    if (step && step.missing && ((step.missing as GuideMissing).prompt === 'cliLogin' || step.id === 'yunxiao:authed') && guideStepState(step, chainSteps) === 'pending') return MISSING.loginRecheck
     return (step && step.missing) || null
   } catch (e) { return (step && step.missing) || null }
 }

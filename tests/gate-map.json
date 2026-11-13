@@ -1,16 +1,16 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-13T09:11:43.900Z",
+  "generatedAt": "2026-11-13T10:01:19.454Z",
   "generatedBy": "node scripts/gate-map.mts",
-  "chainLength": 598,
-  "gateCount": 598,
-  "attributedGates": 542,
+  "chainLength": 599,
+  "gateCount": 599,
+  "attributedGates": 543,
   "unattributedGates": 56,
   "buildOutputOnlyGates": 21,
-  "completionRecordedGates": 141,
+  "completionRecordedGates": 142,
   "smokeLength": 8,
   "smokeCompletionRecordedGates": 5,
-  "graphFileCount": 988,
+  "graphFileCount": 994,
   "gates": [
     {
       "step": "node tests/verify-1207-splice-ts.ts",
@@ -385,17 +385,19 @@
       "step": "node tests/verify-contract-types.ts",
       "file": "tests/verify-contract-types.ts",
       "guards": [
+        "scripts/ts-hook.mts",
         "src/tracker/contract",
         "src/tracker/contract/index.ts"
       ],
       "dirs": [
+        "scripts",
         "src/tracker/contract"
       ],
       "unattributed": false,
       "buildOutputOnly": false,
       "completionRecord": false,
       "expectedAssertions": 0,
-      "reason": "归属来自 文件头 // 门禁归属: 注释（共 2 条）"
+      "reason": "归属来自 文件头 // 门禁归属: 注释（共 3 条）"
     },
     {
       "step": "node tests/verify-contract-vocabulary.ts",
@@ -10480,6 +10482,7 @@
         "src/tracker/rooms",
         "src/tracker/rooms/github/support/errors.ts",
         "src/tracker/rooms/gitlab/errors.ts",
+        "src/tracker/rooms/yunxiao/errors.ts",
         "tests/fixtures/error-samples.ts"
       ],
       "dirs": [
@@ -10489,13 +10492,14 @@
         "src/tracker/rooms",
         "src/tracker/rooms/github/support",
         "src/tracker/rooms/gitlab",
+        "src/tracker/rooms/yunxiao",
         "tests/fixtures"
       ],
       "unattributed": false,
       "buildOutputOnly": false,
       "completionRecord": false,
       "expectedAssertions": 0,
-      "reason": "归属来自：读文件调用（readFileSync / readFile / path.join(ROOT, ...)） 1 条；载入模块（require / import / pathToFileURL） 1 条；源码里的路径字面量 5 条"
+      "reason": "归属来自：读文件调用（readFileSync / readFile / path.join(ROOT, ...)） 1 条；源码里的路径字面量 7 条"
     },
     {
       "step": "node tests/verify-error-single-source.ts",
@@ -13829,6 +13833,7 @@
         "src/tracker/rooms/yunxiao/model/description-markers.ts",
         "src/tracker/rooms/yunxiao/model/repo-identity.ts",
         "src/tracker/rooms/yunxiao/model/workspace-config.ts",
+        "src/tracker/rooms/yunxiao/model/yaml-flat.ts",
         "src/tracker/rooms/yunxiao/queries.ts",
         "src/tracker/rooms/yunxiao/requests.ts",
         "src/tracker/rooms/yunxiao/support/read-log.ts"
@@ -13843,8 +13848,47 @@
       "unattributed": false,
       "buildOutputOnly": false,
       "completionRecord": true,
-      "expectedAssertions": 33,
-      "reason": "归属来自 文件头 // 门禁归属: 注释（共 11 条）"
+      "expectedAssertions": 35,
+      "reason": "归属来自 文件头 // 门禁归属: 注释（共 12 条）"
+    },
+    {
+      "step": "node tests/verify-yunxiao-onboarding-wizard.ts",
+      "file": "tests/verify-yunxiao-onboarding-wizard.ts",
+      "guards": [
+        "src/client/kernel/actions.ts",
+        "src/client/kernel/modal-fields.ts",
+        "src/client/kernel/modal-wizard-step.ts",
+        "src/client/kernel/slotRenderer-modal-view.ts",
+        "src/client/kernel/slotRenderer-queue.ts",
+        "src/host/publishFlow.ts",
+        "src/host/yunxiaoOnboarding.ts",
+        "src/refresh/rooms/client/repo-sync-renderer.ts",
+        "src/shared/tracker/chain-types.ts",
+        "src/shared/tracker/chain-validate.ts",
+        "src/tracker/registry/builtins.ts",
+        "src/tracker/rooms/yunxiao/model/workspace-config.ts",
+        "src/tracker/rooms/yunxiao/model/yaml-flat.ts",
+        "src/tracker/rooms/yunxiao/project/discover.ts",
+        "src/tracker/rooms/yunxiao/project/init-project-helpers.ts",
+        "src/tracker/rooms/yunxiao/project/init-project-persist.ts",
+        "src/tracker/rooms/yunxiao/project/init-project.ts",
+        "src/tracker/rooms/yunxiao/room/fixes.ts"
+      ],
+      "dirs": [
+        "src/client/kernel",
+        "src/host",
+        "src/refresh/rooms/client",
+        "src/shared/tracker",
+        "src/tracker/registry",
+        "src/tracker/rooms/yunxiao/model",
+        "src/tracker/rooms/yunxiao/project",
+        "src/tracker/rooms/yunxiao/room"
+      ],
+      "unattributed": false,
+      "buildOutputOnly": false,
+      "completionRecord": true,
+      "expectedAssertions": 48,
+      "reason": "归属来自 文件头 // 门禁归属: 注释（共 18 条）"
     },
     {
       "step": "node tests/verify-yunxiao-room.ts",
@@ -13909,7 +13953,7 @@
       "unattributed": false,
       "buildOutputOnly": false,
       "completionRecord": true,
-      "expectedAssertions": 41,
+      "expectedAssertions": 56,
       "reason": "归属来自 文件头 // 门禁归属: 注释（共 36 条）"
     },
     {
@@ -14389,6 +14433,7 @@
       "node tests/verify-1207-splice-ts.ts",
       "node tests/verify-build-cwd-products.ts",
       "node tests/verify-leaves.ts",
+      "node tests/verify-contract-types.ts",
       "node tests/verify-dependency-rules.ts",
       "node tests/verify-gate-map.ts",
       "node tests/verify-1115-timer-handle.ts",
@@ -14722,6 +14767,7 @@
       "node tests/verify-time-config.ts",
       "node tests/verify-ui-feedback.ts",
       "node tests/verify-workspace-file-note.ts",
+      "node tests/verify-yunxiao-onboarding-wizard.ts",
       "node tests/verify-locale-completeness.ts",
       "node tests/verify-locale-config.ts"
     ],
@@ -15260,6 +15306,7 @@
       "node tests/verify-update-panel.ts",
       "node tests/verify-version-control-host.ts",
       "node tests/verify-visible-truth.ts",
+      "node tests/verify-yunxiao-onboarding-wizard.ts",
       "node tests/verify-yunxiao-room.ts"
     ],
     "src/host/platform": [
@@ -15451,7 +15498,8 @@
       "node tests/verify-log-fields.ts",
       "node tests/verify-panel-workspace-isolation.ts",
       "node tests/verify-subdir-first-frame.ts",
-      "node tests/verify-time-config.ts"
+      "node tests/verify-time-config.ts",
+      "node tests/verify-yunxiao-onboarding-wizard.ts"
     ],
     "src/refresh/rooms/host": [
       "node tests/verify-deck-event-gate.ts",
@@ -15760,6 +15808,7 @@
       "node tests/verify-issue232-sync.ts",
       "node tests/verify-subdir-first-frame.ts",
       "node tests/verify-time-config.ts",
+      "node tests/verify-yunxiao-onboarding-wizard.ts",
       "node tests/verify-yunxiao-room.ts"
     ],
     "src/shared/ui": [
@@ -15949,6 +15998,7 @@
       "node tests/verify-time-config.ts",
       "node tests/verify-tracker-contract.ts",
       "node tests/verify-tracker-session.ts",
+      "node tests/verify-yunxiao-onboarding-wizard.ts",
       "node tests/verify-yunxiao-room.ts"
     ],
     "src/tracker/rooms": [
@@ -16227,6 +16277,7 @@
       "node tests/verify-md-format-config.ts"
     ],
     "src/tracker/rooms/yunxiao": [
+      "node tests/verify-error-rule-samples.ts",
       "node tests/verify-yunxiao-config-and-remote.ts",
       "node tests/verify-yunxiao-room.ts"
     ],
@@ -16244,15 +16295,18 @@
     ],
     "src/tracker/rooms/yunxiao/model": [
       "node tests/verify-yunxiao-config-and-remote.ts",
+      "node tests/verify-yunxiao-onboarding-wizard.ts",
       "node tests/verify-yunxiao-room.ts"
     ],
     "src/tracker/rooms/yunxiao/project": [
+      "node tests/verify-yunxiao-onboarding-wizard.ts",
       "node tests/verify-yunxiao-room.ts"
     ],
     "src/tracker/rooms/yunxiao/repo": [
       "node tests/verify-yunxiao-room.ts"
     ],
     "src/tracker/rooms/yunxiao/room": [
+      "node tests/verify-yunxiao-onboarding-wizard.ts",
       "node tests/verify-yunxiao-room.ts"
     ],
     "src/tracker/rooms/yunxiao/support": [
@@ -16621,9 +16675,9 @@
   },
   "coverage": {
     "sourceRoot": "src",
-    "fileCount": 1013,
+    "fileCount": 1019,
     "dirCount": 111,
-    "coveredFileCount": 1013,
+    "coveredFileCount": 1019,
     "ungatedFileCount": 0,
     "ungatedDirCount": 0,
     "dedicatedDirCount": 90,
@@ -16661,6 +16715,7 @@
       "src/client/kernel/locale-data.ts",
       "src/client/kernel/locale.ts",
       "src/client/kernel/modal-fields.ts",
+      "src/client/kernel/modal-wizard-step.ts",
       "src/client/kernel/motion.ts",
       "src/client/kernel/portal.ts",
       "src/client/kernel/prompt-data.ts",
@@ -17131,6 +17186,7 @@
       "src/host/workspaceCwd.ts",
       "src/host/workspaceKey.ts",
       "src/host/workspaceLabelColors.ts",
+      "src/host/yunxiaoOnboarding.ts",
       "src/refresh/README.md",
       "src/refresh/contract/.gitkeep",
       "src/refresh/contract/host-timer-ports.ts",
@@ -17578,7 +17634,11 @@
       "src/tracker/rooms/yunxiao/model/normalize.ts",
       "src/tracker/rooms/yunxiao/model/repo-identity.ts",
       "src/tracker/rooms/yunxiao/model/workspace-config.ts",
+      "src/tracker/rooms/yunxiao/model/yaml-flat.ts",
       "src/tracker/rooms/yunxiao/preflight.ts",
+      "src/tracker/rooms/yunxiao/project/discover.ts",
+      "src/tracker/rooms/yunxiao/project/init-project-helpers.ts",
+      "src/tracker/rooms/yunxiao/project/init-project-persist.ts",
       "src/tracker/rooms/yunxiao/project/init-project.ts",
       "src/tracker/rooms/yunxiao/queries.ts",
       "src/tracker/rooms/yunxiao/repo/current-user.ts",

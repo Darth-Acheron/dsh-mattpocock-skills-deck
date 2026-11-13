@@ -280,6 +280,18 @@ export interface RepositoryRef {
    * 给 comment/reopen/update 加形参会把调用上下文挤位、破坏既有后端实现。
    */
   effortId?: string
+  /** 可选的关联项目主页深链（#24：如 Yunxiao Projex 项目主页）。 */
+  projectUrl?: string
+  /** 可选的关联代码库主页深链（#24：如 Codeup 代码库主页，none 模式省略）。 */
+  repoUrl?: string
+  /** 可选的项目代号（#24：如 Yunxiao Projex 的 customCode）。 */
+  customCode?: string
+  /** 可选的多深链列表（#24：如云效同时产出 Projex 项目深链与 Codeup 代码库深链）。 */
+  extraUrls?: Array<{ label: string | { zh: string; en: string }; url: string; primary?: boolean }>
+  /** 可选的置备完成提示语（#24：如提交信息关联工作项提示）。 */
+  hint?: string | { zh: string; en: string }
+  /** 标记本次置备是否实际新建了远端项目（#24：供宿主仅在新建项目成功后记忆默认组织偏好）。 */
+  projectCreated?: boolean
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

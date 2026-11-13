@@ -6,9 +6,10 @@
  *   src/tracker/kernel/error-rules.ts            COMMON_RULES / RULE_LAYERS / matchRule / judgeFactsDetailed / rateLimitClassOf
  *   src/tracker/rooms/github/support/errors.ts    本家前置扩展表 + classifyGhError
  *   src/tracker/rooms/gitlab/errors.ts    本家前置扩展表 + classifyGlabError
+ *   src/tracker/rooms/yunxiao/errors.ts   本家前置扩展表 + classifyYunxiaoError
  *   src/tracker/rooms/markdown/**         本后端有无可比的扩展表（今天没有，门禁会说明）
  *   docs/adr/20261014-error-classification-single-source.md  第 2 节第 3 条：层序的真源
- *   tests/fixtures/error-samples.js       真实原文夹具（本门禁的证据表）
+ *   tests/fixtures/error-samples.ts       真实原文夹具（本门禁的证据表）
  *
  * 六段断言（A–F）：
  *   A 规则表自证：每条规则拿**它自带的样本**跑 matchRule，命中的必须正好是它自己
@@ -17,7 +18,7 @@
  *     兜底项只能是最后一条，且只有一条。文档与代码对不上时**不改任何一边**，原样报出来。
  *   C 扩展项不许复制通用项：各后端前置扩展表逐条与 COMMON_RULES 比，同档位 + 同匹配写法
  *     （pattern 源一字不差，或两个纯事实判断在整张探针矩阵上结论完全一致）就判失败。
- *   D 真实原文夹具：tests/fixtures/error-samples.js 逐条断言档位，并核对每条都标了来源、
+ *   D 真实原文夹具：tests/fixtures/error-samples.ts 逐条断言档位，并核对每条都标了来源、
  *     规则样本类来源能在盘上逐字找到出处（不许编造"真实"原文）。
  *   E 自证：拿「坏词表 / 倒序 / 删兜底 / 改错期望档位 / 空样本」五种反例试这道门禁会不会红 ——
  *     不会红的门禁等于没写。E1、E2 复现的正是本门禁第一次跑时抓出来的两条真实缺陷。
@@ -226,7 +227,9 @@ function discoverExtensionTables(dirRel) {
 async function main() {
   const rulesMod = await imp('src/tracker/kernel/error-rules.ts')
   const { COMMON_RULES, RULE_LAYERS, matchRule, judgeFactsDetailed, rateLimitClassOf } = rulesMod
-  const samples = require('./fixtures/error-samples.js')
+  // 夹具已迁成 .ts：这行原来是 require('./fixtures/error-samples.js')，裸 require 在本文件的装载路径下
+  // 不经装载钩子的同名解析，迁移后当场红（Cannot find module）；改走本门禁既有的 imp() 装载夹具。
+  const samples = await imp('tests/fixtures/error-samples.ts')
 
   // ── A 规则表自证 ──────────────────────────────────────────────────────────
   console.log('\nA 规则表自证（每条规则拿自带的样本跑判档，命中的必须是它自己）')
@@ -354,18 +357,24 @@ async function main() {
   for (const s of ERROR_SAMPLES) sampleBad.push(...sampleProblems(s, sampleApi))
   check(sampleBad.length === 0, '每条真实原文夹具的档位与层都对得上' + (sampleBad.length ? ' —— ' + sampleBad.join('；') : '（' + ERROR_SAMPLES.length + ' 条）'))
 
-  // 有后端归属的夹具，同时从后端自己的判档入口跑一遍（走「扩展 → 通用」那一趟）
+  // 有后端归属的夹具，同时从后端自己的判档入口跑一遍（走「扩展 → 通用」那一趟）。
+  // via →「判档入口所在文件 + 模块上的判档函数名」收成一张表：选文件与选函数两处共用，新增后端只加一行。
+  const VIA_ENTRANCES = {
+    github: { file: 'src/tracker/rooms/github/support/errors.ts', fn: 'classifyGhError' },
+    gitlab: { file: 'src/tracker/rooms/gitlab/errors.ts', fn: 'classifyGlabError' },
+    yunxiao: { file: 'src/tracker/rooms/yunxiao/errors.ts', fn: 'classifyYunxiaoError' },
+  }
   const backendBad = []
   const backendCache = {}
   for (const s of ERROR_SAMPLES) {
     if (!s.via) continue
-    const file = s.via === 'github' ? 'src/tracker/rooms/github/support/errors.ts'
-      : s.via === 'gitlab' ? 'src/tracker/rooms/gitlab/errors.ts' : null
-    if (!file) { backendBad.push(s.id + '：via=' + s.via + ' 没有对应的判档入口'); continue }
+    const entrance = VIA_ENTRANCES[s.via]
+    if (!entrance) { backendBad.push(s.id + '：via=' + s.via + ' 没有对应的判档入口'); continue }
+    const file = entrance.file
     try {
       if (!backendCache[file]) {
         const mod = await imp(file)
-        const fn = s.via === 'github' ? mod.classifyGhError : mod.classifyGlabError
+        const fn = mod[entrance.fn]
         if (typeof fn !== 'function') throw new Error('模块里找不到判档入口函数')
         backendCache[file] = fn
       }

@@ -147,17 +147,42 @@ export type YunxiaoHostExtras = {
   YUNXIAO_ISSUE_TRACKER_TEMPLATE: typeof import('../rooms/yunxiao/room/prompts.js').YUNXIAO_ISSUE_TRACKER_TEMPLATE
   /** 注入云效房间自定义 fetch 函数（供按需真机冒烟脚本或测试在不深引房间的情况下使用）。 */
   setYunxiaoCustomFetch: typeof import('../rooms/yunxiao/client.js').setYunxiaoCustomFetch
+  /** 探测当前令牌对应的云效平台用户身份（GET /oapi/v1/platform/user）。 */
+  probeYunxiaoPlatformUser: typeof import('../rooms/yunxiao/repo/current-user.js').probeYunxiaoPlatformUser
+  /** 解析云效工作区基础地址（apiBaseUrl / webBaseUrl）。 */
+  resolveYunxiaoBaseUrls: typeof import('../rooms/yunxiao/model/workspace-config.js').resolveYunxiaoBaseUrls
+  /** 解析云效工作区非敏感坐标（organizationId / projectId / repositoryId 等）。 */
+  resolveYunxiaoCoordinates: typeof import('../rooms/yunxiao/model/workspace-config.js').resolveYunxiaoCoordinates
+  /** 从环境变量或本机受保护文件加载云效个人访问令牌。 */
+  loadYunxiaoToken: typeof import('../rooms/yunxiao/model/workspace-config.js').loadYunxiaoToken
+  /** 提取多行文本中的第一行非空非注释内容。 */
+  firstNonEmptyLine: typeof import('../rooms/yunxiao/model/workspace-config.js').firstNonEmptyLine
+  /** 将云效响应或异常归入契约错误分类。 */
+  classifyYunxiaoError: typeof import('../rooms/yunxiao/errors.js').classifyYunxiaoError
+  /** 发现当前工作区的云效组织、Yunxiao Projex 项目、错位纠偏建议与 Codeup 代码库/命名空间（规格 #24）。 */
+  discoverYunxiaoWorkspace: typeof import('../rooms/yunxiao/project/discover.js').discoverYunxiaoWorkspace
 }
 
 /** 取出 Yunxiao 房的宿主实现。 */
 export async function loadYunxiaoHostExtras(): Promise<YunxiaoHostExtras> {
-  const [prompts, client] = await Promise.all([
+  const [prompts, client, currentUser, wsCfg, errors, discover] = await Promise.all([
     import('../rooms/yunxiao/room/prompts.js'),
     import('../rooms/yunxiao/client.js'),
+    import('../rooms/yunxiao/repo/current-user.js'),
+    import('../rooms/yunxiao/model/workspace-config.js'),
+    import('../rooms/yunxiao/errors.js'),
+    import('../rooms/yunxiao/project/discover.js'),
   ])
   return {
     YUNXIAO_ISSUE_TRACKER_TEMPLATE: prompts.YUNXIAO_ISSUE_TRACKER_TEMPLATE,
     setYunxiaoCustomFetch: client.setYunxiaoCustomFetch,
+    probeYunxiaoPlatformUser: currentUser.probeYunxiaoPlatformUser,
+    resolveYunxiaoBaseUrls: wsCfg.resolveYunxiaoBaseUrls,
+    resolveYunxiaoCoordinates: wsCfg.resolveYunxiaoCoordinates,
+    loadYunxiaoToken: wsCfg.loadYunxiaoToken,
+    firstNonEmptyLine: wsCfg.firstNonEmptyLine,
+    classifyYunxiaoError: errors.classifyYunxiaoError,
+    discoverYunxiaoWorkspace: discover.discoverYunxiaoWorkspace,
   }
 }
 
