@@ -807,7 +807,8 @@ console.log('子议题关联脚本门禁（#572 · 命令行黑盒）')
   check(r.status === 0 && r.json && r.json.ok === true, '22.1 子目录里跑能认得出后端并跑通（实得 exit=' + r.status + ' / ' + (r.json ? JSON.stringify(r.json.error || '') : '回包读不出') + '）')
   const ghCwds = argvCwds()
   // #30：macOS 上 os.tmpdir() 给的 /var/… 是 /private/var/… 的符号链接，子进程报上来的 cwd 是解析
-  //   后的真实路径；比之前把期望也解析一遍，两边都在真实路径上比（Windows 上 realpathSync 原样返回，判据不变）。
+  //   后的真实路径；比对之前把期望也解析一遍，两边都在真实路径上比。Windows 上判据不变的原因是
+  //   两侧同过同一函数（realpathSync 在 Windows 返回的是规范化后的真实路径，并非原样返回）。
   const wsGithubReal = fs.realpathSync(wsGithub)
   check(ghCwds.length > 0 && ghCwds.every(function (c) { return c === wsGithubReal }), '22.2 每条 gh 命令都在工作区根那一层跑（不是在子目录里；实得 ' + JSON.stringify(ghCwds) + '）')
 

@@ -198,8 +198,9 @@ function displayArgv(argv: string[]): string {
 
 /** 两个路径是不是同一个（Windows 大小写不敏感；子进程回读的 cwd 可能把 D:\Temp 写成 D:\temp）。
  *   macOS 的临时目录 /var/… 是 /private/var/… 的符号链接，子进程报上来的 cwd 是解析后的真实路径，
- *   所以解析相等的两个路径再各过一遍 realpath 对一次（哪边解析不了就保留原样；Windows 上 realpath
- *   原样返回，判据不变；#30）。 */
+ *   所以解析相等的两个路径再各过一遍 realpath 对一次（哪边解析不了就保留原样）。判据在 Windows 上
+ *   不变的原因是两侧同过同一函数、且另有 toLowerCase 折叠，不是 realpathSync 会原样返回——Windows 上
+ *   它返回的是规范化后的真实路径，大小写、斜杠方向、短名都可能变（#30）。 */
 export function samePath(left: string, right: string): boolean {
   const a = path.resolve(String(left || ''))
   const b = path.resolve(String(right || ''))

@@ -141,10 +141,10 @@ async function main(): Promise<void> {
   git(repoA, ['add', '-A'])
   git(repoA, ['commit', '-q', '-m', '属性规则'])
   fs.writeFileSync(path.join(repoA, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\necho hook-ran\nexit 0\n')
-// 钩子文件要带执行位：writeFileSync 不带权限，POSIX 上 git 会把不可执行的钩子当不存在（hint: ignored
-//   because it's not set as executable），「真的跑起了钩子」那组断言全部空转（#30 实测）；Windows 上
-//   chmodSync 不改判据。
-fs.chmodSync(path.join(repoA, '.git', 'hooks', 'pre-commit'), 0o755)
+  // 钩子文件要带执行位：writeFileSync 不带权限，POSIX 上 git 会把不可执行的钩子当不存在（hint: ignored
+  //   because it's not set as executable），「真的跑起了钩子」那组断言全部空转（#30 实测）；Windows 上
+  //   chmodSync 不改判据。
+  fs.chmodSync(path.join(repoA, '.git', 'hooks', 'pre-commit'), 0o755)
   fs.writeFileSync(path.join(repoA, '.git', 'hooks', 'pre-commit.sample'), '#!/bin/sh\nexit 0\n')
   const vcA = makeVc()
   const rd = await vcA.handleGitConfigRead({ cwd: repoA, path: 'a.txt', address: 'base@example.com' })

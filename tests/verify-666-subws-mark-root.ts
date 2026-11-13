@@ -57,8 +57,13 @@ const { renderMark, tipTextOf, keyOfFn, tipsFromLocale, localeTextOf } = require
 
 console.log('=== #666 面板归属标志：取根 · 该不该出现 · 显示哪几行 ===')
 
-// ── 真件一：内核里那把规整函数（与 verify-653 同口径，不是另写的仿制品）
-const keyOf = keyOfFn()
+// ── 真件一：内核里那把规整函数（与 verify-653 同口径，不是另写的仿制品）。
+// 本扇判据本来是 Windows 形钥匙的语义（大小写折叠才谈得上「大小写不同仍算同一条」），
+// 交给组件闭包的那把要显式按 win32 折算：POSIX 宿主上 keyOf 单参调用不折叠，C10 的折算
+// 分支永远走不到、判据跟着收窄（#30 评审发现）；包一层后任何宿主上语义一致，组件拿到
+// 的仍是有真实折算逻辑的同一把规整函数，不是仿制品。
+const keyOfRaw = keyOfFn()
+const keyOf = (v: any) => keyOfRaw(v, 'win32')
 
 // ── 真件二：真实 locale 里的四行文案（zh 在前、en 在后，与文件里两处的顺序一致）
 const grabs = tipsFromLocale()
@@ -175,10 +180,10 @@ else bad('C8 兄弟目录被当成了子目录切开：' + JSON.stringify(relOf(
 if (relOf('D:\\ilife', 'D:\\ilife2') === 'D: › ilife2') ok('C9 另一条前缀相同但不同名字的目录：同样整段列出')
 else bad('C9 前缀相同的别的目录被切开了：' + JSON.stringify(relOf('D:\\ilife', 'D:\\ilife2')))
 
-if (relOf('D:\\ilife', 'D:/ilife/packages/skill-calorie') === 'packages › skill-calorie') ok('C10 斜杠写法不同，仍然算在根下面，照样切出干净尾巴')
-else bad('C10 斜杠写法不同就切不出来了：' + JSON.stringify(relOf('D:\\ilife', 'D:/ilife/packages/skill-calorie')))
-// C10b：大小写折叠是 Windows 那半的规整语义（POSIX 路径本就区分大小写，不该折）。keyOf 支持显式点名
-//   操作系统，两个平台上都按 win32 折算来钉住这条语义：两种写法折出来必须是同一条目录。
+if (relOf('D:\\ilife', 'd:/ILIFE/packages/skill-calorie') === 'packages › skill-calorie') ok('C10 大小写与斜杠写法都不同，仍然算在根下面，照样切出干净尾巴')
+else bad('C10 大小写或斜杠写法不同就切不出来了：' + JSON.stringify(relOf('D:\\ilife', 'd:/ILIFE/packages/skill-calorie')))
+// C10b：直接钉规整函数本身的折算语义——上面闭包里那层 win32 包装修的就是这把函数，
+//   两个平台上都按显式 win32 折算验证：两种写法折出来必须是同一条目录。
 if (keyOf('d:/ILIFE/packages/skill-calorie', 'win32') === 'd:/ilife/packages/skill-calorie' && keyOf('D:\\ILIFE', 'win32') === 'd:/ilife') ok('C10b 大小写与斜杠写法不同仍算同一条目录（Windows 折算语义，显式按 win32 验，两个平台都跑）')
 else bad('C10b win32 折算没有把两种写法折成同一条')
 

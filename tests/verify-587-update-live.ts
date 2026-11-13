@@ -63,7 +63,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
     pkgDir = fixturePkg
     homeDirNote = '（本机没有实装，用仓里 package/ 自造了一份夹具装进临时目录）'
   }
-  check(!!pkgDir, '找得到装在本机使用范围里、且包完好的那份插件（真宿主判据的输入）' + (pkgDir ? '：' + path.basename(path.dirname(path.dirname(pkgDir))) : '') + homeDirNote)
+  check(!!pkgDir, '找得到插件那份包完好的实装：本机使用范围里有就用它，没有（新机器没装过、或门禁进程没有写用户目录的权限）就用仓里 package/ 产物按真实安装的目录形状自造一份装进临时目录' + (pkgDir ? '：' + path.basename(path.dirname(path.dirname(pkgDir))) : '') + homeDirNote)
   if (!pkgDir) { console.log(LF + '存在失败'); process.exit(1) }
 
   const manifestPath = path.join(pkgDir, 'package.json')

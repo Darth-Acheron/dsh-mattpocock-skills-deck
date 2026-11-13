@@ -226,7 +226,8 @@ console.log('正文写回脚本门禁（#571 · 命令行黑盒）')
   const ran = runRealWithCwdLogging(['--issue', '571', '--body-file', body], deep, cwdLog)
   const ghCwds = String(fs.readFileSync(cwdLog, 'utf8')).trim().split(/\r?\n/).filter(Boolean)
   // #30：macOS 上 os.tmpdir() 给的 /var/… 是 /private/var/… 的符号链接，gh 子进程报上来的 cwd 是解析
-  //   后的真实路径；比之前把期望也解析一遍，两边都在真实路径上比（Windows 上 realpathSync 原样返回，判据不变）。
+  //   后的真实路径；比对之前把期望也解析一遍，两边都在真实路径上比。Windows 上判据不变的原因是
+  //   两侧同过同一函数（realpathSync 在 Windows 返回的是规范化后的真实路径，并非原样返回）。
   const wsGithubReal = fs.realpathSync(wsGithub)
   check(ran.status === 0 && ghCwds.length > 0 && ghCwds.every(function (c) { return c === wsGithubReal }), '8b.2b 每条 gh 命令都在工作区根那一层跑（不是在子目录里；实得 ' + JSON.stringify(ghCwds) + '）')
 

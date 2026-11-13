@@ -30,7 +30,9 @@ let lastStdin: any = null
 const logs: Array<{ level: string; event: string; fields: Record<string, any> }> = []
 const timerCalls: number[] = []
 let clock = { t: 1000 }
-function makeVc(route?: ((argv: string[]) => any) | null, extra?: any) {
+// route 的第二个参数是整条 spawn 请求（argv 之外还带 cwd / env / stdio），本次新增的签名失败
+//   拦截要用它里的 env 与 cwd 剥掉签名材料，签名一起写在类型上，免得暗参数契约再传歪（#30 评审）。
+function makeVc(route?: ((argv: string[], req: any) => any) | null, extra?: any) {
   spawns.length = 0
   requests.length = 0
   lastStdin = null
@@ -957,7 +959,9 @@ async function main(): Promise<void> {
   check(kWrite.ok === true && kWrite.oldValue === 'x' && kWrite.newValue === '新名字', 'Q4 12.2 执行成功并回旧值与新值（界面显示的是真的改前改后）')
   // cwd 比大小写与斜杠方向：本机 git 会把 D:\Temp 规范成 D:/temp，两边必须用同一份写法（照 #1752 造工作树那条注释的口径）。
   //   另外 macOS 的临时目录 /var/… 是 /private/var/… 的符号链接，写口起进程前会把 cwd 解析成真实路径，
-  //   比之前两边都先过一遍 realpath（Windows 上原样返回，判据不变；#30）。
+  //   比对之前两边都先过一遍 realpath 再比。Windows 上 realpathSync 返回的是规范化后的真实路径
+  //   （大小写、斜杠方向、短名都可能变），这里判据不变的真正原因是两侧同过同一函数、且 kFlat 另有
+  //   toLowerCase 折叠，不是「原样返回」（#30）。
   const kFlat = (p: any): string => { const raw = String(p || '').toLowerCase().replace(/\\/g, '/'); try { return fs.realpathSync(raw).toLowerCase() } catch (e) { return raw } }
   const kWriteCwds = requests.filter((q) => after(q.argv)[0] === 'config' && after(q.argv)[1] === '--local').map((q) => q.cwd)
   check(kArgv.join(' ') === 'config --local user.name 新名字' && kWriteCwds.length > 0 && kWriteCwds.every((cfgC) => kFlat(cfgC) === kFlat(cfgRK)), 'Q5 12.2 的 argv 是「config --local user.name <新值>」且 cwd 钉在票据那个仓库（--local 是默认作用域）')

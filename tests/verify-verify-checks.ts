@@ -70,7 +70,7 @@ function errResult(message: string): PortResult {
 }
 
 // 真实的 fs 端口：workspace-fixture / ticket-pool / log-dir 都只用到其中一小撮方法，
-// 这里按 base 的 FsPort 契约把用到的那些包成 Result 信封，读的是仓库与 D:/Temp 下的真文件。
+// 这里按 base 的 FsPort 契约把用到的那些包成 Result 信封，读的是仓库与系统临时目录下的真文件。
 function realFsPort(): any {
   return {
     exists: async (path: string) => fs.existsSync(path),
