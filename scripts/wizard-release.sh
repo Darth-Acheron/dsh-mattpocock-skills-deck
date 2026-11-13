@@ -26,7 +26,7 @@ export ENV_FILE
 # 加载统一向导库（分段清屏、进度、显式打开链接、确认、落盘与收尾）
 WIZARD_LIB="$ROOT/wizard/template.sh"
 if [[ ! -f "$WIZARD_LIB" ]]; then
-  echo "缺失向导库：$WIZARD_LIB（请确认 wizard/template.sh 已存在）" >&2
+  echo "缺失向导库：${WIZARD_LIB}（请确认 wizard/template.sh 已存在）" >&2
   exit 1
 fi
 # shellcheck source=../wizard/template.sh
@@ -86,12 +86,12 @@ PREV_VER=$(_existing WIZARD_RELEASE_VERSION || true)
 if [[ -n "$VERSION_RAW" ]]; then
   VERSION_NORM=$(normalize_version "$VERSION_RAW" || true)
   if [[ -z "${VERSION_NORM:-}" ]]; then
-    warn "版本号形态错误：$VERSION_RAW，期望 vX.Y.Z，例如 v1.7.9"
+    warn "版本号形态错误：${VERSION_RAW}，期望 vX.Y.Z，例如 v1.7.9"
     exit 2
   fi
   VERSION="$VERSION_NORM"
 elif [[ -n "$PREV_VER" ]]; then
-  note "检测到上次落盘版本：$PREV_VER（回车保留，或输入新版本）"
+  note "检测到上次落盘版本：${PREV_VER}（回车保留，或输入新版本）"
   ask WIZARD_RELEASE_VERSION "本次发布版本号（vX.Y.Z）："
   VERSION_NORM=$(normalize_version "${WIZARD_RELEASE_VERSION:-$PREV_VER}" || true)
   if [[ -z "${VERSION_NORM:-}" ]]; then
@@ -101,7 +101,7 @@ elif [[ -n "$PREV_VER" ]]; then
   VERSION="$VERSION_NORM"
 else
   PKG_VER=$(node -p "require('./package.json').version" 2>/dev/null || echo "")
-  [[ -n "$PKG_VER" ]] && note "当前 package.json 版本：v$PKG_VER（仅提示，发布需显式确认新版本）"
+  [[ -n "$PKG_VER" ]] && note "当前 package.json 版本：v${PKG_VER}（仅提示，发布需显式确认新版本）"
   ask WIZARD_RELEASE_VERSION "本次发布版本号（vX.Y.Z，例如 v1.7.9）："
   VERSION_NORM=$(normalize_version "${WIZARD_RELEASE_VERSION:-}" || true)
   if [[ -z "${VERSION_NORM:-}" ]]; then
@@ -114,13 +114,13 @@ fi
 # 规范化后再次落盘（确保带 v 前缀）
 write_env WIZARD_RELEASE_VERSION "$VERSION"
 VER_NUM="${VERSION#v}"
-say "本次发布：$VERSION（数字：$VER_NUM）"
+say "本次发布：${VERSION}（数字：${VER_NUM}）"
 write_env WIZARD_RELEASE_VERSION_NUM "$VER_NUM"
 
 # 本地版本提示
 PKG_VER=$(node -p "require('./package/package.json').version" 2>/dev/null || echo "?")
 ROOT_VER=$(node -p "require('./package.json').version" 2>/dev/null || echo "?")
-say "根 package.json：v$ROOT_VER，package/package.json：v$PKG_VER"
+say "根 package.json：v${ROOT_VER}，package/package.json：v$PKG_VER"
 if [[ "$PKG_VER" != "$VER_NUM" || "$ROOT_VER" != "$VER_NUM" ]]; then
   warn "本地版本号与目标 $VERSION 不一致——后续契约校验将失败，请先按 Runbook 第 1 节同步 8 项清单。"
 fi
@@ -170,7 +170,7 @@ fi
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>&1 || echo "?")
 say "当前分支：$BRANCH"
 if [[ "$BRANCH" != "main" && "$BRANCH" != "master" ]]; then
-  warn "当前不在 main 分支（在 $BRANCH），发布通常在 main 上进行。"
+  warn "当前不在 main 分支（在 ${BRANCH}），发布通常在 main 上进行。"
   if ! confirm "是否在 $BRANCH 上继续"; then
     exit 1
   fi
@@ -191,14 +191,14 @@ if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
       git push origin "$BRANCH"
       say "✓ 已推送"
     else
-      warn "请手动执行：git push origin $BRANCH，然后重跑向导。"
+      warn "请手动执行：git push origin ${BRANCH}，然后重跑向导。"
       exit 1
     fi
   else
     say "✓ 已与 origin/$BRANCH 同步"
   fi
 else
-  warn "未找到 origin/$BRANCH，跳过推送检查（可能是新分支）。"
+  warn "未找到 origin/${BRANCH}，跳过推送检查（可能是新分支）。"
 fi
 
 write_env WIZARD_RELEASE_STAGE "2"
@@ -238,7 +238,7 @@ say "④ 官方源包名占用预检（显式官方源并跳过缓存）"
 LATEST=$(npm view "$PKG" version --registry "$REGISTRY" --prefer-online 2>&1 | tail -n1 | tr -d ' \r\n' || true)
 say "官方源 latest：${LATEST:-<查询失败>}"
 if [[ "$LATEST" == "$VER_NUM" ]]; then
-  warn "官方源已存在 $VERSION（latest=$LATEST），重复发布会 E409，请递增 patch 后重跑。"
+  warn "官方源已存在 ${VERSION}（latest=${LATEST}），重复发布会 E409，请递增 patch 后重跑。"
   if ! confirm "是否仍继续（将失败）"; then
     exit 1
   fi
@@ -256,7 +256,7 @@ if [[ -f scripts/release-preflight.mts ]]; then
   if [[ "$PREFLIGHT_CODE" -eq 0 ]]; then
     say "✓ 真机验证清单与身份行已收口（本版清单票唯一、已关闭、记录一致）"
   elif [[ "$DRY_RUN" -eq 1 ]]; then
-    warn "真机验证清单没通过（exit=$PREFLIGHT_CODE；dry-run 只提示，不阻断）——正式发布前必须先改票或修环境。"
+    warn "真机验证清单没通过（exit=${PREFLIGHT_CODE}；dry-run 只提示，不阻断）——正式发布前必须先改票或修环境。"
   elif [[ "$PREFLIGHT_CODE" -eq 2 ]]; then
     warn "真机验证清单无法判定（exit=2：环境或票面适配器缺失），已阻断后续发布。"
     warn "按上面 PREFLIGHT-BLOCKED / PREFLIGHT-ENV 行的「改法」修好（gh 登录、git、verify/ticket-face.mts）后重跑本向导。"
@@ -266,7 +266,7 @@ if [[ -f scripts/release-preflight.mts ]]; then
     warn "按上面每条 PREFLIGHT-FAIL 的「改法」改完清单票（或候选清单）后重跑本向导。"
     exit 1
   else
-    warn "发布前检查以未知退出码结束（exit=$PREFLIGHT_CODE），已阻断后续发布。"
+    warn "发布前检查以未知退出码结束（exit=${PREFLIGHT_CODE}），已阻断后续发布。"
     exit 2
   fi
 else
@@ -284,14 +284,14 @@ fi
 
 # ── Stage 4：发布 — 弹浏览器，一次扫码（网页 2FA） ───────────────────────
 stage "4/6 发布 — 弹浏览器，一次扫码（网页 2FA）"
-say "将把 package/ 目录的 $VERSION 发布到官方源 $REGISTRY，需浏览器授权一次。"
+say "将把 package/ 目录的 $VERSION 发布到官方源 ${REGISTRY}，需浏览器授权一次。"
 say "发布命令已显式指向官方源且不重定向输出，2FA 仅在浏览器完成，不隔空传递验证码。"
 echo ""
 
 say "检查 npm 登录态（官方源）："
 if npm whoami --registry "$REGISTRY" >/dev/null 2>&1; then
   WHO=$(npm whoami --registry "$REGISTRY" 2>&1)
-  say "✓ 已登录：$WHO（官方源）"
+  say "✓ 已登录：${WHO}（官方源）"
 else
   warn "当前未登录或 token 失效（npm whoami 失败）"
   open_url "https://www.npmjs.com/login"
@@ -311,7 +311,7 @@ fi
 say "准备发布：package/ → $REGISTRY"
 note "发布将在用户可见的交互窗口中完成；向导随后在后台轮询验证。"
 open_url "https://www.npmjs.com/package/$PKG"
-step "浏览器已尝试打开包主页 https://www.npmjs.com/package/$PKG（若未弹出请手动访问）"
+step "浏览器已尝试打开包主页 https://www.npmjs.com/package/${PKG}（若未弹出请手动访问）"
 echo ""
 say "请选择执行方式："
 say "  A. 在本终端直接发布（若本终端是可见的交互终端，推荐）"
@@ -363,12 +363,12 @@ fi
 
 # ── Stage 5：官方源验证（后台轮询） ───────────────────────
 stage "5/6 官方源验证（后台轮询）"
-say "查询官方源是否已出现 $VERSION，显式跳过本地缓存。"
+say "查询官方源是否已出现 ${VERSION}，显式跳过本地缓存。"
 if poll_npm_version "$PKG" "$VER_NUM" "$REGISTRY"; then
   say "✓ 官方源验证通过"
   write_env WIZARD_RELEASE_VERIFIED "$VERSION"
 else
-  warn "官方源尚未出现 $VERSION，可能延迟或发布未成功。"
+  warn "官方源尚未出现 ${VERSION}，可能延迟或发布未成功。"
   warn "可稍后手工重查：npm view $PKG version --registry $REGISTRY --prefer-online"
   if ! confirm "是否视为验证通过并继续"; then
     exit 1
