@@ -8,6 +8,7 @@
 // 这扇门禁不启动实例、不跑真 glab：命令端口与文件端口都由测试自己拼，读源码时直接读仓库里的真实文件。
 // 构造不出输入的那一项会写成静态断言并说明，不做 silent skip。
 import fs from 'node:fs'
+import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join, resolve } from 'node:path'
 import {
@@ -29,7 +30,10 @@ import { printGateResult } from './lib/gate-result.ts'
 const GATE = 'verify-verify-checks'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
-const TEMP_ROOT = 'D:/Temp'
+// 临时根用系统临时目录，不写死盘符：'D:/Temp' 在非 Windows 平台上是相对路径，makeTempDir 会把
+//   夹具建到当前目录底下的字面量「D:」目录里，makeContext 再把相对路径传给被测检查、检查用
+//   resolve(cwd, 相对值) 拼出一条不存在的路径，workspace-fixture 就永远走软跳过（#30 实测）。
+const TEMP_ROOT = os.tmpdir()
 const NEWLINE = String.fromCharCode(10)
 const PROFILE_SOURCE = join(ROOT, 'verify', 'profile.ts')
 const CHECKS_SOURCE = join(ROOT, 'verify', 'checks', 'index.ts')
