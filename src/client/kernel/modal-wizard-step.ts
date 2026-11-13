@@ -59,18 +59,18 @@ export function validateWizardFields(schema: any, vals: any): { ok: boolean; fie
     const label: string = _wizText((f && (f.label || f.labelKey)) || f.name || i)
     if (f.required) {
       const v: string = String((vals && vals[f.name]) || '').trim()
-      if (!v) return { ok: false, field: f, message: label + ' 必填' }
+      if (!v) return { ok: false, field: f, message: _wizText({ zh: label + ' 必填', en: label + ' is required' }) }
     }
     if (typeof f.maxLength === 'number' && f.maxLength > 0) {
       if (String((vals && vals[f.name]) || '').length > f.maxLength) {
-        return { ok: false, field: f, message: label + ' 长度超出限制' }
+        return { ok: false, field: f, message: _wizText({ zh: label + ' 长度超出限制', en: label + ' exceeds max length' }) }
       }
     }
     if (f.pattern) {
       try {
         const re: RegExp = new RegExp(f.pattern)
         if (!re.test(String((vals && vals[f.name]) || ''))) {
-          return { ok: false, field: f, message: label + ' 格式不正确' }
+          return { ok: false, field: f, message: _wizText({ zh: label + ' 格式不正确', en: label + ' has invalid format' }) }
         }
       } catch (_) {}
     }
@@ -78,9 +78,10 @@ export function validateWizardFields(schema: any, vals: any): { ok: boolean; fie
   return { ok: true }
 }
 
-/** 将水合返回的 defaultsByField 填入各步 valuesByStep（仅填充尚未填写的字段或被水合刷新的字段）。 */
+/** 将水合返回的 defaultsByField 填入各步 valuesByStep（默认用服务端发现的推荐值覆盖静态 defaultValue）。 */
 export function applyWizardHydratePayload(m: any, res: any, overwriteDefaults?: boolean): void {
   if (!m || !res || typeof res !== 'object') return
+  const shouldOverwrite: boolean = overwriteDefaults !== false
   if (typeof res.authenticated === 'boolean') m.authenticated = res.authenticated
   if (res.optionsByField && typeof res.optionsByField === 'object') {
     m.optionsByField = Object.assign({}, m.optionsByField || {}, res.optionsByField)
@@ -102,9 +103,17 @@ export function applyWizardHydratePayload(m: any, res: any, overwriteDefaults?: 
           const fn: string = sch[fi] && sch[fi].name ? String(sch[fi].name) : ''
           if (fn && res.defaultsByField[fn] !== undefined && res.defaultsByField[fn] !== null) {
             assignedKeys[fn] = true
-            if (overwriteDefaults || stepVals[fn] === undefined || stepVals[fn] === '') {
+            if (shouldOverwrite || stepVals[fn] === undefined || stepVals[fn] === '') {
               stepVals[fn] = String(res.defaultsByField[fn])
             }
+          } else if (fn && res.optionsByField && Array.isArray(res.optionsByField[fn]) && stepVals[fn]) {
+            const validOpts: any[] = res.optionsByField[fn]
+            const curS: string = String(stepVals[fn])
+            const stillExists: boolean = validOpts.some(function (o: any): boolean {
+              const ov: string = (o && typeof o === 'object') ? String(o.value !== undefined && o.value !== null ? o.value : (o.id || '')) : String(o || '')
+              return ov === curS
+            })
+            if (!stillExists) stepVals[fn] = ''
           }
         }
         m.valuesByStep[si] = stepVals
@@ -113,7 +122,7 @@ export function applyWizardHydratePayload(m: any, res: any, overwriteDefaults?: 
         const fallbackStepVals: any = Object.assign({}, m.valuesByStep[1] || {})
         for (const k in res.defaultsByField) {
           if (Object.prototype.hasOwnProperty.call(res.defaultsByField, k) && !assignedKeys[k] && res.defaultsByField[k] !== undefined && res.defaultsByField[k] !== null) {
-            if (overwriteDefaults || fallbackStepVals[k] === undefined || fallbackStepVals[k] === '') {
+            if (shouldOverwrite || fallbackStepVals[k] === undefined || fallbackStepVals[k] === '') {
               fallbackStepVals[k] = String(res.defaultsByField[k])
             }
           }
@@ -134,27 +143,45 @@ export async function hydrateWizardModal(st: any, m: any, extraParams?: any, hos
   if (!m || !m.isWizard || !m.hydrateRpc || typeof m.hydrateRpc.method !== 'string' || !m.hydrateRpc.method) return null
   const hRPC: any = hostOverride || (typeof host !== 'undefined' ? host : null)
   if (!hRPC || typeof hRPC.call !== 'function') return null
+  const seq: number = (m._hydrateSeq = (m._hydrateSeq || 0) + 1)
   m.hydrating = true
   try { if (typeof emit === 'function') emit(st) } catch (_) {}
   try {
     const payload: any = Object.assign({ cwd: (st && st.cwd) || '' }, m.hydrateRpc.params || {}, extraParams || {})
     const res: any = await hRPC.call(m.hydrateRpc.method, payload)
+    if (m._hydrateSeq !== seq) return res
     m.hydrating = false
     if (res && typeof res === 'object') {
-      applyWizardHydratePayload(m, res, !!(extraParams && Object.keys(extraParams).length > 0))
+      applyWizardHydratePayload(m, res, true)
     }
     try { if (typeof emit === 'function') emit(st) } catch (_) {}
     return res
   } catch (_) {
-    m.hydrating = false
+    if (m._hydrateSeq === seq) m.hydrating = false
     try { if (typeof emit === 'function') emit(st) } catch (__) {}
     return null
   }
 }
 
 /** 执行向导当前步的「下一步」：支持已认证跳过的令牌步免重输前进，或调用 stepAction 在线验真通过后推进。 */
+/** 提交前剔除当前条件显隐规则判定为隐藏的步骤字段，防止切换组织或切换模式后的残留键值混入契约参数。 */
+export function pruneHiddenWizardValues(wizardSteps: any, merged: any): any {
+  const out: any = Object.assign({}, merged || {})
+  const steps: any[] = Array.isArray(wizardSteps) ? wizardSteps : []
+  for (let si: number = 0; si < steps.length; si++) {
+    const sch: any[] = (steps[si] && Array.isArray(steps[si].schema)) ? steps[si].schema : []
+    for (let fi: number = 0; fi < sch.length; fi++) {
+      const f: any = sch[fi]
+      if (f && f.name && !isWizardFieldVisible(f, out)) {
+        delete out[f.name]
+      }
+    }
+  }
+  return out
+}
+
 export async function runWizardStepNext(st: any, m: any, vals: any, hostOverride?: any, setVals?: any): Promise<{ ok: boolean }> {
-  if (!m || !m.isWizard || !Array.isArray(m.steps)) return { ok: false }
+  if (!m || !m.isWizard || !Array.isArray(m.steps) || m.pending || m.hydrating) return { ok: false }
   const stepIndex: number = typeof m.stepIndex === 'number' ? m.stepIndex : 0
   const totalSteps: number = m.steps.length
   const curStep: any = m.steps[stepIndex] || {}
@@ -233,14 +260,14 @@ export function renderWizardStepper(st: any, m: any, vals: any, h: any): any {
     const bg: string = done ? '#16a34a' : active ? '#58a6ff' : '#2a2d35'
     const color: string = done || active ? '#fff' : '#8b8b95'
     const title: string = _wizText(s && s.title) || ('步骤 ' + String(i + 1))
-    const canJumpBack: boolean = i < stepIndex && !(m && m.pending)
+    const canJumpBack: boolean = i < stepIndex && !(m && (m.pending || m.hydrating))
     return h('div', {
       key: i,
       className: canJumpBack ? 'dsws-hov' : '',
       'data-press': canJumpBack ? 'chip' : undefined,
       'data-log': canJumpBack ? ('modal.wizard.step.' + String(i)) : undefined,
       onClick: canJumpBack ? function (): void {
-        if (m.pending) return
+        if (m.pending || m.hydrating) return
         m.fail = null
         m._userNavigated = true
         if (m.valuesByStep) m.valuesByStep[stepIndex] = Object.assign({}, vals)

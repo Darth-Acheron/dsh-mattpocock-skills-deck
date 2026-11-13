@@ -294,16 +294,19 @@ export function createYunxiaoOnboarding(deps: YunxiaoOnboardingDeps = {}) {
   async function savePreferredOrganizationId(home: string, organizationId: string): Promise<void> {
     const orgId = String(organizationId || '').trim()
     if (!home || !orgId) return
+    const configDir = nodeJoin(home, '.config', 'yunxiao')
+    const prefPath = nodeJoin(configDir, 'preferences.json')
+    const tmpPath = nodeJoin(configDir, 'preferences.tmp.' + String(randomUUID()))
     try {
-      const configDir = nodeJoin(home, '.config', 'yunxiao')
-      const prefPath = nodeJoin(configDir, 'preferences.json')
-      const tmpPath = nodeJoin(configDir, 'preferences.tmp.' + String(randomUUID()))
       await tokenFs.mkdir(configDir, { recursive: true, mode: 0o700 })
       const payload = JSON.stringify({ lastSelectedOrganizationId: orgId }, null, 2) + '\n'
       await tokenFs.writeFile(tmpPath, payload, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
       await tokenFs.chmod(tmpPath, 0o600)
       await tokenFs.rename(tmpPath, prefPath)
-    } catch {}
+    } catch {
+      try { await tokenFs.unlink(tmpPath) } catch {}
+      try { if (logCtx) logCtx.fire('warn', 'choiceStore.write.fail', { keyHash: 'yunxiao-pref', reason: 'write-fail' }) } catch {}
+    }
   }
 
   async function handleYunxiaoDiscoverRaw(args?: { cwd?: string; organizationId?: string; projectId?: string } | null): Promise<any> {
@@ -311,9 +314,6 @@ export function createYunxiaoOnboarding(deps: YunxiaoOnboardingDeps = {}) {
     const extras = await getExtras()
     if (typeof extras.discoverYunxiaoWorkspace === 'function') {
       const { env, wsFs, home } = await resolveRuntimeEnvAndFs()
-      if (args?.organizationId && String(args.organizationId).trim()) {
-        await savePreferredOrganizationId(home, String(args.organizationId).trim())
-      }
       const lastSelectedOrganizationId = await readPreferredOrganizationId(home)
       return extras.discoverYunxiaoWorkspace({
         cwd,
@@ -355,6 +355,10 @@ export function createYunxiaoOnboarding(deps: YunxiaoOnboardingDeps = {}) {
         phoneLog('wf.yunxiaoDiscover', 'yunxiao-onboarding', t0, null, e)
         throw e
       }
+    },
+    async savePreferredOrganization(organizationId: string): Promise<void> {
+      const { home } = await resolveRuntimeEnvAndFs()
+      await savePreferredOrganizationId(home, organizationId)
     },
   }
 }

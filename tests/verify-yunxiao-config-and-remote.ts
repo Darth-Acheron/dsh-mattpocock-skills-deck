@@ -2,6 +2,7 @@
 /**
  * tests/verify-yunxiao-config-and-remote.ts —— Yunxiao backend 配置、脱敏、远端识别、票号标记与传输底座门禁（规格 #01）。
  *
+ * 门禁归属: src/tracker/rooms/yunxiao/model/yaml-flat.ts
  * 门禁归属: src/tracker/rooms/yunxiao/model/workspace-config.ts
  * 门禁归属: src/tracker/rooms/yunxiao/model/repo-identity.ts
  * 门禁归属: src/tracker/rooms/yunxiao/model/description-markers.ts

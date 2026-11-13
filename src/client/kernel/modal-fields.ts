@@ -11,6 +11,7 @@
  */
 declare const CONTAINER_ACCENT: any;
 declare function openUrl(...args: any[]): any;
+declare function isWizardFieldVisible(f: any, vals: any): boolean;
 // #1296：激活态的紫只从中央色表 container-view.ts 的 CONTAINER_ACCENT 取；单独求值本文件（门禁环境）
 //   时表还没拼进来，typeof 守卫退空串——那时断的是表单结构，不靠这里的颜色值。
 const CONTAINER_ACCENT_FALLBACK: any = (typeof CONTAINER_ACCENT === 'object' && CONTAINER_ACCENT) ? CONTAINER_ACCENT.map : '';
@@ -29,27 +30,7 @@ function _fieldText(v: any): string {
   return String(v)
 }
 
-function _isFieldVisible(f: any, vals: any): boolean {
-  if (!f || !f.visibleWhen || typeof f.visibleWhen !== 'object') return true
-  const vw: any = f.visibleWhen
-  const depField: string = String(vw.field || '').trim()
-  if (!depField) return true
-  const actual: string = String((vals && vals[depField]) !== undefined && (vals && vals[depField]) !== null ? vals[depField] : '')
-  const eqList: any = Array.isArray(vw.in) ? vw.in : vw.equals
-  if (eqList !== undefined) {
-    if (Array.isArray(eqList)) {
-      let hit: boolean = false
-      for (let i: number = 0; i < eqList.length; i++) {
-        if (String(eqList[i]) === actual) { hit = true; break }
-      }
-      if (!hit) return false
-    } else if (String(eqList) !== actual) {
-      return false
-    }
-  }
-  if (vw.notEquals !== undefined && String(vw.notEquals) === actual) return false
-  return true
-}
+// 字段条件显隐规则唯一真源位于 modal-wizard-step.ts 的 isWizardFieldVisible，此处仅经 ctx 或闭包引用。
 
 function _normSelectOpt(opt: any): { value: string; label: string } {
   if (opt && typeof opt === 'object' && !Array.isArray(opt)) {
@@ -65,6 +46,8 @@ export const modalFormFields = function (curSchema: any, ctx: any): any {
   const m: any = (ctx && ctx.m) || {}, isWizard: any = ctx && ctx.isWizard, stepIndex: any = (ctx && ctx.stepIndex) || 0, vals: any = (ctx && ctx.vals) || {}, setVals: any = (ctx && ctx.setVals) || function () {}, onPick: any = (ctx && ctx.onPick) || function () { return function () {} }, h: any = ctx && ctx.h
   const openUrlFn: any = (ctx && typeof ctx.openUrl === 'function') ? ctx.openUrl : (typeof openUrl === 'function' ? openUrl : null)
   const onFieldChange: any = (ctx && typeof ctx.onFieldChange === 'function') ? ctx.onFieldChange : null
+  const isFieldVisibleFn: any = (ctx && typeof ctx.isFieldVisible === 'function') ? ctx.isFieldVisible : (typeof isWizardFieldVisible === 'function' ? isWizardFieldVisible : null)
+  const isBusy: boolean = !!(m.pending || m.hydrating)
   const applyVal = function (f: any, nextVal: any): void {
     const nxt: any = Object.assign({}, vals)
     nxt[f.name] = nextVal
@@ -80,7 +63,7 @@ export const modalFormFields = function (curSchema: any, ctx: any): any {
   const fields: any[] = []
   for (let idx: number = 0; idx < list.length; idx++) {
     const f: any = list[idx]
-    if (!f || !_isFieldVisible(f, vals)) continue
+    if (!f || (isFieldVisibleFn && !isFieldVisibleFn(f, vals))) continue
     const id: string = 'modal-form-' + String(f.name || idx) + (isWizard ? '-s' + stepIndex : '')
     const rawLabel: any = (f && (f.label || f.labelKey)) || (f && f.name) || String(idx)
     const label: string = _fieldText(rawLabel)
@@ -199,11 +182,19 @@ export const modalFormFields = function (curSchema: any, ctx: any): any {
           h('span', { style: { fontSize: 10, color: 'var(--dsw-alias-label-caption,#8b8b95)' } }, '唯一可用项'),
         ])
       } else {
-        const curVal: string = vals[f.name] !== undefined && vals[f.name] !== null ? String(vals[f.name]) : (normOpts[0] ? normOpts[0].value : '')
+        const rawCur: string = vals[f.name] !== undefined && vals[f.name] !== null ? String(vals[f.name]) : ''
+        const hasMatch: boolean = Boolean(rawCur && normOpts.some(function (o: { value: string; label: string }): boolean { return o.value === rawCur }))
+        const curVal: string = hasMatch ? rawCur : (normOpts[0] ? normOpts[0].value : '')
+        if (String(vals[f.name] || '') !== curVal) {
+          vals[f.name] = curVal
+          if (isWizard && m && m.valuesByStep && m.valuesByStep[stepIndex]) {
+            m.valuesByStep[stepIndex][f.name] = curVal
+          }
+        }
         controlNode = h('select', {
           id: id,
           value: curVal,
-          disabled: !!m.pending,
+          disabled: isBusy,
           onChange: function (e: any): void { applyVal(f, e.target.value) },
           style: { fontSize: 12, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--dsw-alias-border-l1,#2a2d35)', background: 'var(--dsw-alias-bg-layer-1,#10131a)', color: 'var(--dsw-alias-label-primary,#e6edf3)' },
         }, normOpts.map(function (o: { value: string; label: string }): any {

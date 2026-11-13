@@ -856,7 +856,7 @@ export const COMPLETION_RECORDED_GATES: Record<string, number> = {
   // 2026-11-10 #01–#05（规格 #00 + 架构加深）：两扇 Yunxiao 门禁分别覆盖配置与远端识别 33 条、房间与跨层接线契约 41 条；
   // 房间门禁覆盖父票解析失败、分页头与满页边界、正反向原生关系探测失败后的诚实完整度、零配置 Projex+Codeup 一体化开仓、四后端注册与三阶段环境检查及沙箱冒烟门控，期望按单跑 GATE-RESULT 登记。
   'verify-yunxiao-config-and-remote': 35,
-  'verify-yunxiao-onboarding-wizard': 44, // #24：发现、三模式置备、SSH 回退与半成功重推
+  'verify-yunxiao-onboarding-wizard': 48, // #24：发现、三模式置备、SSH 回退、bind 失败守卫与半成功重推双深链
   'verify-yunxiao-room': 56,
 }
 

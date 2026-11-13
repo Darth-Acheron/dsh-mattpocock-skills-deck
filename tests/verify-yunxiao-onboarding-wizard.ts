@@ -10,12 +10,17 @@
  * 门禁归属: src/client/kernel/slotRenderer-modal-view.ts
  * 门禁归属: src/client/kernel/slotRenderer-queue.ts
  * 门禁归属: src/client/kernel/actions.ts
+ * 门禁归属: src/refresh/rooms/client/repo-sync-renderer.ts
  * 门禁归属: src/host/yunxiaoOnboarding.ts
+ * 门禁归属: src/host/publishFlow.ts
  * 门禁归属: src/tracker/registry/builtins.ts
  * 门禁归属: src/tracker/rooms/yunxiao/room/fixes.ts
+ * 门禁归属: src/tracker/rooms/yunxiao/model/yaml-flat.ts
  * 门禁归属: src/tracker/rooms/yunxiao/model/workspace-config.ts
  * 门禁归属: src/tracker/rooms/yunxiao/project/discover.ts
+ * 门禁归属: src/tracker/rooms/yunxiao/project/init-project.ts
  * 门禁归属: src/tracker/rooms/yunxiao/project/init-project-helpers.ts
+ * 门禁归属: src/tracker/rooms/yunxiao/project/init-project-persist.ts
  *
  * 用法：node --import ./scripts/ts-hook.mts tests/verify-yunxiao-onboarding-wizard.ts
  */
@@ -162,6 +167,7 @@ async function main(): Promise<void> {
   const fixesMod = await imp('src/tracker/rooms/yunxiao/room/fixes.ts')
   const builtinsMod = await imp('src/tracker/registry/builtins.ts')
   const wizMod = await imp('src/client/kernel/modal-wizard-step.ts').catch(() => ({}))
+  if (typeof wizMod.isWizardFieldVisible === 'function') (globalThis as any).isWizardFieldVisible = wizMod.isWizardFieldVisible
   const onboardMod = await imp('src/host/yunxiaoOnboarding.ts').catch(() => ({}))
 
   console.log('== 1. 通用声明式 FieldSchema 与 chain-validate 扩展 ==')
@@ -344,6 +350,35 @@ async function main(): Promise<void> {
       '1.7 select 变更更新 vals 并对 rehydrateOnChange:true 字段触发 onFieldChange 水合回调',
       { vals, rehydrateCalls },
     )
+
+    // 1.8 切换到 reuse / bind 且仅有一个候选时，下拉框显示的默认项必须同步进入 vals 与 valuesByStep
+    const realStep1Schema = fixesMod.fixes['yunxiao:configured'].actions[0].steps[1].schema
+    const realStep2Schema = fixesMod.fixes['yunxiao:configured'].actions[0].steps[2].schema
+    const singleReuseVals: Record<string, any> = { organizationId: 'org-1', projectMode: 'reuse', projectId: '' }
+    const singleBindVals: Record<string, any> = { repoMode: 'bind', repositoryId: '', remoteProtocol: 'auto' }
+    const singleSelectModal: any = {
+      pending: false,
+      valuesByStep: [{}, { organizationId: 'org-1', projectMode: 'reuse' }, { repoMode: 'bind', remoteProtocol: 'auto' }],
+      optionsByField: {
+        organizationId: [{ value: 'org-1', label: { zh: '组织一', en: 'Org 1' } }],
+        projectId: [{ value: '8efcbccd3981cb23178fc66bd1', label: { zh: '唯一项目 (PLAN)', en: 'Only Project' } }],
+        repositoryId: [{ value: '7001', label: { zh: 'org-1/only-repo (#7001)', en: 'org-1/only-repo (#7001)' } }],
+      },
+    }
+    fieldsMod.modalFormFields(realStep1Schema, { m: singleSelectModal, isWizard: true, stepIndex: 1, vals: singleReuseVals, setVals: () => {}, h })
+    fieldsMod.modalFormFields(realStep2Schema, { m: singleSelectModal, isWizard: true, stepIndex: 2, vals: singleBindVals, setVals: () => {}, h })
+    const reuseValid = wizMod.validateWizardFields(realStep1Schema, singleReuseVals)
+    const bindValid = wizMod.validateWizardFields(realStep2Schema, singleBindVals)
+    check(
+      singleReuseVals.projectId === '8efcbccd3981cb23178fc66bd1' &&
+        singleSelectModal.valuesByStep[1].projectId === '8efcbccd3981cb23178fc66bd1' &&
+        singleBindVals.repositoryId === '7001' &&
+        singleSelectModal.valuesByStep[2].repositoryId === '7001' &&
+        reuseValid.ok === true &&
+        bindValid.ok === true,
+      '1.8 切换到复用项目或绑定代码库时，下拉框首项默认显示值同步写入 vals 与 valuesByStep，单候选场景无需切换即可通过必填校验',
+      { singleReuseVals, singleBindVals, stored1: singleSelectModal.valuesByStep[1], stored2: singleSelectModal.valuesByStep[2], reuseValid, bindValid },
+    )
   }
 
   console.log('== 2. 向导生命周期：visibleWhen 校验跳过、initialStepIndex 跳步、stepAction 在线门控、多深链成功弹窗 ==')
@@ -467,6 +502,8 @@ async function main(): Promise<void> {
             },
             defaultsByField: {
               organizationId: 'org-1',
+              projectMode: 'reuse',
+              repoMode: 'bind',
             },
           }
         }
@@ -483,8 +520,10 @@ async function main(): Promise<void> {
         discoverCalls === 1 &&
         st.formModal.optionsByField?.organizationId?.length === 1 &&
         st.formModal.valuesByStep?.[1]?.organizationId === 'org-1' &&
+        st.formModal.valuesByStep?.[1]?.projectMode === 'reuse' &&
+        st.formModal.valuesByStep?.[2]?.repoMode === 'bind' &&
         Boolean(st.formModal.bannersByField?.token),
-      '2.6 第 1 步 stepAction 成功后记录环境变量遮蔽警告横幅、自动调用 hydrateRpc 刷新第 2 步选项与默认值，并推进到 stepIndex=1',
+      '2.6 第 1 步 stepAction 成功后记录环境变量遮蔽警告横幅、自动调用 hydrateRpc 刷新第 2/3 步选项与默认值（覆盖静态 create 默认值），并推进到 stepIndex=1',
       {
         nextPassRes,
         stepIndex: st.formModal.stepIndex,
@@ -553,6 +592,104 @@ async function main(): Promise<void> {
       '2.8 水合刷新会清除旧项目预警，同时保留令牌警告并展示新组织横幅',
       rehydratedModal.bannersByField,
     )
+
+    // 2.9 组织切换异步水合期间阻断步进与提交，水合完成后清理旧组织残留选择并剥离隐藏字段
+    {
+      const g = globalThis as Record<string, any>
+      g.modalFormFields = fieldsMod.modalFormFields
+      g.isWizardFieldVisible = wizMod.isWizardFieldVisible
+      g.hydrateWizardModal = wizMod.hydrateWizardModal
+      g.runWizardStepNext = wizMod.runWizardStepNext
+      g.renderWizardStepper = wizMod.renderWizardStepper
+      g.buildWizardSuccessState = wizMod.buildWizardSuccessState
+      g.renderWizardSuccessModal = wizMod.renderWizardSuccessModal
+      g.closeFormModal = queueMod.closeFormModal
+      g._queueLen = (s: any) => (Array.isArray(s && s._formModalQueue) ? s._formModalQueue.length : 0)
+      g.SLOT_MODAL_OPEN_DELAY_MS = 0
+      g.tr = (k: string) => k
+      g.visLabelOf = (v: string) => v
+      g.startRepoSync = () => {}
+      g.runRepoSyncRecheck = () => {}
+      g.resolveFailText = (_st: any, _d: string, _c: string, msg: string) => msg
+      let seatValsState: any = null
+      g.React = {
+        createElement: h,
+        useContext: () => ({ h }),
+        useState: (init: any) => {
+          seatValsState = typeof init === 'function' ? init() : init
+          return [seatValsState, (nxt: any) => { seatValsState = nxt }]
+        },
+        useEffect: () => {},
+      }
+      const modalViewMod = await imp('src/client/kernel/slotRenderer-modal-view.ts')
+      let submittedMerged: any = null
+      let submitCalls = 0
+      const stHyd: any = { cwd: '/ws/org-switch', tick: 0 }
+      const yxAct = fixesMod.fixes['yunxiao:configured'].actions[0]
+      queueMod.openFormModal(stHyd, yxAct, async (merged: any) => {
+        submitCalls += 1
+        submittedMerged = merged
+        return { ok: true, data: { ok: true, repo: { owner: 'org-2', name: 'org-switch' } } }
+      })
+      stHyd.formModal.valuesByStep[1] = { organizationId: 'org-1', projectMode: 'reuse', projectId: 'proj-from-org-1' }
+      stHyd.formModal.valuesByStep[2] = { repoMode: 'bind', repositoryId: 'repo-from-org-1', remoteProtocol: 'auto' }
+
+      let resolveDiscover!: (val: any) => void
+      const pendingDiscover = new Promise((r) => { resolveDiscover = r })
+      const hydratePromise = wizMod.hydrateWizardModal(
+        stHyd,
+        stHyd.formModal,
+        { organizationId: 'org-2' },
+        { call: () => pendingDiscover },
+      )
+      const stepNextWhileHydrating = await wizMod.runWizardStepNext(stHyd, stHyd.formModal, stHyd.formModal.valuesByStep[1])
+      const treeStep1Hydrating = modalViewMod.FormModalSeat({ st: stHyd })
+      const nextBtnHydrating = findNodes(treeStep1Hydrating, (n) => n.tag === 'button' && n.props['data-log'] === 'modal.wizard.next')[0]
+      stHyd.formModal.stepIndex = 2
+      const treeStep2Hydrating = modalViewMod.FormModalSeat({ st: stHyd })
+      const submitBtnHydrating = findNodes(treeStep2Hydrating, (n) => n.tag === 'button' && n.props['data-log'] === 'modal.wizard.submit')[0]
+      if (submitBtnHydrating?.props?.onClick) await submitBtnHydrating.props.onClick()
+      const blockedDuringHydrate =
+        stHyd.formModal.hydrating === true &&
+        stepNextWhileHydrating.ok === false &&
+        Boolean(nextBtnHydrating?.props?.disabled) &&
+        Boolean(submitBtnHydrating?.props?.disabled) &&
+        submitCalls === 0
+
+      resolveDiscover({
+        ok: true,
+        authenticated: true,
+        optionsByField: {
+          organizationId: [{ value: 'org-1', label: { zh: '一', en: '1' } }, { value: 'org-2', label: { zh: '二', en: '2' } }],
+          projectId: [{ value: 'proj-from-org-2', label: { zh: '组织二项目', en: 'Org 2 Proj' } }],
+          repositoryId: [],
+        },
+        defaultsByField: {
+          organizationId: 'org-2',
+          projectMode: 'create',
+          projectName: 'org-switch',
+          customCode: 'ORGSW',
+          repoMode: 'none',
+        },
+      })
+      await hydratePromise
+      stHyd.formModal.stepIndex = 2
+      const treeAfterHydrate = modalViewMod.FormModalSeat({ st: stHyd })
+      const submitBtnAfter = findNodes(treeAfterHydrate, (n) => n.tag === 'button' && n.props['data-log'] === 'modal.wizard.submit')[0]
+      if (submitBtnAfter?.props?.onClick) await submitBtnAfter.props.onClick()
+
+      check(
+        blockedDuringHydrate &&
+          submitCalls === 1 &&
+          submittedMerged?.organizationId === 'org-2' &&
+          submittedMerged?.projectMode === 'create' &&
+          submittedMerged?.repoMode === 'none' &&
+          !submittedMerged?.projectId &&
+          !submittedMerged?.repositoryId,
+        '2.9 组织切换水合期间禁用下一步/提交并阻断运行时提交，水合完成后清理旧组织残留 ID 且提交时不夹带隐藏字段',
+        { blockedDuringHydrate, submitCalls, submittedMerged },
+      )
+    }
   }
 
   console.log('== 3. 动作分发器 createActionDispatcher 透传向导扩展属性 ==')
@@ -701,6 +838,34 @@ async function main(): Promise<void> {
           discAuthed.initialStepIndex === 1,
         '4.4 handleYunxiaoDiscover 在本机令牌已有效时返回 authenticated:true 与 initialStepIndex:1',
         discAuthed,
+      )
+
+      // 4.5 发现阶段切换组织或取消向导不得提前写入 preferences.json；仅新建项目成功后写入，且写失败记诊断日志
+      const prefPath = path.join(tokenDir, 'preferences.json')
+      await onboarding.handleYunxiaoDiscover({ cwd: '/ws', organizationId: '673db5665c76405a332eebc4' })
+      const existedAfterDiscoverOnly = fs.existsSync(prefPath)
+      if (typeof onboarding.savePreferredOrganization === 'function') {
+        await onboarding.savePreferredOrganization('673db5665c76405a332eebc4')
+      }
+      const savedAfterCreate = fs.existsSync(prefPath) ? fs.readFileSync(prefPath, 'utf8') : ''
+      const failPrefOnboarding = onboardMod.createYunxiaoOnboarding({
+        homeDir: tmpHome,
+        logCtx,
+        fs: {
+          mkdir: async () => { throw new Error('EACCES: read-only home') },
+        },
+      })
+      const logCountBefore = loggedEvents.length
+      if (typeof failPrefOnboarding.savePreferredOrganization === 'function') {
+        await failPrefOnboarding.savePreferredOrganization('673db5665c76405a332eebc4')
+      }
+      const prefFailLogged = loggedEvents.slice(logCountBefore).some((e) => e.event === 'choiceStore.write.fail' && e.fields?.keyHash === 'yunxiao-pref')
+      check(
+        existedAfterDiscoverOnly === false &&
+          savedAfterCreate.includes('673db5665c76405a332eebc4') &&
+          prefFailLogged === true,
+        '4.5 wf.yunxiaoDiscover 不提前污染 preferences.json；新建项目成功后原子落盘组织偏好，且持久化失败记录 choiceStore.write.fail 诊断事件',
+        { existedAfterDiscoverOnly, savedAfterCreate, prefFailLogged },
       )
     } else {
       check(false, '4.1 createYunxiaoOnboarding 尚未实现')
@@ -903,12 +1068,17 @@ async function main(): Promise<void> {
         if (cmd === 'git' && args.includes('remote') && args.includes('get-url')) {
           return { code: 0, stdout: 'git@codeup.aliyun.com:' + ORG + '/platform/alpha.git', stderr: '' }
         }
+        if (cmd === 'ssh') {
+          return { code: 0, stdout: 'Welcome to Codeup, Bryan!\n', stderr: '' }
+        }
         return { code: 1, stdout: '', stderr: 'no ssh' }
       },
     })
     check(
-      originHit.res.defaultsByField.repoMode === 'bind' && originHit.res.defaultsByField.repositoryId === '7001',
-      '5.10 本地 git origin 命中组织内已有 Codeup 代码库时，默认回填 bind 模式并选中该代码库',
+      originHit.res.defaultsByField.repoMode === 'bind' &&
+        originHit.res.defaultsByField.repositoryId === '7001' &&
+        originHit.res.defaultsByField.remoteProtocol === 'auto',
+      '5.10 本地 git origin 命中组织内已有 Codeup 代码库时，默认回填 bind 模式并选中该代码库，且 remoteProtocol 默认保持 auto',
       { defaults: originHit.res.defaultsByField, repos: (originHit.res.optionsByField.repositoryId || []).length },
     )
 
@@ -977,6 +1147,7 @@ async function main(): Promise<void> {
         cwd: opts.cwd,
         platform: {
           fs: fsPort, env: envPort, exec: execPort.fn,
+          ...(opts.homeDir ? { homeDir: opts.homeDir } : {}),
           resolveExecutable: async (bin: string) => (bin === 'git' ? '/usr/bin/git' : null),
         },
         exec: execPort.fn,
@@ -1134,9 +1305,10 @@ async function main(): Promise<void> {
       { error: pushFail.res.error, yaml: pushFail.fsPort.writes[0]?.text },
     )
 
-    // 6.8 宿主 handleContractOp 把向导参数透传给房间 initProject，并把双深链与提示带回弹窗
+    // 6.8 宿主 handleContractOp 把向导参数透传给房间 initProject，透传双深链与提示，且仅在 projectCreated:true 时回调组织偏好记忆
     {
       const captured: any = { input: null }
+      const savedOrgs: string[] = []
       const flow = publishMod.createPublishFlow({
         DEFAULT_CWD: '/ws/host',
         resolveGit: async () => '/usr/bin/git',
@@ -1145,6 +1317,7 @@ async function main(): Promise<void> {
         repoKeys: {}, repoRoots: {}, setCache: () => {},
         makeCreateErrorClassifier: () => (_t: unknown, k: unknown) => String(k || 'unknown'),
         KIND_UNKNOWN: 'unknown',
+        onProjectCreated: async (info: any) => { savedOrgs.push(info.organizationId) },
         openSession: async () => ({
           ok: true, backendId: 'yunxiao',
           call: async (fn: any) => fn({
@@ -1153,11 +1326,12 @@ async function main(): Promise<void> {
               return {
                 ok: true,
                 data: {
-                  backend: 'yunxiao', refId: 'yx/app', name: 'yx/app',
+                  backend: 'yunxiao', refId: ORG + '/' + PROJ, name: 'yx/app',
                   url: 'https://codeup.aliyun.com/' + ORG + '/apps/app',
                   projectUrl: 'https://devops.aliyun.com/projex/project/' + PROJ,
                   repoUrl: 'https://codeup.aliyun.com/' + ORG + '/apps/app',
                   customCode: 'APP',
+                  ...(input.projectMode === 'create' ? { projectCreated: true } : {}),
                   extraUrls: [
                     { label: { zh: '打开 Yunxiao Projex 项目 ↗', en: 'Open' }, url: 'https://devops.aliyun.com/projex/project/' + PROJ, primary: true },
                     { label: { zh: '打开 Codeup 代码库 ↗', en: 'Open' }, url: 'https://codeup.aliyun.com/' + ORG + '/apps/app' },
@@ -1174,48 +1348,108 @@ async function main(): Promise<void> {
         organizationId: ORG, projectMode: 'reuse', projectId: PROJ, repoMode: 'create',
         namespaceId: '2813489', remoteProtocol: 'auto', description: '一键开仓',
       })
+      const savedCountAfterReuse = savedOrgs.length
+      const outCreate: any = await flow.handleContractOp({
+        op: 'initProject', cwd: '/ws/host', name: 'app', visibility: 'private',
+        organizationId: ORG, projectMode: 'create', projectName: 'App', repoMode: 'none',
+      })
       check(
-        out.ok === true &&
-          captured.input?.organizationId === ORG && captured.input?.projectMode === 'reuse' &&
-          captured.input?.projectId === PROJ && captured.input?.repoMode === 'create' &&
-          captured.input?.namespaceId === '2813489' && captured.input?.remoteProtocol === 'auto' &&
+        out.ok === true && outCreate.ok === true &&
+          savedCountAfterReuse === 0 && savedOrgs.length === 1 && savedOrgs[0] === ORG &&
+          captured.input?.organizationId === ORG && captured.input?.projectMode === 'create' &&
           Array.isArray(out.links) && out.links.length === 2 && Boolean(out.hint) &&
           typeof out.projectUrl === 'string' && out.customCode === 'APP',
-        '6.8 宿主 handleContractOp 把向导的组织/项目/仓库模式参数透传给房间 initProject，成功时把双深链与提交提示带回弹窗',
-        { out, input: captured.input },
+        '6.8 宿主 handleContractOp 透传向导参数与双深链提示，且仅在新建项目成功后触发组织偏好记忆（复用项目不改写）',
+        { out, savedCountAfterReuse, savedOrgs, input: captured.input },
       )
     }
 
-    // 6.9 宿主把房间推送失败的报错翻成 halfCreated（带 repoUrl 与重推入口）
+    // 6.9 真实 initProject 首次推送失败 → halfCreated → retryPushFlow 一键重推成功后保留 Projex + Codeup 双深链与提交关联提示
     {
+      const repoSyncMod = await imp('src/refresh/rooms/client/repo-sync-renderer.ts')
+      const fsPort = makePortFs({})
+      const envPort = makePortEnv({ YUNXIAO_TOKEN: 'pt-valid-token-123456' })
+      const fetchPort = makePortFetch(baseRoutes([
+        { method: 'POST', match: (u: string) => /\/repositories(\?|$)/.test(u), reply: () => ({ status: 200, body: { id: 8899009, pathWithNamespace: ORG + '/apps/retry-real' } }) },
+        { match: (u: string) => u.includes('/repositories/8899009'), reply: () => ({ status: 200, body: { id: 8899009, pathWithNamespace: ORG + '/apps/retry-real', webUrl: 'https://codeup.aliyun.com/' + ORG + '/apps/retry-real', httpUrlToRepo: 'https://codeup.aliyun.com/' + ORG + '/apps/retry-real.git' } }) },
+      ]))
+      let pushAttempt = 0
       const flow = publishMod.createPublishFlow({
-        DEFAULT_CWD: '/ws/host',
+        DEFAULT_CWD: '/ws/retry-real',
         resolveGit: async () => '/usr/bin/git',
-        execProc: async () => ({ ok: true, text: 'true' }),
+        execProc: async (argv: string[]) => {
+          const sub = argv.slice(1)
+          if (sub[0] === 'push') {
+            pushAttempt += 1
+            return pushAttempt === 1
+              ? { ok: false, code: 128, error: 'fatal: network timeout during first push' }
+              : { ok: true, code: 0, text: 'Everything up-to-date' }
+          }
+          if (sub[0] === 'remote' && sub[1] === 'get-url') return { ok: false, code: 2, error: 'No such remote' }
+          return { ok: true, code: 0, text: 'true' }
+        },
         canonicalKey: async (c: any) => String(c),
         repoKeys: {}, repoRoots: {}, setCache: () => {},
-        makeCreateErrorClassifier: () => (_t: unknown, k: unknown) => String(k || 'unknown'),
+        makeCreateErrorClassifier: () => (_t: unknown, k: unknown) => String(k || 'network'),
         KIND_UNKNOWN: 'unknown',
-        openSession: async () => ({
+        openSession: async (_cwd: unknown, opts?: any) => ({
           ok: true, backendId: 'yunxiao',
           call: async (fn: any) => fn({
-            initProject: async () => ({
-              ok: false,
-              error: {
-                kind: 'network',
-                message: '坐标已写入，但 git push 失败',
-                repoUrl: 'https://codeup.aliyun.com/' + ORG + '/apps/app',
-              },
-            }),
-          }, {}),
+            initProject: (handle: any, inp: any, c: any) => initProject(handle, inp, c),
+          }, {
+            cwd: '/ws/retry-real',
+            platform: { fs: fsPort, env: envPort, exec: opts?.exec, resolveExecutable: async (b: string) => (b === 'git' ? '/usr/bin/git' : null) },
+            exec: opts?.exec,
+            fetch: fetchPort.fn,
+          }),
         }),
       })
-      const half: any = await flow.handleContractOp({ op: 'initProject', cwd: '/ws/host', name: 'app', repoMode: 'create' })
+      const half: any = await flow.handleContractOp({
+        op: 'initProject', cwd: '/ws/retry-real', name: 'retry-real', visibility: 'private',
+        organizationId: ORG, projectMode: 'reuse', projectId: PROJ, repoMode: 'create', remoteProtocol: 'https',
+      })
+      const g = globalThis as Record<string, any>
+      g.buildWizardSuccessState = wizMod.buildWizardSuccessState
+      g.closeFormModal = queueMod.closeFormModal
+      g.host = {
+        call: (method: string, payload: any) => {
+          if (method === 'wf.retryPush') return flow.handleRetryPush(payload)
+          return Promise.resolve({ ok: false })
+        },
+      }
+      const stRetry: any = {
+        cwd: '/ws/retry-real',
+        formModal: {
+          open: true,
+          lastVis: 'private',
+          fail: {
+            kind: 'half-created',
+            code: half.errorKind,
+            text: half.error,
+            link: half.repoUrl,
+            repo: half.repo,
+            halfCreated: half.halfCreated,
+            links: half.links,
+            hint: half.hint,
+            projectUrl: half.projectUrl,
+            customCode: half.customCode,
+          },
+        },
+      }
+      repoSyncMod.retryPushFlow(stRetry, stRetry.formModal)
+      await new Promise((r) => setTimeout(r, 25))
+      const retrySuccess = stRetry.formModal.success
       check(
-        half.ok === false && half.halfCreated === true &&
-          Boolean(half.repoUrl) && half.repoUrl === 'https://codeup.aliyun.com/' + ORG + '/apps/app',
-        '6.9 房间回包带 repoUrl 的推送失败在宿主侧翻成 halfCreated:true，供弹窗内联一键重试推送',
-        half,
+        half.ok === false &&
+          half.halfCreated === true &&
+          pushAttempt === 2 &&
+          Array.isArray(retrySuccess?.links) &&
+          retrySuccess.links.length === 2 &&
+          retrySuccess.links.some((l: any) => String(l.url).includes('/projex/project/' + PROJ)) &&
+          retrySuccess.links.some((l: any) => String(l.url).includes('/apps/retry-real')) &&
+          String(retrySuccess?.hint?.zh || '').includes('PLAN-'),
+        '6.9 真实 initProject 首次推送失败返回 halfCreated:true，经 retryPushFlow 重推成功后完整保留 Projex + Codeup 双深链与提交关联提示',
+        { half, pushAttempt, retrySuccess },
       )
     }
 
@@ -1226,6 +1460,7 @@ async function main(): Promise<void> {
       let everyCreateUsedCurrentToken = true
       const created = await runInit({
         cwd: '/ws/alpha',
+        homeDir: '/home/u',
         input: { name: 'alpha', projectName: 'Alpha', repoMode: 'none', organizationId: ORG, projectMode: 'create' },
         routes: baseRoutes([
           {
@@ -1243,13 +1478,15 @@ async function main(): Promise<void> {
         ]),
       })
       const customCodes = createBodies.map((body) => String(body.customCode || ''))
+      const prefWrite = created.fsPort.writes.find((w) => w.path === '/home/u/.config/yunxiao/preferences.json')
       check(
         created.res.ok === true && createBodies.length === 6 &&
           customCodes[0] === 'ALPHA' && customCodes[5] === 'ALPHAE' &&
           createBodies.every((body) => body.templateId === 'tpl-scrum') &&
           everyCreateUsedCurrentToken && created.res.data?.customCode === 'ALPHAE' &&
-          String(created.fsPort.writes[0]?.text || '').includes('projectId: ' + newProjectId),
-        '6.10 projectMode=create 优选 Scrum 模板，以当前令牌创建项目，并在编号冲突后完成最多五次递增重试',
+          String(created.fsPort.writes[0]?.text || '').includes('projectId: ' + newProjectId) &&
+          Boolean(prefWrite && prefWrite.text.includes(ORG)),
+        '6.10 projectMode=create 优选 Scrum 模板，以当前令牌创建项目，在编号冲突后完成最多五次递增重试，并将所选 organizationId 记入 ~/.config/yunxiao/preferences.json',
         { ok: created.res.ok, attempts: createBodies.length, customCodes, everyCreateUsedCurrentToken, error: created.res.error },
       )
     }
@@ -1306,6 +1543,69 @@ async function main(): Promise<void> {
         res.ok === false && remoteOrPushCalls.length === 0,
         '6.12 docs/agents/yunxiao.yaml 写盘失败时返回错误，且不执行 git remote 或 git push',
         { res, remoteOrPushCalls },
+      )
+    }
+
+    // 6.13 bind 模式：git remote add / set-url 失败必须如实返回失败，且 bind 任何失败都绝不误判为 halfCreated 重试推送
+    {
+      const bindRepoRoutes = baseRoutes([{ match: (u: string) => u.includes('/repositories/8194002'), reply: () => ({ status: 200, body: BIND_REPO }) }])
+      const bindAddFail = await runInit({
+        cwd: '/ws/bind-add-fail',
+        input: { name: 'app', repoMode: 'bind', repositoryId: '8194002', organizationId: ORG, projectMode: 'reuse', projectId: PROJ },
+        routes: bindRepoRoutes,
+        exec: (cmd: string, args: string[]) => {
+          if (cmd === 'git' && args[0] === 'remote' && args[1] === 'add') return { code: 128, stdout: '', stderr: 'fatal: could not lock config file' }
+          return gitOk(cmd, args)
+        },
+      })
+      const bindSetUrlFail = await runInit({
+        cwd: '/ws/bind-seturl-fail',
+        input: { name: 'app', repoMode: 'bind', repositoryId: '8194002', organizationId: ORG, projectMode: 'reuse', projectId: PROJ },
+        routes: bindRepoRoutes,
+        exec: (cmd: string, args: string[]) => {
+          if (cmd === 'git' && args[0] === 'remote' && args[1] === 'get-url') return { code: 0, stdout: 'https://codeup.aliyun.com/old/app.git\n', stderr: '' }
+          if (cmd === 'git' && args[0] === 'remote' && args[1] === 'set-url') return { code: 128, stdout: '', stderr: 'fatal: could not set remote url' }
+          return gitOk(cmd, args)
+        },
+      })
+      const roFs = makePortFs({})
+      roFs.writeText = async () => { throw new Error('EACCES: read-only docs/agents/yunxiao.yaml') }
+      const bindFlow = publishMod.createPublishFlow({
+        DEFAULT_CWD: '/ws/bind-ro',
+        resolveGit: async () => '/usr/bin/git',
+        execProc: async (argv: string[]) => {
+          const sub = argv.slice(1)
+          if (sub[0] === 'remote' && sub[1] === 'get-url') return { ok: true, code: 0, text: 'https://codeup.aliyun.com/' + ORG + '/legacy/app.git' }
+          if (sub[0] === 'remote' && sub[1] === 'set-url') return { ok: false, code: 128, error: 'fatal: could not set-url' }
+          return { ok: true, code: 0, text: 'true' }
+        },
+        canonicalKey: async (c: any) => String(c),
+        repoKeys: {}, repoRoots: {}, setCache: () => {},
+        makeCreateErrorClassifier: () => (_t: unknown, k: unknown) => String(k || 'env'),
+        KIND_UNKNOWN: 'unknown',
+        openSession: async (_cwd: unknown, opts?: any) => ({
+          ok: true, backendId: 'yunxiao',
+          call: async (fn: any) => fn({
+            initProject: (handle: any, inp: any, c: any) => initProject(handle, inp, c),
+          }, {
+            cwd: '/ws/bind-ro',
+            platform: { fs: roFs, env: makePortEnv({ YUNXIAO_TOKEN: 'pt-valid-token-123456' }), exec: opts?.exec, resolveExecutable: async () => '/usr/bin/git' },
+            exec: opts?.exec,
+            fetch: makePortFetch(bindRepoRoutes).fn,
+          }),
+        }),
+      })
+      const bindWriteFailHost: any = await bindFlow.handleContractOp({
+        op: 'initProject', cwd: '/ws/bind-ro', name: 'app', repoMode: 'bind', repositoryId: '8194002', organizationId: ORG, projectMode: 'reuse', projectId: PROJ,
+      })
+      check(
+        bindAddFail.res.ok === false &&
+          String(bindAddFail.fsPort.writes[0]?.text || '').includes('repositoryId: "8194002"') &&
+          bindSetUrlFail.res.ok === false &&
+          bindWriteFailHost.ok === false &&
+          bindWriteFailHost.halfCreated === false,
+        '6.13 repoMode=bind 在 git remote add / set-url 失败时如实报错（保留已写入坐标），且 bind 模式任何失败在宿主侧均不会误标 halfCreated 重试推送',
+        { addOk: bindAddFail.res.ok, setUrlOk: bindSetUrlFail.res.ok, bindWriteFailHost },
       )
     }
   }

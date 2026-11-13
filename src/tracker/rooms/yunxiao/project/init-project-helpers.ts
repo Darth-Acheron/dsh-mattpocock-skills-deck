@@ -11,6 +11,7 @@
 import { ERROR_KIND } from '../../../contract/vocabulary.js'
 import type { ErrorKind } from '../../../contract/identity.js'
 import type { OpContext } from '../../../contract/contexts.js'
+import { PAGINATION } from '../../../contract/pagination.js'
 import type { TrackerError } from '../../../contract/results.js'
 import { fail } from '../../../kernel/preflight.js'
 import { isOwnershipMismatch, ownershipPathFrom, safeDirectoryCommand } from '../../../kernel/workspace-ownership.js'
@@ -24,8 +25,10 @@ import { normalizeCodeupRepositoryIdentity, type CodeupRepositoryIdentity } from
 import { cleanCodeupRepoPath, deriveProjectCustomCode } from '../model/workspace-config.js'
 import { requestProjectCreate, requestProjectsSearch, requestProjectTemplatesList } from '../requests.js'
 
+/** 本地子进程（git / ssh）统一返回信封：code 为退出码（0 表示成功），stdout 与 stderr 为完整输出文本。 */
 export interface ProcResult { code: number; stdout: string; stderr: string }
 
+/** 将不同执行器返回的子进程结果归一为标准 ProcResult（兼容 { code, stdout, stderr } 与 { ok, text, error } 两种宿主返回形状）。 */
 export function toProc(raw: unknown): ProcResult {
   const bag = raw !== null && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
   const stdout = typeof bag['stdout'] === 'string' ? bag['stdout'] : typeof bag['text'] === 'string' ? bag['text'] : typeof bag['out'] === 'string' ? bag['out'] : ''
@@ -148,7 +151,7 @@ export async function probeCodeupSshConnectivity(execFn: any, cwd: string): Prom
     const r = await execFn(
       'ssh',
       ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', '-o', 'StrictHostKeyChecking=accept-new', 'git@codeup.aliyun.com'],
-      { cwd: cwd || undefined, timeout: 5500 },
+      { cwd: cwd || undefined },
     )
     const combined = String(r?.stdout ?? r?.text ?? '') + '\n' + String(r?.stderr ?? r?.error ?? '')
     return /Welcome to Codeup|successfully authenticated/i.test(combined)
@@ -168,7 +171,7 @@ export async function ensureOrProvisionProjexProject(
     const searchConditions = JSON.stringify({
       conditionGroups: [[{ fieldIdentifier: 'name', operator: 'CONTAINS', value: [name], toValue: null, className: 'string', format: 'input' }]],
     })
-    const searchRes = await requestProjectsSearch(reqCtx, organizationId, { conditions: searchConditions, page: 1, perPage: 20 }, GITLAB_READ_TIMEOUT_MS)
+    const searchRes = await requestProjectsSearch(reqCtx, organizationId, { conditions: searchConditions, page: 1, perPage: PAGINATION.github.anchorLookupSearchLimit }, GITLAB_READ_TIMEOUT_MS)
     if (searchRes.ok && Array.isArray(searchRes.data)) {
       const matched = (searchRes.data as Record<string, unknown>[]).find(
         (p) => p && typeof p['id'] === 'string' && String(p['name'] || '').trim().toLowerCase() === name.toLowerCase() && p['logicalStatus'] !== 'DELETED',

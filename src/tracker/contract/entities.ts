@@ -290,6 +290,8 @@ export interface RepositoryRef {
   extraUrls?: Array<{ label: string | { zh: string; en: string }; url: string; primary?: boolean }>
   /** 可选的置备完成提示语（#24：如提交信息关联工作项提示）。 */
   hint?: string | { zh: string; en: string }
+  /** 标记本次置备是否实际新建了远端项目（#24：供宿主仅在新建项目成功后记忆默认组织偏好）。 */
+  projectCreated?: boolean
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

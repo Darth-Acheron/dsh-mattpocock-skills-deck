@@ -1,5 +1,5 @@
 /**
- * src/tracker/rooms/yunxiao/project/discover.ts —— 云效组织、Yunxiao Projex 项目、MattDemo 错位纠偏与 Codeup 双源命名空间发现（规格 #21 / #24）。
+ * src/tracker/rooms/yunxiao/project/discover.ts —— 云效组织、Yunxiao Projex 项目、存量项目错位纠偏与 Codeup 双源命名空间发现（规格 #21 / #24）。
  *
  * 为什么独立成文件：
  *   1. 严格通过房间请求边界（../requests.ts）调用云效 REST API，并经 src/tracker/registry/builtins.ts
@@ -7,6 +7,7 @@
  *   2. 与 init-project-helpers.ts 拆开后，保持单文件低于 250 有效行。
  */
 
+import { PAGINATION } from '../../../contract/pagination.js'
 import { GITLAB_READ_TIMEOUT_MS } from '../../../../shared/time-config/src/values.js'
 import type { YunxiaoCtx } from '../client.js'
 import { asRecord } from '../errors.js'
@@ -26,44 +27,28 @@ import {
   aggregateCodeupNamespaces, basenameOfCwd, pickDefaultProjectTemplateId,
   probeCodeupSshConnectivity, readLocalOriginUrl,
 } from './init-project-helpers.js'
+import { resolveDiscoverRuntime } from './init-project-persist.js'
 
-export { aggregateCodeupNamespaces, basenameOfCwd, buildCodeupCloneTarget, pickDefaultProjectTemplateId } from './init-project-helpers.js'
-
+/** 向导下拉菜单的双语选项结构（value 为提交时的稳定标识，label 按界面语言展示，不得将说明文案拼入 value）。 */
 export interface BilingualOption { value: string; label: { zh: string; en: string } }
+/** 向导字段内联提示或警告横幅（level 供前端渲染色阶，text 提供中英文完整提示）。 */
 export interface DiscoverFieldBanner { kind: 'warning' | 'info'; level: 'warn' | 'info'; text: { zh: string; en: string } }
+/** 云效工作区向导水合返回结构（initialStepIndex 为 0 表示需先录令牌，1 表示从项目步开始，2 表示直接处理代码库权限）。 */
 export interface YunxiaoDiscoverResult {
   ok: true; authenticated: boolean; initialStepIndex: 0 | 1 | 2
   user?: { id: string; name: string; login: string; lastOrganization?: string }
+  sshAvailable?: boolean
   optionsByField: Record<string, BilingualOption[]>
   defaultsByField: Record<string, string>
   bannersByField: Record<string, DiscoverFieldBanner>
   projectMismatchBanner?: DiscoverFieldBanner
 }
 
-async function resolveDiscoverRuntime(input: { cwd?: string; deps?: any }) {
-  const deps = input.deps || {}
-  let plat: any = deps.platform || null
-  if (!plat && typeof deps.getPlatform === 'function') { try { plat = await deps.getPlatform() } catch { plat = null } }
-  const envObj = deps.env || (plat && plat.env) || null
-  const env = {
-    get: (k: string): string | undefined => (envObj && typeof envObj.get === 'function' ? envObj.get(k) : undefined),
-    has: (k: string): boolean => (envObj && typeof envObj.get === 'function' ? envObj.get(k) !== undefined : false),
-  }
-  const wsFs = deps.workspaceFs || (plat && plat.fs) || null
-  let home = String(deps.homeDir || '').trim()
-  if (!home && typeof deps.getHome === 'function') { try { home = String((await deps.getHome()) || '').trim() } catch { home = '' } }
-  if (!home && plat && typeof plat.getHome === 'function') { try { home = String((await plat.getHome()) || '').trim() } catch { home = '' } }
-  if (!home) home = String(env.get('HOME') || env.get('USERPROFILE') || '').trim()
-  const execFn = typeof deps.exec === 'function' ? deps.exec : (plat && typeof plat.exec === 'function' ? plat.exec.bind(plat) : null)
-  const prefOrgId = String(deps.lastSelectedOrganizationId || '').trim()
-  return { env, wsFs, home, plat, execFn, fetchFn: deps.fetch, prefOrgId }
-}
-
 const unauthedResult = (): YunxiaoDiscoverResult => ({
   ok: true, authenticated: false, initialStepIndex: 0, optionsByField: {}, defaultsByField: {}, bannersByField: {},
 })
 
-/** 发现当前工作区的云效组织、Yunxiao Projex 项目（含 MattDemo 错位预警与自动纠偏）、项目模板与 Codeup 代码库/命名空间（wf.yunxiaoDiscover）。 */
+/** 发现当前工作区的云效组织、Yunxiao Projex 项目（含存量项目错位预警与自动纠偏）、项目模板与 Codeup 代码库/命名空间（wf.yunxiaoDiscover）。 */
 export async function discoverYunxiaoWorkspace(input: {
   cwd?: string; organizationId?: string; projectId?: string; lastSelectedOrganizationId?: string; deps?: any
 }): Promise<YunxiaoDiscoverResult> {
@@ -136,11 +121,13 @@ export async function discoverYunxiaoWorkspace(input: {
   }
   if (!activeOrgId) return { ok: true, authenticated: true, initialStepIndex: 1, user: userOut, optionsByField, defaultsByField, bannersByField }
 
+  const pageSize = PAGINATION.gitlab.limitDefault
+  const pageQuery = 'page=1&perPage=' + String(pageSize)
   const [projRes, tplRes, reposRes, nsRes, sshOk] = await Promise.all([
-    requestProjectsSearch(reqCtx, activeOrgId, { conditions: '', page: 1, perPage: 50 }, GITLAB_READ_TIMEOUT_MS),
+    requestProjectsSearch(reqCtx, activeOrgId, { conditions: '', page: 1, perPage: pageSize }, GITLAB_READ_TIMEOUT_MS),
     requestProjectTemplatesList(reqCtx, activeOrgId, GITLAB_READ_TIMEOUT_MS),
-    requestCodeupRepositoriesList(reqCtx, activeOrgId, 'page=1&perPage=50', GITLAB_READ_TIMEOUT_MS),
-    requestCodeupNamespacesList(reqCtx, activeOrgId, 'page=1&perPage=50', GITLAB_READ_TIMEOUT_MS),
+    requestCodeupRepositoriesList(reqCtx, activeOrgId, pageQuery, GITLAB_READ_TIMEOUT_MS),
+    requestCodeupNamespacesList(reqCtx, activeOrgId, pageQuery, GITLAB_READ_TIMEOUT_MS),
     probeCodeupSshConnectivity(execFn, cwd),
   ])
 
@@ -184,8 +171,7 @@ export async function discoverYunxiaoWorkspace(input: {
   let projectMismatchBanner: DiscoverFieldBanner | undefined
   const effectiveConfiguredId = fileProjectId && isValidProjectId(fileProjectId) ? fileProjectId : ''
   if (effectiveConfiguredId && (configuredProjUnreachable || configuredProj)) {
-    const isDemoName = configuredProj ? /mattdemo|sandbox|示例|demo/i.test(configuredProj.name) : false
-    const alignedWithWorkspace = configuredProj ? (slugCandidates.length === 0 ? !isDemoName : matchesSlug(configuredProj)) : false
+    const alignedWithWorkspace = configuredProj ? (slugCandidates.length === 0 ? true : matchesSlug(configuredProj)) : false
     if (configuredProjUnreachable || !alignedWithWorkspace) {
       hasProjectMismatch = true
       const slugDisp = targetSlug || repoSlug || '当前工作区'
@@ -271,7 +257,7 @@ export async function discoverYunxiaoWorkspace(input: {
   optionsByField['repositoryId'] = discoveredRepos.map((r) => ({
     value: String(r.id), label: { zh: r.pathWithNamespace + ' (#' + String(r.id) + ')', en: r.pathWithNamespace + ' (#' + String(r.id) + ')' },
   }))
-  defaultsByField['remoteProtocol'] = sshOk ? 'ssh' : 'auto'
+  defaultsByField['remoteProtocol'] = 'auto'
   defaultsByField['visibility'] = 'private'
   defaultsByField['name'] = targetSlug || 'my-repo'
 
@@ -285,7 +271,7 @@ export async function discoverYunxiaoWorkspace(input: {
   const repoBoundAndAccessible = Boolean(configuredRepo && typeof configuredRepo.accessLevel === 'number' && configuredRepo.accessLevel >= 20)
   const initialStepIndex: 0 | 1 | 2 = fileCoordsValid && !hasProjectMismatch && Boolean(fileRepoId) && !repoBoundAndAccessible ? 2 : 1
   return {
-    ok: true, authenticated: true, initialStepIndex, user: userOut,
+    ok: true, authenticated: true, initialStepIndex, user: userOut, sshAvailable: sshOk,
     optionsByField, defaultsByField, bannersByField,
     ...(projectMismatchBanner ? { projectMismatchBanner } : {}),
   }

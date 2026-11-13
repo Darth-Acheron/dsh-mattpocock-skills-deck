@@ -12,6 +12,7 @@ declare function emit(...args: any[]): any;
 declare function closeFormModal(...args: any[]): any;
 declare function modalFormFields(...args: any[]): any;
 declare function isWizardFieldVisible(...args: any[]): any;
+declare function pruneHiddenWizardValues(...args: any[]): any;
 declare function hydrateWizardModal(...args: any[]): any;
 declare function runWizardStepNext(...args: any[]): any;
 declare function renderWizardStepper(...args: any[]): any;
@@ -112,14 +113,14 @@ declare function resolveFailText(...args: any[]): any;
         return true
       }
       const onPrev = function () {
-        if (!isWizard || stepIndex <= 0) return
+        if (!isWizard || stepIndex <= 0 || m.pending || m.hydrating) return
         m.fail = null; m._userNavigated = true
         if (m.valuesByStep) m.valuesByStep[stepIndex] = Object.assign({}, vals)
         m.stepIndex = stepIndex - 1
         try { if (typeof emit === 'function') emit(st) } catch(_){}
       }
       const onNext = function () {
-        if (!isWizard) return
+        if (!isWizard || m.pending || m.hydrating) return
         const curStepObj = wizardSteps[stepIndex] || {}
         if (typeof runWizardStepNext === 'function' && (curStepObj.stepAction || m.authenticated || (typeof m.initialStepIndex === 'number' && m.initialStepIndex >= 1))) {
           runWizardStepNext(st, m, vals, undefined, setVals); return
@@ -136,10 +137,10 @@ declare function resolveFailText(...args: any[]): any;
         try { setTimeout(fire, SLOT_MODAL_OPEN_DELAY_MS) } catch(_) { fire() }
       }
       const onWizardSubmit = async function () {
-        if (m.pending || m.justSent) return
+        if (m.pending || m.hydrating || m.justSent) return
         if (isWizard && !validateCurrent()) return
         if (isWizard && m.valuesByStep) m.valuesByStep[stepIndex] = Object.assign({}, vals)
-        // 合并全步值（Q3 最后一起提交，验收原语：merged = Object.assign({}, ...valuesByStep) 浅合并后一次提交）
+        // 合并全步值（Q3 最后一起提交，验收原语：merged = Object.assign({}, ...valuesByStep) 浅合并后一次提交，并剥离隐藏条件字段）
         let merged: any = {}
         if (isWizard) {
           try { merged = (Object.assign as any).apply(null, ([{}] as any[]).concat(m.valuesByStep || [])) } catch(_) {
@@ -148,6 +149,7 @@ declare function resolveFailText(...args: any[]): any;
             for (const k in part) if (Object.prototype.hasOwnProperty.call(part, k)) merged[k] = part[k]
           }
           }
+          if (typeof pruneHiddenWizardValues === 'function') merged = pruneHiddenWizardValues(wizardSteps, merged)
         } else { merged = Object.assign({}, vals) }
         const allSchemas = isWizard ? (function(){ const a: any[]=[]; for(let i=0;i<wizardSteps.length;i++) a.push(...wizardSteps[i].schema); return a })() : curSchema
         for (let i = 0; i < allSchemas.length; i++) {
@@ -187,7 +189,7 @@ declare function resolveFailText(...args: any[]): any;
           const halfCreated = !!((e as any) && (e as any).halfCreated)
           const repoUrl = ((e as any) && (e as any).repoUrl) ? String((e as any).repoUrl).replace(/\.git$/, '') : ''
           const dispKind = halfCreated ? 'half-created' : (code || 'unknown')
-          m.fail = { kind: dispKind, code: code, text: resolveFailText(st, dispKind, code, msg), link: repoUrl || null, repo: ((e as any) && (e as any).repo) ? (e as any).repo : null, halfCreated: halfCreated }
+          m.fail = { kind: dispKind, code: code, text: resolveFailText(st, dispKind, code, msg), link: repoUrl || null, repo: ((e as any) && (e as any).repo) ? (e as any).repo : null, halfCreated: halfCreated, links: Array.isArray((e as any) && (e as any).links) ? (e as any).links : undefined, hint: ((e as any) && (e as any).hint) || undefined, projectUrl: ((e as any) && (e as any).projectUrl) || undefined, customCode: ((e as any) && (e as any).customCode) || undefined }
           if (isWizard && (code === 'bad-name' || code === 'already-exists')) {
             let jumped = false
             for (let si=0; si<wizardSteps.length && !jumped; si++) {
@@ -239,7 +241,10 @@ declare function resolveFailText(...args: any[]): any;
       const onFieldChange = function (fieldName: string, fieldVal: any) {
         if (isWizard && m.hydrateRpc && typeof hydrateWizardModal === 'function') {
           const extra: any = {}; extra[fieldName] = fieldVal
-          hydrateWizardModal(st, m, extra).catch(function () {})
+          hydrateWizardModal(st, m, extra).then(function () {
+            const idx = typeof m.stepIndex === 'number' ? m.stepIndex : 0
+            setVals(fillDefaults(wizardSteps && wizardSteps[idx] ? wizardSteps[idx].schema : [], (m.valuesByStep && m.valuesByStep[idx]) || {}))
+          }).catch(function () {})
         }
       }
       const fields = modalFormFields(curSchema, { m: m, isWizard: isWizard, stepIndex: stepIndex, vals: vals, setVals: setVals, onPick: onPick, onFieldChange: onFieldChange, h: h })
@@ -284,11 +289,11 @@ declare function resolveFailText(...args: any[]): any;
       const navRow = isWizard ? h('div', { style: { display: 'flex', gap: 6, justifyContent: 'space-between', marginTop: 8, alignItems: 'center' } }, [
         h('div', { style: { display: 'flex', gap: 6 } }, [
           h('button', { className: 'dsws-btn dsws-hov', 'data-press': 'button', 'data-log': 'modal.wizard.cancel', onClick: onClose, disabled: !!m.pending, style: { fontSize: 11, padding: '4px 10px' } }, '取消'),
-          stepIndex > 0 ? h('button', { className: 'dsws-btn dsws-hov', 'data-press': 'button', 'data-log': 'modal.wizard.prev', onClick: onPrev, disabled: !!m.pending, style: { fontSize: 11, padding: '4px 10px' } }, '上一步') : null
+          stepIndex > 0 ? h('button', { className: 'dsws-btn dsws-hov', 'data-press': 'button', 'data-log': 'modal.wizard.prev', onClick: onPrev, disabled: !!m.pending || !!m.hydrating, style: { fontSize: 11, padding: '4px 10px' } }, '上一步') : null
         ]),
         h('div', { style: { display: 'flex', gap: 6, alignItems: 'center' } }, [
           h('span', { style: { fontSize: 10, color: '#8b8b95' } }, String(stepIndex+1) + ' / ' + String(totalSteps)),
-          stepIndex < totalSteps - 1 ? h('button', { className: 'dsws-btn primary dsws-hov', 'data-press': 'button', 'data-log': 'modal.wizard.next', onClick: onNext, disabled: !!m.pending, style: { fontSize: 11, padding: '4px 10px', background: '#58a6ff', borderColor: '#58a6ff', color: '#0b1220', fontWeight: 600 } }, '下一步') : h('button', { className: 'dsws-btn primary dsws-hov' + (m.pending ? ' dsws-fb-busy' : '') + (m.justSent ? ' dsws-fb-result' : ''), 'data-press': 'button', 'data-log': 'modal.wizard.submit', onClick: onSubmit, disabled: !!m.pending || !!m.justSent, style: { fontSize: 11, padding: '4px 10px', background: m.pending ? '#6b7280' : '#58a6ff', borderColor: m.pending ? '#6b7280' : '#58a6ff', color: '#0b1220', fontWeight: 600, opacity: m.pending ? 0.7 : 1 } }, m.pending ? [h('span', { key: 't', className: 'fb-t', 'aria-hidden': 'true' }, tr('panel.submitting')), h('span', { key: 's', className: 'fb-spin', 'aria-hidden': 'true' }, h('span', { className: 'dsws-spinner', style: { width: 11, height: 11, borderWidth: 2 } }))] : (m.justSent ? tr('panel.submitted') : '提交'))
+          stepIndex < totalSteps - 1 ? h('button', { className: 'dsws-btn primary dsws-hov', 'data-press': 'button', 'data-log': 'modal.wizard.next', onClick: onNext, disabled: !!m.pending || !!m.hydrating, style: { fontSize: 11, padding: '4px 10px', background: '#58a6ff', borderColor: '#58a6ff', color: '#0b1220', fontWeight: 600 } }, '下一步') : h('button', { className: 'dsws-btn primary dsws-hov' + (m.pending ? ' dsws-fb-busy' : '') + (m.justSent ? ' dsws-fb-result' : ''), 'data-press': 'button', 'data-log': 'modal.wizard.submit', onClick: onSubmit, disabled: !!m.pending || !!m.hydrating || !!m.justSent, style: { fontSize: 11, padding: '4px 10px', background: m.pending ? '#6b7280' : '#58a6ff', borderColor: m.pending ? '#6b7280' : '#58a6ff', color: '#0b1220', fontWeight: 600, opacity: m.pending ? 0.7 : 1 } }, m.pending ? [h('span', { key: 't', className: 'fb-t', 'aria-hidden': 'true' }, tr('panel.submitting')), h('span', { key: 's', className: 'fb-spin', 'aria-hidden': 'true' }, h('span', { className: 'dsws-spinner', style: { width: 11, height: 11, borderWidth: 2 } }))] : (m.justSent ? tr('panel.submitted') : '提交'))
         ])
       ]) : h('div', { style: { display: 'flex', gap: 6, justifyContent: 'flex-end', marginTop: 8 } }, [
         h('button', { className: 'dsws-btn dsws-hov', 'data-press': 'button', 'data-log': 'modal.form.cancel', onClick: onClose, disabled: !!m.pending, style: { fontSize: 11, padding: '4px 10px' } }, '取消'),

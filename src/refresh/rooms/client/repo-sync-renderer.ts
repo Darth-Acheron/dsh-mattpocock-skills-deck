@@ -24,6 +24,7 @@ declare function chainEventRefresh(...args: any[]): any;
 declare function loadChain(...args: any[]): any;
 declare function userHintOf(...args: any[]): any;
 declare function closeFormModal(...args: any[]): any;
+declare function buildWizardSuccessState(...args: any[]): any;
     function resolveFailText(st: any, dispKind: any, code: any, rawMsg: any): string {
       let bkText: string = ''
       try {
@@ -111,10 +112,14 @@ declare function closeFormModal(...args: any[]): any;
       //   与「缺词表就显示键名」的诚实口径一致，源码里也不再藏第二份界面文案。
       return String(v || '')
     }
-    function retryPushFlow(st: any, m: any): void {
+    export function retryPushFlow(st: any, m: any): void {
       const fail: any = m && m.fail
       const repo: any = fail && fail.repo ? fail.repo : null
       const repoUrl: string = fail && fail.link ? fail.link : ''
+      const failLinks: any = fail && Array.isArray(fail.links) ? fail.links : undefined
+      const failHint: any = fail && fail.hint ? fail.hint : undefined
+      const failProjUrl: any = fail && fail.projectUrl ? fail.projectUrl : undefined
+      const failCode: any = fail && fail.customCode ? fail.customCode : undefined
       if (!repo) return
       m.pending = true
       m.fail = null
@@ -122,25 +127,27 @@ declare function closeFormModal(...args: any[]): any;
       ;(async function (): Promise<void> {
         try {
           let res: any = null
-          if (typeof host !== 'undefined' && host.call) res = await host.call('wf.retryPush', { cwd: st.cwd || '', name: repo.name || '', owner: repo.owner || '', repoUrl: repoUrl })
+          if (typeof host !== 'undefined' && host.call) res = await host.call('wf.retryPush', { cwd: st.cwd || '', name: repo.name || '', owner: repo.owner || '', repoUrl: repoUrl, links: failLinks, hint: failHint, projectUrl: failProjUrl, customCode: failCode })
           m.pending = false
           if (res && res.ok && res.repo) {
             try { if (st && Array.isArray(st._formModalQueue)) st._formModalQueue = [] } catch(_){}
             try { closeFormModal(st) } catch(_){ m.open = false }
             const r2: any = res.repo
-            m.success = { owner: r2.owner || '', name: r2.name || '', url: (res && res.repoUrl) ? res.repoUrl : '', visLabel: visLabelOf(m.lastVis) }
+            const visLbl: string = visLabelOf(m.lastVis)
+            const builtSuccess: any = typeof buildWizardSuccessState === 'function' ? buildWizardSuccessState(res, visLbl) : null
+            m.success = builtSuccess || { owner: r2.owner || '', name: r2.name || '', url: (res && res.repoUrl) ? res.repoUrl : '', visLabel: visLbl }
             startRepoSync(st)
             runRepoSyncRecheck(st)
           } else {
             // #999：拿不到档位就留空，不再借 'network' 顶上——客户端不猜档位（ADR 20261014 第 7 条）。
             const code: string = (res && res.errorKind) ? String(res.errorKind).toLowerCase() : ''
-            m.fail = { kind: 'half-created', code: code, text: resolveFailText(st, 'half-created', code, String((res && res.error) || '')), link: repoUrl || null, repo: repo, halfCreated: true }
+            m.fail = { kind: 'half-created', code: code, text: resolveFailText(st, 'half-created', code, String((res && res.error) || '')), link: repoUrl || null, repo: repo, halfCreated: true, links: failLinks, hint: failHint, projectUrl: failProjUrl, customCode: failCode }
           }
         } catch (e) {
           m.pending = false
           // #999：同上：异常里也没带档位就留空，别把「不知道」写成「网络」。
           const code: string = (e && ((e as any).code || (e as any).errorKind)) ? String((e as any).code || (e as any).kind || (e as any).errorKind).toLowerCase() : ''
-          m.fail = { kind: 'half-created', code: code, text: resolveFailText(st, 'half-created', code, String((e && (e as any).message) || e)), link: repoUrl || null, repo: repo, halfCreated: true }
+          m.fail = { kind: 'half-created', code: code, text: resolveFailText(st, 'half-created', code, String((e && (e as any).message) || e)), link: repoUrl || null, repo: repo, halfCreated: true, links: failLinks, hint: failHint, projectUrl: failProjUrl, customCode: failCode }
         }
         try { if (typeof emit === 'function') emit(st) } catch(_){}
       })()
