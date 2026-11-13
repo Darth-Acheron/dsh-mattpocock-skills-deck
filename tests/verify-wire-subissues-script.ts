@@ -806,7 +806,10 @@ console.log('子议题关联脚本门禁（#572 · 命令行黑盒）')
   const r = runScript(['--map', '567', '--children', '571', '--body-file', mapFixture], deep)
   check(r.status === 0 && r.json && r.json.ok === true, '22.1 子目录里跑能认得出后端并跑通（实得 exit=' + r.status + ' / ' + (r.json ? JSON.stringify(r.json.error || '') : '回包读不出') + '）')
   const ghCwds = argvCwds()
-  check(ghCwds.length > 0 && ghCwds.every(function (c) { return c === wsGithub }), '22.2 每条 gh 命令都在工作区根那一层跑（不是在子目录里；实得 ' + JSON.stringify(ghCwds) + '）')
+  // #30：macOS 上 os.tmpdir() 给的 /var/… 是 /private/var/… 的符号链接，子进程报上来的 cwd 是解析
+  //   后的真实路径；比之前把期望也解析一遍，两边都在真实路径上比（Windows 上 realpathSync 原样返回，判据不变）。
+  const wsGithubReal = fs.realpathSync(wsGithub)
+  check(ghCwds.length > 0 && ghCwds.every(function (c) { return c === wsGithubReal }), '22.2 每条 gh 命令都在工作区根那一层跑（不是在子目录里；实得 ' + JSON.stringify(ghCwds) + '）')
 
   // 反向：更近的 .git 不再截住上溯（2026-11-03 定版：.git 不是根标记），仍归外层工作区。
   const nested = path.join(wsGithub, 'nested')
@@ -851,7 +854,7 @@ console.log('子议题关联脚本门禁（#572 · 命令行黑盒）')
   resetFake(stateFor({ map: 567, bodies: { '567': MAP_BODY, '571': CHILD_PLAIN } }))
   const r6 = runScript(['--map', '567', '--children', '571', '--body-file', mapFixture], handWritten)
   check(r6.status === 0 && r6.json && r6.json.ok === true, '22.11 子目录只有手写说明文件、没有记录：仍归外层工作区（说明文件不再自成一套）')
-  check(argvCwds().every(function (c) { return c === wsGithub }), '22.12 这时 gh 命令仍在真正的根上跑（实得 ' + JSON.stringify(argvCwds()) + '）')
+  check(argvCwds().every(function (c) { return c === wsGithubReal }), '22.12 这时 gh 命令仍在真正的根上跑（实得 ' + JSON.stringify(argvCwds()) + '）')
 
   // 2026-11-03 定版：从属记录机制已删除。本层只要有一份 workspace.yaml 就是根；
   //   这里故意再留一份已经没人认的 workspace-member.yaml，钉住它不再改变认根结果。

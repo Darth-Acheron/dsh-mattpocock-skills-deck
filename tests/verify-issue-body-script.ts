@@ -225,7 +225,10 @@ console.log('正文写回脚本门禁（#571 · 命令行黑盒）')
   const cwdLog = path.join(TMP, 'gh-cwd.log')
   const ran = runRealWithCwdLogging(['--issue', '571', '--body-file', body], deep, cwdLog)
   const ghCwds = String(fs.readFileSync(cwdLog, 'utf8')).trim().split(/\r?\n/).filter(Boolean)
-  check(ran.status === 0 && ghCwds.length > 0 && ghCwds.every(function (c) { return c === wsGithub }), '8b.2b 每条 gh 命令都在工作区根那一层跑（不是在子目录里；实得 ' + JSON.stringify(ghCwds) + '）')
+  // #30：macOS 上 os.tmpdir() 给的 /var/… 是 /private/var/… 的符号链接，gh 子进程报上来的 cwd 是解析
+  //   后的真实路径；比之前把期望也解析一遍，两边都在真实路径上比（Windows 上 realpathSync 原样返回，判据不变）。
+  const wsGithubReal = fs.realpathSync(wsGithub)
+  check(ran.status === 0 && ghCwds.length > 0 && ghCwds.every(function (c) { return c === wsGithubReal }), '8b.2b 每条 gh 命令都在工作区根那一层跑（不是在子目录里；实得 ' + JSON.stringify(ghCwds) + '）')
 
   // 反向：更近的 .git 不再截住上溯（2026-11-03 定版：.git 不是根标记），仍归外层工作区。
   const nested = path.join(wsGithub, 'nested')
@@ -270,7 +273,7 @@ console.log('正文写回脚本门禁（#571 · 命令行黑盒）')
   const handCwdLog = path.join(TMP, 'gh-hand-cwd.log')
   const ranHand = runRealWithCwdLogging(['--issue', '571', '--body-file', body], handWritten, handCwdLog)
   const handCwds = String(fs.readFileSync(handCwdLog, 'utf8')).trim().split(/\r?\n/).filter(Boolean)
-  check(ranHand.status === 0 && handCwds.length > 0 && handCwds.every(function (c) { return c === wsGithub }), '8b.12 这时 gh 命令仍在真正的根上跑（实得 ' + JSON.stringify(handCwds) + '）')
+  check(ranHand.status === 0 && handCwds.length > 0 && handCwds.every(function (c) { return c === wsGithubReal }), '8b.12 这时 gh 命令仍在真正的根上跑（实得 ' + JSON.stringify(handCwds) + '）')
 
   // 2026-11-03 定版：从属记录机制已删除。本层只要有一份 workspace.yaml 就是根；
   //   这里故意再留一份已经没人认的 workspace-member.yaml，钉住它不再改变认根结果。
