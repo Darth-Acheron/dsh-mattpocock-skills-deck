@@ -94,6 +94,15 @@ async function main() {
   const { parseConfig, stringifyConfig } = core
   const KEY_OF = sharedKeyFn('keyOf')
   const CURRENT_OS = sharedKeyFn('currentOs')
+  // 平台无关的期望键（#30：夹具平台无关化）：写这一侧把根还原成「本会话所选目录自己的写法」（settings-view.ts
+  //   的 viewFlagShownRootOf——拿会话目录的前几段按 currentOs 判的分隔符拼回），所以 Windows 上写进文件
+  //   的键是 'D:\\ws'、POSIX 上是 'D:/ws'。查盘上根那一条记录时用这一条推导，不写字面量；名单临时记录
+  //   （认不出根时按名单路径原文记的那条）与种子文件里预置的键不经过这条还原，仍然用字面量。
+  const writableKeyOf = (root: any): any => {
+    const sep = (typeof CURRENT_OS === 'function' && CURRENT_OS() === 'win32') ? '\\' : '/'
+    return String(root == null ? '' : root).split(/[\\/]+/).filter(Boolean).join(sep)
+  }
+  const WS_KEY = writableKeyOf('D:\\ws')
   const settingsText = (wsLines) => ['version: 1', 'ui: {}', 'workspaces:'].concat(wsLines || []).concat(['debug:', '  enabled: false', '  sampleRate: 1', 'templates: {}', '']).join('\n')
   const parseSettingsText = (text) => parseConfig(text, 'settings')
   const wsOf = (ok) => (ok && ok.ok === true ? ok.value.workspaces : null)
@@ -175,10 +184,10 @@ async function main() {
   const env2 = makeEnv({ cwd: 'D:\\ws\\demo', root: 'd:\\ws', home: env2a.home })
   env2.mod.settingsViewLoad()
   await settlement(env2.mod)
-  const merged2 = await waitFor(diskHas(env2.home, (doc) => !!entryOf(doc, 'D:\\ws') && !entryOf(doc, 'D:\\ws\\demo')))
+  const merged2 = await waitFor(diskHas(env2.home, (doc) => !!entryOf(doc, WS_KEY) && !entryOf(doc, 'D:\\ws\\demo')))
   check(merged2, '认出根以后磁盘上出现根那一条、临时那一条不见了。', JSON.stringify(wsKeysOf(await readDoc(env2.home))))
   const doc2 = await readDoc(env2.home)
-  const root2 = entryOf(doc2, 'D:\\ws')
+  const root2 = entryOf(doc2, WS_KEY)
   check(wsKeysOf(doc2).length === 1, '合并后文件里只剩一条记录（不留两处分家）。', JSON.stringify(wsKeysOf(doc2)))
   check(!!root2 && root2.statusBar === 'show', '用户点过的格搬上去了（根记录里的 statusBar 是 show）。', JSON.stringify(root2))
   check(!!root2 && root2.deckTools === 'on' && root2.noRepoDismissed === false && root2.subwsMarkAutoShown === false, '普通记录该有的另外几格补齐成缺省。', JSON.stringify(root2))
@@ -229,10 +238,10 @@ async function main() {
   })
   env4.mod.settingsViewLoad()
   await settlement(env4.mod)
-  const graduated4 = await waitFor(diskHas(env4.home, (doc) => !!entryOf(doc, 'D:\\ws') && entryOf(doc, 'D:\\ws').unopened === undefined))
-  check(graduated4, '原地毕业：那条记录留在原键上，临时标记清掉了。', JSON.stringify(await readDoc(env4.home)))
+  const graduated4 = await waitFor(diskHas(env4.home, (doc) => !!entryOf(doc, WS_KEY) && entryOf(doc, WS_KEY).unopened === undefined))
+  check(graduated4, '原地毕业：不留第二条记录、临时标记清掉、键用根的本会话写法（Windows 上就是原键 D:\\ws、POSIX 上按分隔符拼回 D:/ws）。', JSON.stringify(await readDoc(env4.home)))
   const doc4 = await readDoc(env4.home)
-  const root4 = entryOf(doc4, 'D:\\ws')
+  const root4 = entryOf(doc4, WS_KEY)
   check(wsKeysOf(doc4).length === 1, '文件里仍只有一条记录（没有因为写法不同多出一条）。', JSON.stringify(wsKeysOf(doc4)))
   check(!!root4 && root4.statusBar === 'show' && root4.deckTools === 'on' && root4.noRepoDismissed === false && root4.subwsMarkAutoShown === false, '点过的格保留、另外几格补成缺省。', JSON.stringify(root4))
 
@@ -276,7 +285,7 @@ async function main() {
   const env6b = makeEnv({ cwd: 'D:\\ws\\demo', root: 'd:\\ws', home: failHome })
   env6b.mod.settingsViewLoad()
   await settlement(env6b.mod)
-  await waitFor(diskHas(failHome, (doc) => !!entryOf(doc, 'D:\\ws') && !entryOf(doc, 'D:\\ws\\demo')))
+  await waitFor(diskHas(failHome, (doc) => !!entryOf(doc, WS_KEY) && !entryOf(doc, 'D:\\ws\\demo')))
   const logs6b = mergeLogs(env6b.logs)
   check(logs6b.length === 1, '换一趟能写的实例后写成功，合并日志这时才发出来。', JSON.stringify(env6b.logs.map((l) => l.event)))
 
@@ -291,7 +300,7 @@ async function main() {
   env7.st.sessionWorkspaceRoot = 'd:\\ws'
   const merged7 = env7.mod.viewFlagMergeNow('root')
   check(merged7 === 1, '认出根那一下调合并，返回合并了 1 条。', String(merged7))
-  const disk7 = await waitFor(diskHas(env7.home, (doc) => !!entryOf(doc, 'D:\\ws') && !entryOf(doc, 'D:\\ws\\demo')))
+  const disk7 = await waitFor(diskHas(env7.home, (doc) => !!entryOf(doc, WS_KEY) && !entryOf(doc, 'D:\\ws\\demo')))
   check(disk7, 'root 路合并后落盘：根那一条在、临时那一条没了。', JSON.stringify(wsKeysOf(await readDoc(env7.home))))
   const logs7 = mergeLogs(env7.logs)
   check(logs7.length === 1 && logs7[0].fields.via === 'root', 'root 路带起来的合并日志写明 via: root。', JSON.stringify(logs7[0]))

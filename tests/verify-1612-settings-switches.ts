@@ -113,6 +113,15 @@ async function main() {
   const { parseConfig, stringifyConfig } = core
   const KEY_OF = sharedKeyFn('keyOf')
   const CURRENT_OS = sharedKeyFn('currentOs')
+  // 平台无关的期望键（#30：夹具平台无关化）：写这一侧把根还原成「本会话所选目录自己的写法」（settings-view.ts
+  //   的 viewFlagShownRootOf——拿会话目录的前几段按 currentOs 判的分隔符拼回），所以 Windows 上写进文件
+  //   的键是 'D:\\ws'、POSIX 上是 'D:/ws'。查盘上那条记录时用这一条推导，不写字面量：两个平台上
+  //   「键是本会话的写法」是同一条判据。
+  const writableKeyOf = (root: any): any => {
+    const sep = (typeof CURRENT_OS === 'function' && CURRENT_OS() === 'win32') ? '\\' : '/'
+    return String(root == null ? '' : root).split(/[\\/]+/).filter(Boolean).join(sep)
+  }
+  const WS_KEY = writableKeyOf('D:\\ws')
 
   // 一份最小的合法设置文件文本：只给工作区节那几行，其余两节写成空表，读的时候由核补默认值。
   const settingsText = (wsLines) => ['version: 1', 'ui: {}', 'workspaces:'].concat(wsLines || []).concat(['debug:', '  enabled: false', '  sampleRate: 1', 'templates: {}', '']).join('\n')
@@ -230,10 +239,10 @@ async function main() {
     const env = makeEnv({ tag: 'born' })
     const accepted = env.mod.setViewFlagValue(env.cwd, 'statusBar', 'show')
     check(accepted === true, '文件还没建出来时也接下这一笔（后端通着，第一次写会把设置文件建出来）。')
-    const landed = await waitFor(diskEntryIs(env.home, 'D:\\ws', 'statusBar', 'show'))
+    const landed = await waitFor(diskEntryIs(env.home, WS_KEY, 'statusBar', 'show'))
     check(landed, 'statusBar 写 show 后落盘是 show。', JSON.stringify(await readDoc(env.home)))
     const doc = await readDoc(env.home)
-    const entry = entryOf(doc, 'D:\\ws')
+    const entry = entryOf(doc, WS_KEY)
     check(!!entry && entry.deckTools === 'on', '同一份记录里 deckTools 按缺省种成 on（新建记录就带齐两格）。', JSON.stringify(entry))
     check(!!entry && entry.bannerFolded === undefined, '落盘的记录里不再出现旧字段 bannerFolded。', JSON.stringify(entry))
     check(env.mod.viewFlagOf(env.cwd, 'statusBar') === 'show', '写成功之后读口立刻读得到 statusBar 的字符串值 show。')
@@ -244,23 +253,23 @@ async function main() {
     // 验收⑤的设置侧：只关胶囊状态栏时 deck 工具箱仍是开着的，两件事互不牵连。
     const env = makeEnv({ tag: 'capsule-only' })
     env.mod.setViewFlagValue(env.cwd, 'statusBar', 'show')
-    await waitFor(diskEntryIs(env.home, 'D:\\ws', 'statusBar', 'show'))
+    await waitFor(diskEntryIs(env.home, WS_KEY, 'statusBar', 'show'))
     const accepted = env.mod.setViewFlagValue(env.cwd, 'statusBar', 'hide')
     check(accepted === true, '把胶囊状态栏改回收起时这一笔被接下。')
-    const landed = await waitFor(diskEntryIs(env.home, 'D:\\ws', 'statusBar', 'hide'))
+    const landed = await waitFor(diskEntryIs(env.home, WS_KEY, 'statusBar', 'hide'))
     check(landed, 'statusBar 改 hide 后落盘是 hide。', JSON.stringify(await readDoc(env.home)))
-    const entry = entryOf(await readDoc(env.home), 'D:\\ws')
+    const entry = entryOf(await readDoc(env.home), WS_KEY)
     check(!!entry && entry.deckTools === 'on', '只关胶囊状态栏不动 deck 工具箱（deckTools 仍是 on）。', JSON.stringify(entry))
   }
 
   {
     const env = makeEnv({ tag: 'tools' })
     env.mod.setViewFlagValue(env.cwd, 'deckTools', 'off')
-    const landed = await waitFor(diskEntryIs(env.home, 'D:\\ws', 'deckTools', 'off'))
+    const landed = await waitFor(diskEntryIs(env.home, WS_KEY, 'deckTools', 'off'))
     check(landed, 'deckTools 写 off 后落盘是 off。', JSON.stringify(await readDoc(env.home)))
     const back = env.mod.setViewFlagValue(env.cwd, 'deckTools', 'on')
     check(back === true, '再把 deck 工具箱打开时这一笔被接下。')
-    const landedBack = await waitFor(diskEntryIs(env.home, 'D:\\ws', 'deckTools', 'on'))
+    const landedBack = await waitFor(diskEntryIs(env.home, WS_KEY, 'deckTools', 'on'))
     check(landedBack && env.mod.viewFlagOf(env.cwd, 'deckTools') === 'on', 'deckTools 改回 on 后落盘与读口都是 on。', JSON.stringify(await readDoc(env.home)))
   }
 
@@ -271,7 +280,7 @@ async function main() {
     env.mod.setViewFlagValue(env.cwd, 'deckTools', 'off')
     const landed = await waitFor(async () => {
       const doc = await readDoc(env.home)
-      const entry = entryOf(doc, 'D:\\ws')
+      const entry = entryOf(doc, WS_KEY)
       return !!entry && entry.statusBar === 'show' && entry.deckTools === 'off'
     })
     check(landed, '两格一起改完都落盘了（statusBar: show、deckTools: off）。', JSON.stringify(await readDoc(env.home)))
@@ -340,9 +349,9 @@ async function main() {
     const cwd = 'D:\\ws\\demo'
     const env = makeEnv({ tag: 'seed', localStorage: { 'dsws.bannerFold': JSON.stringify({ [KEY_OF(cwd)]: 0 }) } })
     env.mod.setViewFlagValue(cwd, 'deckTools', 'off')
-    const landed = await waitFor(diskEntryIs(env.home, 'D:\\ws', 'deckTools', 'off'))
+    const landed = await waitFor(diskEntryIs(env.home, WS_KEY, 'deckTools', 'off'))
     check(landed, '文件还没建出来时写 deckTools: off 也能落盘。', JSON.stringify(await readDoc(env.home)))
-    const entry = entryOf(await readDoc(env.home), 'D:\\ws')
+    const entry = entryOf(await readDoc(env.home), WS_KEY)
     check(!!entry && entry.statusBar === 'hide', '新建记录时 statusBar 固定种 hide（旧键记着展开也不采纳）。', JSON.stringify(entry))
     check(!!entry && entry.bannerFolded === undefined, '种出来的新记录不带旧字段 bannerFolded。', JSON.stringify(entry))
   }

@@ -117,6 +117,15 @@ async function main() {
   const store = core
   const KEY_OF = sharedKeyFn('keyOf')
   const CURRENT_OS = sharedKeyFn('currentOs')
+  // 平台无关的期望键（#30：夹具平台无关化）：写这一侧把根还原成「本会话所选目录自己的写法」（settings-view.ts
+  //   的 viewFlagShownRootOf——拿会话目录的前几段按 currentOs 判的分隔符拼回），所以 Windows 上写进文件
+  //   的键是 'D:\\ws'、POSIX 上是 'D:/ws'。查盘上根那一条记录时用这一条推导，不写字面量；名单临时记录
+  //   （认不出根时按名单路径原文记的那条）与种子文件里预置的键不经过这条还原，仍然用字面量。
+  const writableKeyOf = (root: any): any => {
+    const sep = (typeof CURRENT_OS === 'function' && CURRENT_OS() === 'win32') ? '\\' : '/'
+    return String(root == null ? '' : root).split(/[\\/]+/).filter(Boolean).join(sep)
+  }
+  const WS_KEY = writableKeyOf('D:\\ws')
 
   // ── 第一件事：中文与英文的提示文案落在 flow.yaml 与生成的 locale-data.ts 里 ──
   console.log('')
@@ -282,7 +291,7 @@ async function main() {
   env.st.sessionWorkspaceRoot = 'd:\\ws'
   const merged = env.mod.viewFlagMergeNow('root')
   check(merged === 1, '第一次打开认出根那一下调合并，返回合并了 1 条。', String(merged))
-  const gone = await waitFor(diskHas(env.home, (doc) => !!entryOf(doc, 'D:\\ws') && !entryOf(doc, 'D:\\ws\\other')))
+  const gone = await waitFor(diskHas(env.home, (doc) => !!entryOf(doc, WS_KEY) && !entryOf(doc, 'D:\\ws\\other')))
   check(gone, '合并后落盘：根那一条在、临时那一条没了（小字消失对应的数据变化）。', JSON.stringify((await readDoc(env.home)) && (await readDoc(env.home)).workspaces))
   check(env.mod.viewFlagDocKeyOf('D:\\ws\\other') !== '', '认出根以后写键不再是空串（渲染层的 isWorkspaceUnopened 从此回 false，小字自动消失）。', String(env.mod.viewFlagDocKeyOf('D:\\ws\\other')))
 

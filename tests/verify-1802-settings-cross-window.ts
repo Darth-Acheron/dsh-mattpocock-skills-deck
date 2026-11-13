@@ -343,6 +343,15 @@ async function main() {
   KEY_OF = sharedKeyFn('keyOf')
   CURRENT_OS = sharedKeyFn('currentOs')
   check(typeof KEY_OF === 'function' && typeof CURRENT_OS === 'function', '工作区键函数与当前系统名从构建产物里取到了，客户端闭包能按仓内同一口径算文档键。', typeof KEY_OF)
+  // 平台无关的期望键（#30：夹具平台无关化）：客户端写这一侧把根还原成「本会话所选目录自己的写法」（settings-view.ts
+  //   的 viewFlagShownRootOf——拿会话目录的前几段按 currentOs 判的分隔符拼回），所以 Windows 上写进文件的键是
+  //   'D:\\ilife'、POSIX 上是 'D:/ilife'。查客户端从空文档新建的那条记录、以及客户端发出去的补丁时用这一条推导；
+  //   预置整份写进文件的记录（host 那一路按字面量键写）不经过这条还原，仍然用字面量查。
+  const writableKeyOf = (root: any): any => {
+    const sep = (typeof CURRENT_OS === 'function' && CURRENT_OS() === 'win32') ? '\\' : '/'
+    return String(root == null ? '' : root).split(/[\\/]+/).filter(Boolean).join(sep)
+  }
+  const WKSP_KEY = writableKeyOf('D:\\ilife')
 
   // ---------------------------------------------------------------------------------------------
   // 一、宿主：真实 settingsPhones + 真实 configStore + 临时 home 里的真实文件
@@ -526,7 +535,7 @@ async function main() {
     check(acceptedA === true, 'A 把 statusBar 改成 hide 时，客户端接下了这一笔（文档就绪、值合法）。', acceptedA)
     const aLanded = await waitFor(async function () {
       const d = await readDoc(home)
-      return !!d && !!d.workspaces && !!d.workspaces['D:\\ilife'] && d.workspaces['D:\\ilife'].statusBar === 'hide'
+      return !!d && !!d.workspaces && !!d.workspaces[WKSP_KEY] && d.workspaces[WKSP_KEY].statusBar === 'hide'
     })
     check(aLanded, 'A 这一笔真的落到了盘上的设置文件里（statusBar 是 hide）。', JSON.stringify(await readDoc(home)))
     const staleB = envB.mod.viewFlagOfRoot(envB.root, 'statusBar')
@@ -557,14 +566,14 @@ async function main() {
     check(okA === true, 'A 把 statusBar 改成 hide 时客户端接下了这一笔。', okA)
     const aLanded = await waitFor(async function () {
       const d = await readDoc(home)
-      return !!d && !!d.workspaces && !!d.workspaces['D:\\ilife'] && d.workspaces['D:\\ilife'].statusBar === 'hide'
+      return !!d && !!d.workspaces && !!d.workspaces[WKSP_KEY] && d.workspaces[WKSP_KEY].statusBar === 'hide'
     })
     check(aLanded, 'A 这一笔先落盘：文件里 statusBar 是 hide。', JSON.stringify(await readDoc(home)))
     const okB = envB.mod.setViewFlagValue(envB.cwd, 'deckTools', 'off', false)
     check(okB === true, 'B 拿自己加载时那份旧文档，把 deckTools 改成 off 时客户端也接下了这一笔。', okB)
     const bothLanded = await waitFor(async function () {
       const d = await readDoc(home)
-      return !!d && !!d.workspaces && !!d.workspaces['D:\\ilife'] && d.workspaces['D:\\ilife'].statusBar === 'hide' && d.workspaces['D:\\ilife'].deckTools === 'off'
+      return !!d && !!d.workspaces && !!d.workspaces[WKSP_KEY] && d.workspaces[WKSP_KEY].statusBar === 'hide' && d.workspaces[WKSP_KEY].deckTools === 'off'
     })
     check(bothLanded, '两窗各写一格之后，文件里 statusBar=hide 与 deckTools=off 都在：B 的写没有把 A 的 hide 整份顶掉。', JSON.stringify(await readDoc(home)))
     const aSets = envA.calls.filter(function (c) { return c.method === 'wf.setSettings' })
@@ -576,7 +585,7 @@ async function main() {
     })
     check(shapeOk, '客户端发给宿主的 wf.setSettings 入参都是 {patch, baseHash}，不再带整份 value。', JSON.stringify(allSets.map(function (c) { return c.args })))
     const bPatch = bSets.length ? bSets[0].args.patch : null
-    const bEntry = bPatch && bPatch.workspaces ? bPatch.workspaces['D:\\ilife'] : null
+    const bEntry = bPatch && bPatch.workspaces ? bPatch.workspaces[WKSP_KEY] : null
     check(!!bEntry && bEntry.deckTools === 'off', 'B 的补丁点了本窗真正改过的那一格 deckTools=off。', JSON.stringify(bPatch))
     check(!!bEntry && !Object.prototype.hasOwnProperty.call(bEntry, 'statusBar'),
       'B 的补丁里没有 A 已经写进磁盘的 statusBar：别的窗口新写的格不会出现在本窗补丁里。', JSON.stringify(bEntry))
@@ -622,6 +631,8 @@ async function main() {
     check(conflictSeen, '客户端这一笔正要交给宿主时另一条外部写入先动了文件，于是宿主回 conflict（没有静默丢值）。',
       JSON.stringify(envB.calls.filter(function (c) { return c.method === 'wf.setSettings' }).map(function (c) { return c.res })))
     async function bothOnDisk() {
+      // 这一景的记录是预置文件里就有的（键按预置原样保留：写这一侧先按折算键认出同一条再写进它，不换键），
+      //   两个平台上文件里都还是预置的字面量键，照预置的写法查（#30）。
       return await waitFor(async function () {
         const d = await readDoc(home)
         return !!d && !!d.workspaces && !!d.workspaces['D:\\ilife'] && d.workspaces['D:\\ilife'].deckTools === 'off' && d.workspaces['D:\\ilife'].subwsMarkAutoShown === true
@@ -686,8 +697,8 @@ async function main() {
     check(!!entry && !Object.prototype.hasOwnProperty.call(entry, 'deckTools') && !Object.prototype.hasOwnProperty.call(entry, 'subwsMarkAutoShown') && !Object.prototype.hasOwnProperty.call(entry, 'unopened'),
       '补丁里没有用户没点过的格（deckTools、subwsMarkAutoShown，以及正式记录不该带的 unopened）：新建记录时种下的缺省不跟着发出去。', JSON.stringify(entry))
     const doc = await readDoc(home)
-    check(!!doc && !!doc.workspaces['D:\\ilife'] && doc.workspaces['D:\\ilife'].statusBar === 'hide' && doc.workspaces['D:\\ilife'].deckTools === 'on',
-      '文件里这条新记录是用户改的那一格，其余格按既有缺省补全（deckTools 缺省 on）。', JSON.stringify(doc && doc.workspaces['D:\\ilife']))
+    check(!!doc && !!doc.workspaces[WKSP_KEY] && doc.workspaces[WKSP_KEY].statusBar === 'hide' && doc.workspaces[WKSP_KEY].deckTools === 'on',
+      '文件里这条新记录是用户改的那一格，其余格按既有缺省补全（deckTools 缺省 on）。', JSON.stringify(doc && doc.workspaces[WKSP_KEY]))
   })
 
   // ---------------------------------------------------------------------------------------------

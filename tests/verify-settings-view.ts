@@ -242,6 +242,16 @@ async function main() {
   const store = await import(pathToFileURL(path.join(ROOT, 'src', 'host', 'configStore.js')).href)
   const KEY_OF = keyOfFn()
   const CURRENT_OS = sharedKeyFn('currentOs')
+  // 平台无关的期望键（#30：夹具平台无关化）：被测片把根还原成「本会话所选目录自己的写法」——拿所选
+  //   目录的前 N 段按 currentOs 判的分隔符拼回（settings-view.ts 的 viewFlagShownRootOf），所以 Windows
+  //   上写进文件的键是 'D:\ilife'、POSIX 上是 'D:/ilife'。断言里期望「写下去的那条记录的键」时一律用
+  //   这一条推导，不写字面量：「键还原成本会话的写法」在两个平台上是同一条判据。种子文档里预置的别家
+  //   记录（'D:\other'）与按根原样直写的键（'D:\other-ws'）不经过这条还原，仍然用字面量。
+  const writableKeyOf = function (root: any): any {
+    const sep = (typeof CURRENT_OS === 'function' && CURRENT_OS() === 'win32') ? '\\' : '/'
+    return String(root == null ? '' : root).split(/[\\/]+/).filter(Boolean).join(sep)
+  }
+  const WKSP_KEY = writableKeyOf('D:\\ilife')
 
   // 一个场景的全套夹具：临时主目录、假手机、假 localStorage、一条会话状态。
   function makeEnv(opts) {
@@ -344,14 +354,14 @@ const wait = (env) => realSleep(300)
     check(accepted === true, '文件缺席时这一片照样接下写入（后端通着，第一次写入会把这份文件建出来）。')
     await wait(env)
     const doc = await readDoc(env.home)
-    check(!!doc && !!doc.workspaces && !!doc.workspaces['D:\\ilife'] && doc.workspaces['D:\\ilife'].subwsMarkAutoShown === true,
+    check(!!doc && !!doc.workspaces && !!doc.workspaces[WKSP_KEY] && doc.workspaces[WKSP_KEY].subwsMarkAutoShown === true,
       '缺席起步的那一份空文档，写下去之后文件真的建出来了，这一格是刚写下的 true。', JSON.stringify(doc && doc.workspaces))
-    check(!!doc && doc.workspaces['D:\\ilife'].statusBar === 'hide' && doc.workspaces['D:\\ilife'].deckTools === 'on',
+    check(!!doc && doc.workspaces[WKSP_KEY].statusBar === 'hide' && doc.workspaces[WKSP_KEY].deckTools === 'on',
       '同一条记录里另外两格按 #1612 的缺省种上（statusBar: hide、deckTools: on）。', JSON.stringify(doc && doc.workspaces))
     // A4：新建这一条记录时，无仓库红卡那一格不由本窗口替用户答 false（那张卡要退役，答了会在以后把用户
     //   已经收起的红卡重新弹出来）。这里量的是发出去的那一份文档：它不该带这一格。
     const sentFirst = env.calls.filter((c) => c.method === 'wf.setSettings')[0]
-    const sentEntry = sentFirst && sentFirst.args && sentFirst.args.patch && sentFirst.args.patch.workspaces['D:\\ilife']
+    const sentEntry = sentFirst && sentFirst.args && sentFirst.args.patch && sentFirst.args.patch.workspaces[WKSP_KEY]
     check(!!sentEntry && sentEntry.noRepoDismissed === undefined,
       '新建记录时本窗口不替无仓库红卡那一格答 false（发出去的文档里没有这一格）。', JSON.stringify(sentEntry))
     check(!!sentEntry && sentEntry.bannerFolded === undefined && typeof sentEntry.subwsMarkAutoShown === 'boolean',
@@ -367,14 +377,14 @@ const wait = (env) => realSleep(300)
     check(env.mod.setViewFlag(cwd, 'subwsMarkAutoShown', true) === true, '写这一笔时这一片接下了（返回值 true 表示调用方不要再写旧表）。')
     await wait(env)
     const doc = await readDoc(env.home)
-    check(!!doc && doc.workspaces['D:\\ilife'].subwsMarkAutoShown === true, '设置文件里这一格写成了 true。', JSON.stringify(doc && doc.workspaces))
+    check(!!doc && doc.workspaces[WKSP_KEY].subwsMarkAutoShown === true, '设置文件里这一格写成了 true。', JSON.stringify(doc && doc.workspaces))
     check(env.ls.getItem('dsws.subwsAutoShown') === null, '写成功之后旧键 dsws.subwsAutoShown 一个字都没写（读它是 null）。', JSON.stringify(env.ls.dump()))
     check(env.ls.getItem('dsws.bannerFold') === null, '没有被碰过的另一个旧键同样一个字都没写。', JSON.stringify(env.ls.dump()))
     // 反向再来一次：写 false 也不许回到旧表。
     check(env.mod.setViewFlag(cwd, 'subwsMarkAutoShown', false) === true, '取消这一格时这一片同样接下。')
     await wait(env)
     const doc2 = await readDoc(env.home)
-    check(!!doc2 && doc2.workspaces['D:\\ilife'].subwsMarkAutoShown === false, '取消之后文件里这一格是 false。', JSON.stringify(doc2 && doc2.workspaces))
+    check(!!doc2 && doc2.workspaces[WKSP_KEY].subwsMarkAutoShown === false, '取消之后文件里这一格是 false。', JSON.stringify(doc2 && doc2.workspaces))
     check(env.ls.getItem('dsws.subwsAutoShown') === null, '取消这一笔之后旧键仍然一个字都没写。', JSON.stringify(env.ls.dump()))
   }
 
@@ -444,10 +454,10 @@ const wait = (env) => realSleep(300)
     check(!!doc && JSON.stringify(doc.templates) === JSON.stringify(preset.templates), 'templates 节原样保留（用户自己写的模板文本一个不动）。', JSON.stringify(doc && doc.templates))
     check(!!doc && !!doc.workspaces['D:\\other'] && doc.workspaces['D:\\other'].statusBar === 'hide' && doc.workspaces['D:\\other'].deckTools === 'off' && doc.workspaces['D:\\other'].noRepoDismissed === true,
       '别的工作区那一条原样保留（两格文字开关与两格布尔值一个不动）。', JSON.stringify(doc && doc.workspaces))
-    check(!!doc && !!doc.workspaces['D:\\ilife'] && doc.workspaces['D:\\ilife'].subwsMarkAutoShown === true, '本工作区这一格写成了 true。', JSON.stringify(doc && doc.workspaces))
-    check(!!doc && doc.workspaces['D:\\ilife'].statusBar === 'hide' && doc.workspaces['D:\\ilife'].deckTools === 'on' && typeof doc.workspaces['D:\\ilife'].noRepoDismissed === 'boolean' && typeof doc.workspaces['D:\\ilife'].subwsMarkAutoShown === 'boolean',
-      '新写下的这一条是核认得的完整形状（statusBar 与 deckTools 是约定的文字值，另两格照旧是真假值；#1612 归一后每条都带这四格，核不会按缺项或多项拒绝）。', JSON.stringify(doc && doc.workspaces['D:\\ilife']))
-    check(!!doc && doc.workspaces['D:\\ilife'].bannerFolded === undefined, '写出去的一份里不再有已退役的 bannerFolded 字段。', JSON.stringify(doc && doc.workspaces['D:\\ilife']))
+    check(!!doc && !!doc.workspaces[WKSP_KEY] && doc.workspaces[WKSP_KEY].subwsMarkAutoShown === true, '本工作区这一格写成了 true。', JSON.stringify(doc && doc.workspaces))
+    check(!!doc && doc.workspaces[WKSP_KEY].statusBar === 'hide' && doc.workspaces[WKSP_KEY].deckTools === 'on' && typeof doc.workspaces[WKSP_KEY].noRepoDismissed === 'boolean' && typeof doc.workspaces[WKSP_KEY].subwsMarkAutoShown === 'boolean',
+      '新写下的这一条是核认得的完整形状（statusBar 与 deckTools 是约定的文字值，另两格照旧是真假值；#1612 归一后每条都带这四格，核不会按缺项或多项拒绝）。', JSON.stringify(doc && doc.workspaces[WKSP_KEY]))
+    check(!!doc && doc.workspaces[WKSP_KEY].bannerFolded === undefined, '写出去的一份里不再有已退役的 bannerFolded 字段。', JSON.stringify(doc && doc.workspaces[WKSP_KEY]))
   }
 
   // ── 第五件事：键用工作区根的可读路径，不是折叠散列，同一个工作区只留一条 ──
@@ -456,13 +466,13 @@ const wait = (env) => realSleep(300)
   {
     const cwd = 'D:\\ilife\\packages\\skill-calorie'
     const env = makeEnv({ tag: 'key', cwd: cwd })
-    check(env.mod.viewFlagDocKeyOf(cwd) === 'D:\\ilife', '键还原成本会话自己的写法 D:\\ilife（宿主给的那份是小写折算过的键）。', JSON.stringify(env.mod.viewFlagDocKeyOf(cwd)))
+    check(env.mod.viewFlagDocKeyOf(cwd) === WKSP_KEY, '键还原成本会话自己的写法（拿所选目录前几段按 currentOs 的分隔符拼回，Windows 上是 D:\\ilife、POSIX 上是 D:/ilife；宿主给的那份是小写折算过的键）。', JSON.stringify(env.mod.viewFlagDocKeyOf(cwd)))
     check(/^[A-Za-z]:[\\/]/.test(env.mod.viewFlagDocKeyOf(cwd)) && !/^[0-9a-f]{6,}$/i.test(env.mod.viewFlagDocKeyOf(cwd)),
       '键是一条人认得出的路径（有盘符与分隔符），不是一串算出来的散列。', JSON.stringify(env.mod.viewFlagDocKeyOf(cwd)))
     check(env.mod.setViewFlag(cwd, 'subwsMarkAutoShown', true) === true, '写一笔好让文件里长出这一条。')
     await wait(env)
     const doc = await readDoc(env.home)
-    check(!!doc && Object.keys(doc.workspaces).length === 1 && doc.workspaces['D:\\ilife'] !== undefined,
+    check(!!doc && Object.keys(doc.workspaces).length === 1 && doc.workspaces[WKSP_KEY] !== undefined,
       '文件里只有一条，键就是那条可读路径。', JSON.stringify(doc && Object.keys(doc.workspaces)))
     // 谁都没认出工作区根（会话状态上没有根、内核那张表里也没有这一条）时，读与写给同一个答案：空串。
     //   从前读这一侧会退到会话目录、写这一侧不退，于是同一现场下读答一条记录、写答认不出（M5）。
@@ -472,12 +482,12 @@ const wait = (env) => realSleep(300)
       JSON.stringify([env3.mod.viewFlagDocKeyOf('D:\\scratch\\no-repo\\sub'), env3.mod.viewFlagWriteKeyOf('D:\\scratch\\no-repo\\sub')]))
     // 根是内核那张表认出来的（本会话对象上还空着）时，两边同样给同一把键，而且键就是那条根。
     const env4 = makeEnv({ tag: 'key4', cwd: 'D:\\ilife\\packages\\skill-calorie', root: '', rootByKey: { [KEY_OF('D:\\ilife\\packages\\skill-calorie')]: KEY_OF('D:\\ilife') } })
-    check(env4.mod.viewFlagDocKeyOf('D:\\ilife\\packages\\skill-calorie') === 'D:\\ilife' && env4.mod.viewFlagWriteKeyOf('D:\\ilife\\packages\\skill-calorie') === 'D:\\ilife',
+    check(env4.mod.viewFlagDocKeyOf('D:\\ilife\\packages\\skill-calorie') === WKSP_KEY && env4.mod.viewFlagWriteKeyOf('D:\\ilife\\packages\\skill-calorie') === WKSP_KEY,
       '表里认出根时，读与写都按那条根给键（客户端已经知道根，就不许写口再说认不出）。',
       JSON.stringify([env4.mod.viewFlagDocKeyOf('D:\\ilife\\packages\\skill-calorie'), env4.mod.viewFlagWriteKeyOf('D:\\ilife\\packages\\skill-calorie')]))
     // 所选目录本身就是工作区根（表里记着 root → root 那一份）时，它折回来还是自己，也算真认得根，不是空串。
     const env5 = makeEnv({ tag: 'key5', cwd: 'D:\\ilife', root: '', rootByKey: { [KEY_OF('D:\\ilife')]: KEY_OF('D:\\ilife') } })
-    check(env5.mod.viewFlagDocKeyOf('D:\\ilife') === 'D:\\ilife' && env5.mod.viewFlagWriteKeyOf('D:\\ilife') === 'D:\\ilife',
+    check(env5.mod.viewFlagDocKeyOf('D:\\ilife') === WKSP_KEY && env5.mod.viewFlagWriteKeyOf('D:\\ilife') === WKSP_KEY,
       '所选目录本身就是工作区根时（表里 root → root 那一份），读与写都认这把键，不回空串。',
       JSON.stringify([env5.mod.viewFlagDocKeyOf('D:\\ilife'), env5.mod.viewFlagWriteKeyOf('D:\\ilife')]))
   }
@@ -494,7 +504,7 @@ const wait = (env) => realSleep(300)
     await wait(env)
     const doc = await readDoc(env.home)
     check(!!doc && Object.keys(doc.workspaces).length === 1, '写完两条会话之后，文件里仍然只有一条记录（不同写法折算到同一条）。', JSON.stringify(doc && Object.keys(doc.workspaces)))
-    check(!!doc && doc.workspaces['D:\\ilife'] && doc.workspaces['D:\\ilife'].subwsMarkAutoShown === true && doc.workspaces['D:\\ilife'].noRepoDismissed === true,
+    check(!!doc && doc.workspaces[WKSP_KEY] && doc.workspaces[WKSP_KEY].subwsMarkAutoShown === true && doc.workspaces[WKSP_KEY].noRepoDismissed === true,
       '两格都落在原来那一条记录上（甲写的那一格与乙写的那一格同时在）。', JSON.stringify(doc && doc.workspaces))
   }
 
@@ -516,7 +526,7 @@ const wait = (env) => realSleep(300)
     check(writes.length === 1, '五次改动只发了一次写电话（防抖把窗口内的几下并成一次）。', '实得 ' + writes.length + ' 次')
     check(writes.length === 1 && Object.keys(writes[0].args.patch.workspaces).length >= 1, '那一次写电话带的是补丁（patch 里有 workspaces 这一节，别的格不带）。')
     const doc = await readDoc(env.home)
-    check(!!doc && doc.workspaces['D:\\ilife'].subwsMarkAutoShown === false && doc.workspaces['D:\\ilife'].noRepoDismissed === true,
+    check(!!doc && doc.workspaces[WKSP_KEY].subwsMarkAutoShown === false && doc.workspaces[WKSP_KEY].noRepoDismissed === true,
       '文件里留下的是最后那一下的值（标志那格回到 false、另一格 true）。', JSON.stringify(doc && doc.workspaces))
     await realSleep(300) // 负向断言（「不再补发」没有变化可等）：用真实时钟等过第二个窗口
     check(env.calls.filter((c) => c.method === 'wf.setSettings').length === 1, '等过第二个窗口之后也没有补发第二次（不是自续的定时器）。')
@@ -894,9 +904,9 @@ const wait = (env) => realSleep(300)
     await waitFor(() => { try { return JSON.parse(env.ls.getItem('dsws.subwsAutoShown') || '{}')[KEY_OF('D:\\ilife')] === 1 } catch (e) { return false } })
     const oldMap = JSON.parse(env.ls.getItem('dsws.subwsAutoShown') || '{}')
     check(oldMap[KEY_OF('D:\\ilife')] === 1, '第一趟写失败时照旧把这一格写回旧键做过渡（与改动前一致）。', JSON.stringify(oldMap))
-    await waitFor(async () => { const d = await readDoc(env.home); return !!d && !!d.workspaces['D:\\ilife'] && d.workspaces['D:\\ilife'].subwsMarkAutoShown === true })
+    await waitFor(async () => { const d = await readDoc(env.home); return !!d && !!d.workspaces[WKSP_KEY] && d.workspaces[WKSP_KEY].subwsMarkAutoShown === true })
     const doc = await readDoc(env.home)
-    check(!!doc && !!doc.workspaces['D:\\ilife'] && doc.workspaces['D:\\ilife'].subwsMarkAutoShown === true,
+    check(!!doc && !!doc.workspaces[WKSP_KEY] && doc.workspaces[WKSP_KEY].subwsMarkAutoShown === true,
       '这一笔没有被丢掉：失败后留在待写队列里，后面那一趟把它落进了文件（盘上这一格是 true）。', JSON.stringify(doc && doc.workspaces))
     const writes = env.calls.filter((c) => c.method === 'wf.setSettings').length
     check(writes >= 2, '失败之后又试了一趟（不是失败一次就再也不管），实得 ' + writes + ' 次写电话。')
@@ -932,18 +942,18 @@ const wait = (env) => realSleep(300)
     await waitFor(() => env.calls.filter((c) => c.method === 'wf.setSettings').length >= 2)
     const sent = env.calls.filter((c) => c.method === 'wf.setSettings')
     check(sent.length >= 2, '第一趟飞在天上时改的那一下没有被划掉：真的又排了第二趟写，实得 ' + sent.length + ' 次。')
-    const firstEntry = sent[0] && sent[0].args && sent[0].args.patch && sent[0].args.patch.workspaces['D:\\ilife']
+    const firstEntry = sent[0] && sent[0].args && sent[0].args.patch && sent[0].args.patch.workspaces[WKSP_KEY]
     check(!!firstEntry && firstEntry.subwsMarkAutoShown === true, '第一趟发出去的确实是当时那个值 true（这一条才有东西可丢）。', JSON.stringify(firstEntry))
     // 电话是「先记一笔、后落盘」，而第二趟写还要先重读一次文档（多一个 await）。只等电话出现就抢着读盘，
     //   会读到第一趟那个 true —— 门禁在跟自己抢时序（2026-10-12 复核量到 25% 概率的抖动红）。
     //   这里等到盘上真是后改的那个值再看，断言才有确定性。
     const settled = await waitFor(async () => {
       const d = await readDoc(env.home)
-      return !!(d && d.workspaces['D:\\ilife'] && d.workspaces['D:\\ilife'].subwsMarkAutoShown === false)
+      return !!(d && d.workspaces[WKSP_KEY] && d.workspaces[WKSP_KEY].subwsMarkAutoShown === false)
     })
     const doc = await readDoc(env.home)
     check(settled, '第二趟写真的落到盘上了（后改的那个值 false）—— 这一条等的是写落定，不是电话出现。', JSON.stringify(doc && doc.workspaces))
-    check(!!doc && !!doc.workspaces['D:\\ilife'] && doc.workspaces['D:\\ilife'].subwsMarkAutoShown === false,
+    check(!!doc && !!doc.workspaces[WKSP_KEY] && doc.workspaces[WKSP_KEY].subwsMarkAutoShown === false,
       '盘上留下的是后改的那个值（false，不是第一趟那个 true）。', JSON.stringify(doc && doc.workspaces))
     check(env.mod.viewFlagOf(cwd, 'subwsMarkAutoShown') === false, '内存里也是后改的那个值 false —— 盘上与内存一致。')
   }
@@ -963,7 +973,9 @@ const wait = (env) => realSleep(300)
     check(env.mod.viewFlagOf(cwd, 'subwsMarkAutoShown') === false, '读这一侧照旧答得出来（文档里没有这一条，旧表里也没有，按没展示过算）。')
     // 根认出来之后（同一台机器上 wf.cwd 回过话），键就是根的可读路径，记录落在根上而不是会话目录上。
     env.st.sessionWorkspaceRoot = 'd:\\scratch\\no-repo'
-    check(env.mod.viewFlagWriteKeyOf(cwd) === 'D:\\scratch\\no-repo', '根认出来之后，写这一侧的键就是根的可读路径。', JSON.stringify(env.mod.viewFlagWriteKeyOf(cwd)))
+    // 键是「本会话自己的写法」：拿会话目录的前几段按 currentOs 的分隔符拼回（#30：不写字面量，
+    //   Windows 上拼回 'D:\\scratch\\no-repo'、POSIX 上拼回 'D:/scratch/no-repo'）。
+    check(env.mod.viewFlagWriteKeyOf(cwd) === writableKeyOf('D:\\scratch\\no-repo'), '根认出来之后，写这一侧的键就是根的可读路径。', JSON.stringify(env.mod.viewFlagWriteKeyOf(cwd)))
   }
 
   // ── 第十二件事：真正要写之前先重读一次文件，把本窗改过的那几格合并进最新那一份 ──
@@ -989,6 +1001,8 @@ const wait = (env) => realSleep(300)
     check(w1.ok === true, '另一扇窗把 noRepoDismissed 写成了 true。', JSON.stringify(w1))
     await wait(env)
     const doc = await readDoc(env.home)
+    // 这条记录是预置文件里就有的，键按预置时的原样保留（写这一侧先按折算键认出同一条记录再写进它，不换键），
+    //   两个平台上文件里都还是预置的字面量键，断言照预置的写法查（#30）。
     check(!!doc && !!doc.workspaces['D:\\ilife'] && doc.workspaces['D:\\ilife'].noRepoDismissed === true,
       '另一扇窗刚写进去的**别的**那一格没有被本窗整份顶掉（写之前重读了一遍文件）。', JSON.stringify(doc && doc.workspaces))
     check(!!doc && !!doc.workspaces['D:\\ilife'] && doc.workspaces['D:\\ilife'].subwsMarkAutoShown === true,
@@ -1018,7 +1032,7 @@ const wait = (env) => realSleep(300)
     }
     const w0 = await store.writeLocalSettings(preset, env.home, realIo)
     check(w0.ok === true, '预置一份设置文件：这个工作区已经有一条记录、这一格是 false。', JSON.stringify(w0))
-    check(env.mod.viewFlagDocKeyOf(cwd) === 'D:\\ilife' && env.mod.viewFlagWriteKeyOf(cwd) === 'D:\\ilife',
+    check(env.mod.viewFlagDocKeyOf(cwd) === WKSP_KEY && env.mod.viewFlagWriteKeyOf(cwd) === WKSP_KEY,
       '读与写对这把键给同一个答案：都是那条工作区根（表里认得出来，就不许写口再说认不出）。',
       JSON.stringify([env.mod.viewFlagDocKeyOf(cwd), env.mod.viewFlagWriteKeyOf(cwd)]))
     // 先问一次读：这一次会把懒读起起来（文档到手之前，读这一侧先答旧表；旧表里没有按没展示过算）。
@@ -1027,6 +1041,7 @@ const wait = (env) => realSleep(300)
     check(ready, '这份设置文档读到手了（读这一侧要按真源判，不能还没问到就下结论）。')
     check(env.mod.viewFlagOf(cwd, 'subwsMarkAutoShown') === false, '文档到手后读这一侧答文件里那条记录：这一格是 false。')
     check(env.mod.setViewFlag(cwd, 'subwsMarkAutoShown', true) === true, '用户点这一格这一笔要接下来（从前这里返回 false，点了等于没反应）。')
+    // 文件里那条记录是预置的（键按预置原样保留，理由见上一景的说明），照预置的写法查（#30）。
     const landed = await waitFor(async () => { const d = await readDoc(env.home); return !!d && !!d.workspaces['D:\\ilife'] && d.workspaces['D:\\ilife'].subwsMarkAutoShown === true })
     check(landed, '这一笔真的落进了文件（盘上这一格变成 true）。')
     check(env.calls.filter((c) => c.method === 'wf.setSettings').length === 1, '只发了一趟写电话（认得出根就走文件这一条路，不是又去写旧键）。', JSON.stringify(env.calls.map((c) => c.method)))
@@ -1053,7 +1068,7 @@ const wait = (env) => realSleep(300)
     box.mod = env.mod
     check(env.mod.setViewFlag(cwd, 'subwsMarkAutoShown', true) === true, '先点一下（这一笔排进待写队列）。')
     // 等到最后一趟写真的落地（盘上回到 true），再判盘上与内存是否一致。
-    const settled = await waitFor(async () => { const d = await readDoc(env.home); return !!d && !!d.workspaces['D:\\ilife'] && d.workspaces['D:\\ilife'].subwsMarkAutoShown === true })
+    const settled = await waitFor(async () => { const d = await readDoc(env.home); return !!d && !!d.workspaces[WKSP_KEY] && d.workspaces[WKSP_KEY].subwsMarkAutoShown === true })
     const doc = await readDoc(env.home)
     const sent = env.calls.filter((c) => c.method === 'wf.setSettings')
     check(sent.length >= 2, '这一笔没有被误划掉：回包之后又排了一趟写，实得 ' + sent.length + ' 次写电话。')
@@ -1290,7 +1305,7 @@ const wait = (env) => realSleep(300)
     const landed = await waitFor(async () => { const d = await readDoc(env.home); return !!d && !!d.workspaces['D:\\other-ws'] && d.workspaces['D:\\other-ws'].subwsMarkAutoShown === true })
     const doc = await readDoc(env.home)
     check(landed, '这一笔落在调用方点名的那把根上（不按会话目录另算一把）。', JSON.stringify(doc && doc.workspaces))
-    check(!doc || !doc.workspaces['D:\\ilife'] || doc.workspaces['D:\\ilife'].subwsMarkAutoShown !== true,
+    check(!doc || !doc.workspaces[WKSP_KEY] || doc.workspaces[WKSP_KEY].subwsMarkAutoShown !== true,
       '没有顺手在会话目录那条记录上再写一笔（同一份状态只落一把键）。', JSON.stringify(doc && doc.workspaces))
     const readBack = env.mod.viewFlagOfRoot('D:\\other-ws', 'subwsMarkAutoShown')
     check(!!readBack && readBack.known === true && readBack.value === true,

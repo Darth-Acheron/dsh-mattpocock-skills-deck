@@ -40,6 +40,12 @@ const noExport = (s: string): string => s.replace(/^\s*export\s+/gm, '')
 
 const ROOT_DIR = 'D:\\ilife'
 const SUB_DIR = 'D:\\ilife\\packages\\skill-calorie'
+// 平台无关的期望写法（#30：夹具平台无关化）：浮层文案里那个「工作区根」显示的是本会话所选目录自己的
+//   写法（SubworkspaceMark.ts 的 subwsMarkSepOf——按 currentOs 判分隔符，拿所选目录的前几段拼回），
+//   Windows 上是 'D:\\ilife'、POSIX 上是 'D:/ilife'。断言里期望这一段时用这一条推导，不写字面量。
+const SEP: string = (process.platform === 'win32') ? '\\' : '/'
+const shownKeyOf = (raw: unknown): string => String(raw == null ? '' : raw).split(/[\\/]+/).filter(Boolean).join(SEP)
+const SHOWN_ROOT = shownKeyOf(ROOT_DIR)
 // 嵌套仓库：子目录自己带 .git，那时工作区根就是它自己 —— 与 SUB_DIR 不是同一条，别写成同一条。
 const NESTED_DIR = 'D:\\ilife\\packages\\skill-calorie\\vendor\\nested'
 // 无仓库目录：一路到顶都没有标记，工作区根就是所选目录自己。
@@ -139,13 +145,13 @@ let lines = api.linesOf(ROOT_DIR, SUB_DIR, true)
 if (lines.length === 3) ok('C1 根已初始化：三行')
 else bad('C1 根已初始化时应为三行，实际 ' + lines.length + '：' + JSON.stringify(lines))
 
-if (lines[0] === '面板数据来自工作区 D:\\ilife') ok('C2 第一行＝这份数据是谁的（显示原始路径，不是折算过的键）')
+if (lines[0] === '面板数据来自工作区 ' + SHOWN_ROOT) ok('C2 第一行＝这份数据是谁的（显示原始路径，不是折算过的键）')
 else bad('C2 第一行不对：' + JSON.stringify(lines[0]))
 
 if (lines[1] === '当前目录是它的子目录：packages › skill-calorie') ok('C3 第二行＝相对关系（› 连接，不吐反斜杠）')
 else bad('C3 第二行不对：' + JSON.stringify(lines[1]))
 
-if (lines[2] === '点一下打开 D:\\ilife') ok('C4 第三行＝点一下干什么')
+if (lines[2] === '点一下打开 ' + SHOWN_ROOT) ok('C4 第三行＝点一下干什么')
 else bad('C4 第三行不对：' + JSON.stringify(lines[2]))
 
 lines = api.linesOf(ROOT_DIR, SUB_DIR, false)
@@ -156,7 +162,7 @@ if (api.linesOf(ROOT_DIR, ROOT_DIR, true).length === 0) ok('C6 不出现时一�
 else bad('C6 不出现时应为空数组')
 
 lines = apiEn.linesOf(ROOT_DIR, SUB_DIR, true)
-if (lines.length === 3 && lines[0] === 'Panel data comes from workspace D:\\ilife' && lines[2] === 'Click to open D:\\ilife') ok('C7 英文模板同样拼得出三行（中英两条文案走同一条拼装）')
+if (lines.length === 3 && lines[0] === 'Panel data comes from workspace ' + SHOWN_ROOT && lines[2] === 'Click to open ' + SHOWN_ROOT) ok('C7 英文模板同样拼得出三行（中英两条文案走同一条拼装）')
 else bad('C7 英文拼装不对：' + JSON.stringify(lines))
 
 // C8～C11 是「相对尾巴」那一段的边界。它原先按字符前缀切，于是名字以根开头的兄弟目录会被切出
@@ -169,8 +175,12 @@ else bad('C8 兄弟目录被当成了子目录切开：' + JSON.stringify(relOf(
 if (relOf('D:\\ilife', 'D:\\ilife2') === 'D: › ilife2') ok('C9 另一条前缀相同但不同名字的目录：同样整段列出')
 else bad('C9 前缀相同的别的目录被切开了：' + JSON.stringify(relOf('D:\\ilife', 'D:\\ilife2')))
 
-if (relOf('D:\\ilife', 'd:/ILIFE/packages/skill-calorie') === 'packages › skill-calorie') ok('C10 大小写与斜杠写法不同，仍然算在根下面，照样切出干净尾巴')
-else bad('C10 写法不同就切不出来了：' + JSON.stringify(relOf('D:\\ilife', 'd:/ILIFE/packages/skill-calorie')))
+if (relOf('D:\\ilife', 'D:/ilife/packages/skill-calorie') === 'packages › skill-calorie') ok('C10 斜杠写法不同，仍然算在根下面，照样切出干净尾巴')
+else bad('C10 斜杠写法不同就切不出来了：' + JSON.stringify(relOf('D:\\ilife', 'D:/ilife/packages/skill-calorie')))
+// C10b：大小写折叠是 Windows 那半的规整语义（POSIX 路径本就区分大小写，不该折）。keyOf 支持显式点名
+//   操作系统，两个平台上都按 win32 折算来钉住这条语义：两种写法折出来必须是同一条目录。
+if (keyOf('d:/ILIFE/packages/skill-calorie', 'win32') === 'd:/ilife/packages/skill-calorie' && keyOf('D:\\ILIFE', 'win32') === 'd:/ilife') ok('C10b 大小写与斜杠写法不同仍算同一条目录（Windows 折算语义，显式按 win32 验，两个平台都跑）')
+else bad('C10b win32 折算没有把两种写法折成同一条')
 
 if (relOf('D:\\ilife', 'D:\\ilife\\.tmp-666\\a') === '.tmp-666 › a') ok('C11 带点的目录名照常切（不把 . 当成特殊意思）')
 else bad('C11 带点的目录名切得不对：' + JSON.stringify(relOf('D:\\ilife', 'D:\\ilife\\.tmp-666\\a')))
@@ -180,13 +190,13 @@ else bad('C11 带点的目录名切得不对：' + JSON.stringify(relOf('D:\\ili
 //   `D:\ilife`。显示用的写法按会话原始目录（st.cwd，走 wf.cwd 拿的 header.cwd）逐段还原。
 //   这三条喂的都是宿主真会给的值，不是手上写好的干净常量。
 const rootShown = api.rootShown
-if (rootShown('d:\\ilife', 'D:\\ilife\\packages\\skill-calorie') === 'D:\\ilife') ok('C12 宿主回的是小写键时，显示还原成原始写法 D:\\ilife（本票修过的那条）')
+if (rootShown('d:\\ilife', 'D:\\ilife\\packages\\skill-calorie') === SHOWN_ROOT) ok('C12 宿主回的是小写键时，显示还原成本会话的写法（Windows 上 D:\\ilife、POSIX 上 D:/ilife；本票修过的那条）')
 else bad('C12 显示没有还原成原始写法：' + JSON.stringify(rootShown('d:\\ilife', 'D:\\ilife\\packages\\skill-calorie')))
 
-if (api.linesOf('d:\\ilife', 'D:\\ilife\\packages\\skill-calorie', true)[0] === '面板数据来自工作区 D:\\ilife') ok('C13 第一行真的说出「面板数据来自工作区 D:\\ilife」（不是 d:\\ilife）')
+if (api.linesOf('d:\\ilife', 'D:\\ilife\\packages\\skill-calorie', true)[0] === '面板数据来自工作区 ' + SHOWN_ROOT) ok('C13 第一行真的说出「面板数据来自工作区 ' + SHOWN_ROOT + '」（不是 d:\\ilife）')
 else bad('C13 第一行没有用原始写法：' + JSON.stringify(api.linesOf('d:\\ilife', 'D:\\ilife\\packages\\skill-calorie', true)[0]))
 
-if (rootShown('d:\\ilife-other', 'D:\\ilife-other\\x') === 'D:\\ilife-other') ok('C14 前缀相同的另一条目录：还原用的是它自己的写法，不会串到 D:\\ilife 上')
+if (rootShown('d:\\ilife-other', 'D:\\ilife-other\\x') === shownKeyOf('D:\\ilife-other')) ok('C14 前缀相同的另一条目录：还原用的是它自己的写法，不会串到 D:\\ilife 上')
 else bad('C14 前缀相同的目录被串了写法：' + JSON.stringify(rootShown('d:\\ilife-other', 'D:\\ilife-other\\x')))
 
 // 【已删除】C15～C22 原先断的是 #1806 第 3/4 步加在根会话与历史遗留子目录上的那几句依据/归位提示
@@ -229,7 +239,7 @@ try {
   //   断言用浮层里真实显示的那句话，不拿正则去抠 HTML —— 反斜杠在 HTML 里是转义的，抠出来容易连断言一起写错。
   const rBoth = await renderMarkFromSource({ cwd: SUB_DIR, snapshot: { ok: true, maps: [], workspaceRoot: ROOT_DIR }, sessionWorkspaceRoot: 'D:\\somewhere-else' })
   const bothText = String(tipTextOf(rBoth.tipCalls))
-  if (rBoth.isSub === true && bothText.indexOf('面板数据来自工作区 ' + ROOT_DIR) >= 0 && bothText.indexOf('somewhere-else') < 0)
+  if (rBoth.isSub === true && bothText.indexOf('面板数据来自工作区 ' + SHOWN_ROOT) >= 0 && bothText.indexOf('somewhere-else') < 0)
     ok('E1c 两个来源都在时以快照为准（画面里是快照那个根，早到那个不出现）')
   else bad('E1c 早到来源盖过了快照：' + JSON.stringify(bothText.slice(0, 120)))
 
@@ -273,7 +283,7 @@ try {
   const ariaLines = aria.split('；')
   if (ariaLines.length === 3) ok('E4 aria-label 把三句话用「；」连成一句念出来（读屏用户没有悬停这个动作）')
   else bad('E4 aria-label 不是三句拼一句，实际 ' + ariaLines.length + ' 句：' + JSON.stringify(aria))
-  if (ariaLines[0] === '面板数据来自工作区 ' + ROOT_DIR && ariaLines[1] === '当前目录是它的子目录：packages › skill-calorie' && ariaLines[2] === '点一下打开 ' + ROOT_DIR)
+  if (ariaLines[0] === '面板数据来自工作区 ' + SHOWN_ROOT && ariaLines[1] === '当前目录是它的子目录：packages › skill-calorie' && ariaLines[2] === '点一下打开 ' + SHOWN_ROOT)
     ok('E5 aria-label 三句话逐字对（含 › 连接的相对尾巴，不吐反斜杠）')
   else bad('E5 aria-label 三句不对：' + JSON.stringify(ariaLines))
 
@@ -292,7 +302,7 @@ try {
   // 组件挂载后可能还会有别的宿主电话（例如 wf.cwd）；这里按方法名找出打开目录那一条，
   //   不假设它一定是第一次调用（断言的内容没变：点一下打开的是工作区根）。
   const call = r.hostCalls.filter(function (c: any) { return c && c.method === 'wf.openFolder' })[0]
-  if (call && call.args && call.args.cwd === ROOT_DIR) ok('E9 点一下真的调 wf.openFolder 打开工作区根')
+  if (call && call.args && call.args.cwd === SHOWN_ROOT) ok('E9 点一下真的调 wf.openFolder 打开工作区根')
   else bad('E9 点击没有调 wf.openFolder 打开工作区根，实测 ' + JSON.stringify(r.hostCalls))
 
   // 反向：根会话里同一个组件一行都不画

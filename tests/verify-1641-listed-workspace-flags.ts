@@ -129,6 +129,15 @@ async function main() {
   const { parseConfig, stringifyConfig } = core
   const KEY_OF = sharedKeyFn('keyOf')
   const CURRENT_OS = sharedKeyFn('currentOs')
+  // 平台无关的期望键（#30：夹具平台无关化）：写这一侧把根还原成「本会话所选目录自己的写法」（settings-view.ts
+  //   的 viewFlagShownRootOf——拿会话目录的前几段按 currentOs 判的分隔符拼回），所以 Windows 上写进文件
+  //   的键是 'D:\\ws'、POSIX 上是 'D:/ws'。查盘上根那一条记录时用这一条推导，不写字面量；名单临时记录
+  //   （认不出根时按名单路径原文记的那条）与种子文件里预置的键不经过这条还原，仍然用字面量。
+  const writableKeyOf = (root: any): any => {
+    const sep = (typeof CURRENT_OS === 'function' && CURRENT_OS() === 'win32') ? '\\' : '/'
+    return String(root == null ? '' : root).split(/[\\/]+/).filter(Boolean).join(sep)
+  }
+  const WS_KEY = writableKeyOf('D:\\ws')
 
   // 一份最小的合法设置文件文本：只给工作区节那几行，其余两节写成空表，读的时候由核补默认值。
   const settingsText = (wsLines) => ['version: 1', 'ui: {}', 'workspaces:'].concat(wsLines || []).concat(['debug:', '  enabled: false', '  sampleRate: 1', 'templates: {}', '']).join('\n')
@@ -260,13 +269,13 @@ async function main() {
   console.log('')
   console.log('== 第五件事：认得出工作区根的行仍记在根那把键上，记录不带 unopened ==')
   const rootedEnv = makeEnv({ tag: 'rooted', cwd: 'D:\\ws\\demo', root: 'd:\\ws' })
-  check(rootedEnv.mod.viewFlagWriteKeyOf(rootedEnv.cwd) === 'D:\\ws', '夹具核对：这一档写键是工作区根（不是会话目录）。', String(rootedEnv.mod.viewFlagWriteKeyOf(rootedEnv.cwd)))
+  check(rootedEnv.mod.viewFlagWriteKeyOf(rootedEnv.cwd) === WS_KEY, '夹具核对：这一档写键是工作区根（不是会话目录）。', String(rootedEnv.mod.viewFlagWriteKeyOf(rootedEnv.cwd)))
   const rootedAccepted = rootedEnv.mod.setViewFlagValue(rootedEnv.cwd, 'statusBar', 'show', true)
   check(rootedAccepted === true, '认得出根的行照旧被接下。')
-  const rootedLanded = await waitFor(diskEntryIs(rootedEnv.home, 'D:\\ws', 'statusBar', 'show'))
+  const rootedLanded = await waitFor(diskEntryIs(rootedEnv.home, WS_KEY, 'statusBar', 'show'))
   check(rootedLanded, '值落在根那把键的记录上（statusBar: show）。', JSON.stringify(await readDoc(rootedEnv.home)))
   const rootedDoc = await readDoc(rootedEnv.home)
-  const rootedEntry = entryOf(rootedDoc, 'D:\\ws')
+  const rootedEntry = entryOf(rootedDoc, WS_KEY)
   check(!!rootedEntry && rootedEntry.unopened === undefined, '认得出根的行写出来的记录不带 unopened（listed 只对认不出根的名单行生效）。', JSON.stringify(rootedEntry))
   check(!!rootedDoc && Object.keys(rootedDoc.workspaces).length === 1 && !rootedDoc.workspaces['D:\\ws\\demo'], '没有多出「会话目录」那条临时记录（同一个工作区只有根那一条）。', JSON.stringify(rootedDoc && rootedDoc.workspaces))
 
