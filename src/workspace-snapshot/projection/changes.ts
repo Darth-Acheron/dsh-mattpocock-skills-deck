@@ -124,7 +124,20 @@ export function readChangeSetProjection(
  */
 function changePlacementOf(row: ListIssue, parent: FirstParentInfo | null): ChangeRowPlacement {
   const type = String(row.row.type === null || row.row.type === undefined ? '' : row.row.type)
-  if (type === 'map' || type === 'spec') return { place: 'map' }
+  if (type === 'map') return { place: 'map' }
+  if (type === 'spec') {
+    if (parent && parent.type === 'map') {
+      const parentClosed = String(parent.state === null || parent.state === undefined ? '' : parent.state).toLowerCase() === 'closed'
+      const rowClosed = String(row.row.state === null || row.row.state === undefined ? '' : row.row.state).toLowerCase() === 'closed'
+      return {
+        place: 'map',
+        containerEffortId: parent.effortId,
+        containerKey: parent.key,
+        parentPlace: parentClosed ? (rowClosed ? 'thin' : 'detached') : 'child',
+      }
+    }
+    return { place: 'map', parentPlace: 'detached' }
+  }
   if (parent && (parent.type === 'map' || parent.type === 'spec')) {
     const parentClosed = String(parent.state === null || parent.state === undefined ? '' : parent.state).toLowerCase() === 'closed'
     const rowClosed = String(row.row.state === null || row.row.state === undefined ? '' : row.row.state).toLowerCase() === 'closed'

@@ -38,8 +38,8 @@ export const TYPE_LABELS: readonly string[] = Object.freeze([
 /** 契约层的三种类型（与 src/tracker/contract/identity.ts 的 IssueType 同一套取值）。 */
 export type ContractType = 'issue' | 'map' | 'spec'
 
-/** 父票规则：none=顶层容器不收父票；map=父必须是探索地图；spec=父必须是规格；optional=可给可不给。 */
-export type ParentRule = 'none' | 'map' | 'spec' | 'optional'
+/** 父票规则：none=顶层容器不收父票；map=父必须是探索地图；spec=父必须是规格；optional-map=父可选且给了必须是探索地图；optional=父可选（给了须是地图或规格）。 */
+export type ParentRule = 'none' | 'map' | 'spec' | 'optional-map' | 'optional'
 
 /** 一个位置值在三种后端各是什么。契约类型与标记值是写后端的输入，标签是补标签的输入。 */
 export interface ObjectKindRule {
@@ -63,7 +63,8 @@ export interface ObjectKindRule {
 
 /**
  * 唯一的位置表：六个位置值在这里各占一行，别处不许再写第二份。
- * 每一行的「为什么」：map 与 spec 是顶层容器，所以 parent=none；地图工单的父是地图，实施票的父是规格；
+ * 每一行的「为什么」：map 是最外层顶层容器，所以 parent=none；spec 可以独立做顶层规格，也可以挂在产出它的
+ * 探索地图下形成「地图 → 规格 → 实施票」三级关系，所以 parent=optional-map；地图工单的父是地图，实施票的父是规格；
  * bug 与 issue 是普通票，父可选（给了就必须是某种容器，运行时的读票核对在工具里做）。
  */
 export const OBJECT_KIND_RULES: Readonly<Record<PositionKind, ObjectKindRule>> = Object.freeze({
@@ -77,7 +78,7 @@ export const OBJECT_KIND_RULES: Readonly<Record<PositionKind, ObjectKindRule>> =
   }),
   spec: Object.freeze({
     kind: 'spec', contractType: 'spec', typeLabels: Object.freeze([]), triageLabels: Object.freeze(['ready-for-agent']),
-    marker: 'spec', parent: 'none', labelRequired: false, mapBlocks: false,
+    marker: 'spec', parent: 'optional-map', labelRequired: false, mapBlocks: false,
   }),
   'spec-ticket': Object.freeze({
     kind: 'spec-ticket', contractType: 'issue', typeLabels: Object.freeze([]), triageLabels: Object.freeze(['ready-for-agent']),
@@ -237,8 +238,8 @@ export function resolveCreateKind(request: unknown): CreateKindResolution {
   if (triageProblem) return { ok: false, problem: triageProblem }
 
   const parentKey = (req.parentKey === undefined || req.parentKey === null) ? '' : String(req.parentKey).trim()
-  if ((rule.kind === 'map' || rule.kind === 'spec') && parentKey) {
-    return { ok: false, problem: rule.kind === 'map' ? '探索地图是顶层容器，不收 parentKey。' : '规格是顶层容器，不收 parentKey。' }
+  if (rule.kind === 'map' && parentKey) {
+    return { ok: false, problem: '探索地图是顶层容器，不收 parentKey。' }
   }
   if (rule.kind === 'map-ticket' && !parentKey) {
     return { ok: false, problem: '地图工单要挂在探索地图下：kind=map-ticket 时要带 parentKey，填探索地图的票号（本地后端是 00）。' }

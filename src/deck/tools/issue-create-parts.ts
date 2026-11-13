@@ -36,7 +36,7 @@ export const definition = {
       },
       kind: { type: 'string', enum: ['map', 'map-ticket', 'spec', 'spec-ticket', 'bug', 'issue'], description: '票的位置，必填：map（探索地图）/ map-ticket（地图下的工单）/ spec（规格）/ spec-ticket（规格下的实施票）/ bug（缺陷）/ issue（普通票，万能兜底）。旧的 task / ticket 不再接受：task 改 map-ticket 并给 label，ticket 改 spec-ticket。' },
       label: { type: 'string', enum: ['wayfinder:research', 'wayfinder:prototype', 'wayfinder:grilling', 'wayfinder:task'], description: '只有 kind=map-ticket 才收且必填：wayfinder:research / wayfinder:prototype / wayfinder:grilling / wayfinder:task，四选一。类型标签由它决定，别再放进 labels。' },
-      parentKey: { type: 'string', description: '父票：map-ticket 必填，父必须是探索地图；spec-ticket 必填，父必须是规格；map 与 spec 是顶层容器，不收 parentKey；bug 与 issue 可选，给了就必须是探索地图或规格。' },
+      parentKey: { type: 'string', description: '父票：map-ticket 必填，父必须是探索地图；spec-ticket 必填，父必须是规格；map 是顶层容器，不收 parentKey；spec 可选（不填为顶层独立规格，远端单工作单元后端填探索地图票号即可挂在地图下）；bug 与 issue 可选，给了就必须是探索地图或规格。' },
       blockedBy: { type: 'array', items: { type: 'string' }, description: '这张票建成后被哪些票阻塞（票号或 key 的数组，整批替换；只认本仓库的票，不许写别的仓库的票号）' },
       labels: { type: 'array', items: { type: 'string' }, description: '要带的标签，会在必备标签之外追加；除 issue 外不要再放类型标签（wayfinder:map / wayfinder:research / wayfinder:prototype / wayfinder:grilling / wayfinder:task / bug），类型标签由 kind 与 label 决定。' },
       assignees: { type: 'array', items: { type: 'string' }, description: '认领人' },

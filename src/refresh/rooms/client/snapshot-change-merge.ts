@@ -58,6 +58,7 @@ interface ChangePlacement {
   place: 'map' | 'child' | 'thin' | 'issue'
   containerEffortId?: string
   containerKey?: string
+  parentPlace?: 'child' | 'thin' | 'detached'
 }
 
 function changePlacementOf(item: any): ChangePlacement {
@@ -196,18 +197,52 @@ export function applySnapshotChangeSet(
     issues.push(Object.assign({}, patch))
     redrawn.push(id)
   }
-  const putMap = function (id: string, patch: any): void {
+  const markRedrawn = function (id: string): void {
+    if (redrawn.indexOf(id) < 0) redrawn.push(id)
+  }
+  const putMap = function (id: string, patch: any, placement: ChangePlacement): void {
+    let found = false
     for (let mi = 0; mi < maps.length; mi++) {
       if (identity(maps[mi]) !== id) continue
-      if (!differs(maps[mi], patch)) return
-      // 更新容器头时保留它已经拼好的 tickets / stats 等派生格（补丁只表达这一行知道的字段）。
-      maps[mi] = Object.assign({}, maps[mi], patch)
-      redrawn.push(id)
-      return
+      found = true
+      if (differs(maps[mi], patch)) {
+        // 更新容器头时保留它已经拼好的 tickets / stats 等派生格（补丁只表达这一行知道的字段）。
+        maps[mi] = Object.assign({}, maps[mi], patch)
+        markRedrawn(id)
+      }
+      break
     }
-    detachFromPlaces(id)
-    maps.push(Object.assign({ tickets: [] }, patch))
-    redrawn.push(id)
+    if (!found) {
+      detachFromPlaces(id)
+      maps.push(Object.assign({ tickets: [] }, patch))
+      markRedrawn(id)
+    }
+    // 三级归属：规格自身既是 maps 里的容器，又可能挂在某张探索地图的 tickets（或已关闭父图的 thin）下。
+    if (placement.parentPlace === 'child' && placement.containerKey !== undefined) {
+      const pmi = mapIndexOf(placement.containerEffortId, placement.containerKey)
+      if (pmi >= 0) {
+        const pMap = writableMap(pmi)
+        let inParent = false
+        for (let ti = 0; ti < pMap.tickets.length; ti++) {
+          if (identity(pMap.tickets[ti]) !== id) continue
+          inParent = true
+          if (differs(pMap.tickets[ti], patch)) {
+            pMap.tickets[ti] = Object.assign({}, pMap.tickets[ti], patch)
+            markRedrawn(id)
+          }
+          break
+        }
+        if (!inParent) {
+          detachFromPlaces(id)
+          pMap.tickets.push(Object.assign({ blockedBy: [] }, patch))
+          markRedrawn(id)
+        }
+      }
+    } else if (placement.parentPlace === 'thin') {
+      putThin(id, patch, placement)
+    } else if (placement.parentPlace === 'detached') {
+      if (detachFromPlaces(id)) markRedrawn(id)
+    }
   }
   const putChild = function (id: string, patch: any, placement: ChangePlacement): void {
     const mi = mapIndexOf(placement.containerEffortId, placement.containerKey)
@@ -246,7 +281,7 @@ export function applySnapshotChangeSet(
     redrawn.push(id)
   }
   const placeRow = function (id: string, patch: any, placement: ChangePlacement): void {
-    if (placement.place === 'map') { putMap(id, patch); return }
+    if (placement.place === 'map') { putMap(id, patch, placement); return }
     if (placement.place === 'thin') { putThin(id, patch, placement); return }
     if (placement.place === 'child') { putChild(id, patch, placement); return }
     putIssue(id, patch)

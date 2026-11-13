@@ -262,7 +262,7 @@ async function objectKind() {
   const TRUTH = [
     ['map', 'map', ['wayfinder:map'], '', 'none'],
     ['map-ticket', 'issue', ['wayfinder:task'], '', 'map'],
-    ['spec', 'spec', ['ready-for-agent'], 'spec', 'none'],
+    ['spec', 'spec', ['ready-for-agent'], 'spec', 'optional-map'],
     ['spec-ticket', 'issue', ['ready-for-agent'], 'ticket', 'spec'],
     ['bug', 'issue', ['bug', 'needs-triage'], '', 'optional'],
     ['issue', 'issue', [], '', 'optional'],
@@ -313,7 +313,6 @@ async function objectKind() {
     [{ kind: 'map-ticket', label: 'wayfinder:map', parentKey: '00' }, /wayfinder:research/, '地图工单的 label 只认四值'],
     [{ kind: 'map-ticket', parentKey: '00' }, /label/, '地图工单必须给 label'],
     [{ kind: 'map', parentKey: '00' }, /父票|parentKey/, '探索地图不收 parentKey'],
-    [{ kind: 'spec', parentKey: '00' }, /父票|parentKey/, '规格不收 parentKey'],
     [{ kind: 'map', labels: ['wayfinder:map'] }, /类型标签由 kind/, '标签里塞类型标签被拒（文案点明由 kind 决定）'],
     [{ kind: 'bug', labels: ['bug'] }, /类型标签由 kind/, 'bug 不能在 labels 里重复带类型标签'],
     [{ kind: 'spec-ticket', labels: ['wayfinder:task'], parentKey: '01' }, /类型标签由 kind/, '实施票不能在 labels 里带类型标签'],
@@ -332,7 +331,9 @@ async function objectKind() {
   const specTicket = ok.resolveCreateKind({ kind: 'spec-ticket', parentKey: '01' })
   check(specTicket.ok === true && specTicket.contractType === 'issue' && specTicket.marker === 'ticket', '实施票翻译成契约类型 issue、正文标记写 ticket')
   const spec = ok.resolveCreateKind({ kind: 'spec' })
-  check(spec.ok === true && spec.contractType === 'spec' && spec.marker === 'spec', '规格翻译成契约类型 spec、正文标记写 spec')
+  check(spec.ok === true && spec.contractType === 'spec' && spec.marker === 'spec' && spec.parent === 'optional-map', '规格不传父票时通过：契约类型 spec、正文标记 spec、父票规则 optional-map')
+  const specUnderMap = ok.resolveCreateKind({ kind: 'spec', parentKey: '1' })
+  check(specUnderMap.ok === true && specUnderMap.contractType === 'spec' && specUnderMap.parent === 'optional-map', '规格传 parentKey 时通过纯规则收口（运行时再核父票必须是探索地图）')
   const issue = ok.resolveCreateKind({ kind: 'issue', labels: ['bug'] })
   check(issue.ok === true && issue.contractType === 'issue' && issue.marker === '' && issue.labels.length === 1,
     '兜底 issue 原样接受任何标签（包括类型标签）')

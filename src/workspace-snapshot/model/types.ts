@@ -247,9 +247,11 @@ export interface ContainerProjection {
  */
 export interface ChangeRowPlacement {
   place: 'map' | 'child' | 'thin' | 'issue'
-  /** child / thin 才给：所属容器的身份（与票身份同一套坐标）。 */
+  /** child / thin 或挂在父探索地图下的规格容器时给：所属父容器的身份（与票身份同一套坐标）。 */
   containerEffortId?: string
   containerKey?: string
+  /** 当规格容器（place='map'）同时涉及父探索地图同步时：child=挂入开放父地图子票，thin=只留已关闭父地图瘦身行，detached=从旧父容器摘除。 */
+  parentPlace?: 'child' | 'thin' | 'detached'
 }
 
 /** 变化集里的一次行变更：列表投影的行 + 它该落在哪里。 */

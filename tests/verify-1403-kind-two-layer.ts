@@ -277,6 +277,46 @@ const visibleStatusLine = (text: string) => ((text.match(/^\*\*Status:\*\* .*$/m
     } finally { dispose.dispose(); chooseWorkspace(ws.rootPosix, 'markdown') }
   }
 
+  // ── 三c、远端单工作单元后端：规格可选挂在探索地图下，父不是探索地图时拒绝 ──
+  console.log('— 三c、远端单工作单元后端：规格挂在探索地图下通过，父票是规格或普通票时拒绝')
+  {
+    const remoteStore: Record<string, any> = {
+      '1': { key: '1', title: '探索地图 1', type: 'map', body: '', parentKey: null },
+      '9': { key: '9', title: '已有规格 9', type: 'spec', body: '<!-- DSH-ISSUE-KIND: spec -->\n', parentKey: null },
+      '10': { key: '10', title: '普通票 10', type: 'issue', body: '', parentKey: null },
+    }
+    const stubRemote = {
+      id: 'stub-remote-spec', label: '远端单工作单元桩', matches: async () => false,
+      budget: { kind: 'off-network', countsRequests: false, countsPoints: false, independentBuckets: false },
+      create: () => ({
+        id: 'stub-remote-spec',
+        async list() { return { ok: true, data: Object.values(remoteStore) } },
+        async get(_repo: unknown, key: string) {
+          const hit = remoteStore[String(key)]
+          return hit ? { ok: true, data: hit } : { ok: false, error: { kind: 'not-found', message: 'not found' } }
+        },
+        async create(_repo: unknown, input: any) {
+          const created = { key: '21', title: input.title, type: input.type, body: input.body || '', parentKey: input.parentKey || null, labels: input.labels || [] }
+          remoteStore['21'] = created
+          return { ok: true, data: created }
+        },
+      }),
+    }
+    const dispose = registry.register(stubRemote)
+    chooseWorkspace(ws.rootPosix, 'stub-remote-spec')
+    try {
+      const badParentSpec = await run('deck_issue_create', { title: '父错配规格', kind: 'spec', parentKey: '9' })
+      check(!badParentSpec.threw && badParentSpec.r && badParentSpec.r.status === 'unsupported' && /探索地图/.test(String(badParentSpec.r.text || '')),
+        '远端建规格：父票是另一张规格时在写盘前拒绝并提示父必须是探索地图')
+      const badParentIssue = await run('deck_issue_create', { title: '父错配普通票', kind: 'spec', parentKey: '10' })
+      check(!badParentIssue.threw && badParentIssue.r && badParentIssue.r.status === 'unsupported' && /探索地图/.test(String(badParentIssue.r.text || '')),
+        '远端建规格：父票是普通票时在写盘前拒绝并提示父必须是探索地图')
+      const okLinkedSpec = await run('deck_issue_create', { title: '挂在地图下的规格', kind: 'spec', parentKey: '1' })
+      check(!okLinkedSpec.threw && okLinkedSpec.r && okLinkedSpec.r.status === 'ok' && okLinkedSpec.r.data && okLinkedSpec.r.data.ticket && okLinkedSpec.r.data.ticket.parentKey === '1',
+        '远端建规格：父票是探索地图时成功建票并核对 parentKey 落上')
+    } finally { dispose.dispose(); chooseWorkspace(ws.rootPosix, 'markdown') }
+  }
+
   // ── 四、拒绝例：全部在碰后端之前挡下 ──
   console.log('— 四、拒绝例：缺 kind、旧值、label 误用、父票错配，文案点明合法值与迁移路径')
   const countFiles = (): number => findUnderScratch((_full, name) => name.endsWith('.md')).length

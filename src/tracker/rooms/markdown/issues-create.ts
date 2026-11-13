@@ -97,6 +97,10 @@ async function createIssueInner(ctx: OpContext,repo: RepoWithPath | null,input: 
       const message=remoteTemplateRefusalFor(originalKind,offending)
       if(message)return failAs(ERROR_KIND.PARSE,message,String(input.body==null?'':input.body),TRACKER_ERROR_STAGE.INPUT_REFUSED)
     }
+    const wantedParent=(input.parentKey!==undefined&&input.parentKey!==null)?String(input.parentKey).trim():''
+    if(originalKind==='spec'&&wantedParent){
+      return failAs(ERROR_KIND.PARSE,'本地 Markdown 后端里规格独占 .scratch/<feature>/spec.md 目录，不支持带 parentKey 挂父票（单工作单元远端后端才支持把规格挂在探索地图下）。',wantedParent,TRACKER_ERROR_STAGE.INPUT_REFUSED)
+    }
     const placement=await createInOriginalLayout(ctx,repo,input,originalKind,idemKey)
     if(!placement.ok)return placement
     // 只有真新写了一份才记；幂等命中复用旧票时这一趟没改盘。
@@ -109,7 +113,6 @@ async function createIssueInner(ctx: OpContext,repo: RepoWithPath | null,input: 
     if(stMtime){try{mtime=new Date(stMtime as string).toISOString()}catch{}}
     // 规格与地图是顶层容器，没有父票；实施票与地图子票的父票恒为同目录的 00；
     // 普通票有就写、没有就是根级。
-    const wantedParent=(input.parentKey!==undefined&&input.parentKey!==null)?String(input.parentKey).trim():''
     const fallbackParent=(originalKind==='spec'||originalKind==='map')
       ?null
       :(originalKind==='spec-ticket'||originalKind==='map-ticket'

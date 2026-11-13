@@ -226,8 +226,13 @@ export function createDeckIssueCreate(deps?: DeckIssueCreateDeps) {
           notes.push('父票类型读不到，只核了存在性：父票 ' + rel + ' 已经在了，但它是不是该有的容器没法确认。')
         } else if (parentRule === 'map') {
           if (parentKind !== 'map') return refuse('父票 ' + rel + ' 不是探索地图（读到的是 ' + parentKind + '）：地图工单的父必须是探索地图。这张票没建。', parentCheck, null, 'input')
+          notes.push('父票 ' + rel + ' 已核对：它是探索地图。')
+        } else if (parentRule === 'optional-map') {
+          if (parentKind !== 'map') return refuse('父票 ' + rel + ' 不是探索地图（读到的是 ' + parentKind + '）：规格要挂父票时，父必须是探索地图。这张票没建。', parentCheck, null, 'input')
+          notes.push('父票 ' + rel + ' 已核对：它是探索地图。')
         } else if (parentRule === 'spec') {
           if (parentKind !== 'spec') return refuse('父票 ' + rel + ' 不是规格（读到的是 ' + parentKind + '）：实施票的父必须是规格。这张票没建。', parentCheck, null, 'input')
+          notes.push('父票 ' + rel + ' 已核对：它是规格。')
         } else if (parentKind !== 'map' && parentKind !== 'spec') {
           return refuse('父票 ' + rel + ' 不是探索地图或规格（读到的是 ' + parentKind + '）：普通票的父只能是这两种容器。这张票没建。', parentCheck, null, 'input')
         } else {
