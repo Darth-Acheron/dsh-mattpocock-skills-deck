@@ -48,13 +48,19 @@ import { containerProjectionOf, snapshotOfProjection } from './snapshot-library-
 export { closeSnapshotLibraries, setSnapshotLogSink, snapshotLibraryHandleCount }
 export type { SnapshotLibraryKey, SnapshotLogSink }
 // 同步簿记、差分基线与变化行提交（#1888）：行级增量要用的四个口，实现住在同目录的 sync 模块。
+import {
+  reconcileFullEnumeration,
+  reconcileMissingWrites,
+  type ReconcileScopeOptions,
+} from './snapshot-library-sync.js'
 export {
   commitChangeRows,
   readIssueIndex,
   readSyncState,
+  reconcileFullEnumeration,
   writeSyncState,
 } from './snapshot-library-sync.js'
-export type { ChangeRowsInput, ChangeRowsResult, LibrarySyncState } from './snapshot-library-sync.js'
+export type { ChangeRowsInput, ChangeRowsResult, LibrarySyncState, ReconcileScopeOptions } from './snapshot-library-sync.js'
 // 版本查询与变化集两条新读口（#1890）：实现住在同目录的 read 模块，调用方仍只认这一个门面。
 export { readLibraryVersion, readLibraryChangeSet, readLibraryStorageStats } from './snapshot-library-read.js'
 export type { LibraryChangeSetInput, LibraryStorageStats } from './snapshot-library-read.js'
@@ -83,10 +89,14 @@ function textOf(e: unknown): string {
  * 不再徒劳重试（租约丢了要等重启或另一个写者退出）。
  */
 export async function recordIssueRows(input: RecordIssueRowsInput): Promise<RecordIssueRowsResult> {
-  const writes: IssueWrite[] = issueWritesOf(input.rows || [], input.backend)
-  if (!writes.length) return { ok: true, rows: 0, mergeVersion: null }
+  const liveWrites: IssueWrite[] = issueWritesOf(input.rows || [], input.backend)
+  const hasReconcile = !!(input.reconcileOpen || input.reconcileClosedMaps || input.reconcileAll)
+  if (!liveWrites.length && !hasReconcile) return { ok: true, rows: 0, mergeVersion: null }
   const handle = await handleOf(input)
   if (!handle) return { ok: false, rows: 0, mergeVersion: null, reason: 'unavailable' }
+  const missingWrites = hasReconcile ? reconcileMissingWrites(handle, input.rows || [], input) : []
+  const writes: IssueWrite[] = missingWrites.length ? liveWrites.concat(missingWrites) : liveWrites
+  if (!writes.length) return { ok: true, rows: 0, mergeVersion: handle.getMergeVersion() }
   // 整批一个事务：读者在提交前只看得到旧库（WAL），进程被杀则整批回滚；stale 时整批重试一次。
   if (input.atomic === true) {
     let atomicResult = handle.ingest({ startMergeVersion: handle.getMergeVersion(), writes })
@@ -96,7 +106,7 @@ export async function recordIssueRows(input: RecordIssueRowsInput): Promise<Reco
     if (!atomicResult.committed) {
       return { ok: false, rows: 0, mergeVersion: null, reason: atomicResult.reason }
     }
-    return { ok: true, rows: writes.length, mergeVersion: atomicResult.mergeVersion }
+    return { ok: true, rows: liveWrites.length, mergeVersion: atomicResult.mergeVersion }
   }
   let written = 0
   let mergeVersion: number | null = null
@@ -140,7 +150,7 @@ function oldestRowAtMsOf(projection: ListProjection): number {
   return oldest || projection.generatedAtMs
 }
 
-export interface RecordIssueRowsInput extends SnapshotLibraryKey {
+export interface RecordIssueRowsInput extends SnapshotLibraryKey, ReconcileScopeOptions {
   rows: Issue[]
   /**
    * true = 整批只开一个事务（刷新/首屏整轮写入用）；缺省按 200 条分批（写回执等增量用）。

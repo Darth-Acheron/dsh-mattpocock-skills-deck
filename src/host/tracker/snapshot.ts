@@ -337,9 +337,16 @@ export function createSnapshotComposer(registry: SnapshotComposerRegistry, opts:
           })
         }
       } catch (eL) {}
-      // #1863：整池（含已关闭子票）在这里交给宿主写库；放工作集之后、组装之前，拿到的是未装饰的原始行。
-      try { if (typeof o.onRows === 'function') o.onRows(workingSet.rows) } catch (eRows) {}
       const sourceComplete: boolean = !listFallback && !listTruncated && workingSet.subIssuesFailed === 0 && workingSet.subIssuesIncomplete === 0
+      // #1863 / #127：整池（含已关闭子票）在这里交给宿主写库；附上本次开放工作集与已关闭地图集是否完整，供写库时给已删旧行补写墓碑。
+      try {
+        if (typeof o.onRows === 'function') {
+          (o.onRows as any)(workingSet.rows, {
+            reconcileOpen: sourceComplete,
+            reconcileClosedMaps: sourceComplete && workingSet.closedMapsComplete === true,
+          })
+        }
+      } catch (eRows) {}
 
       // #1696：组装出来的 map.tickets 是后端原始行，客户端首帧画不出关系与计数；这里统一归一化，
       //   并在列表被截断或降级时把上次快照已知的子票与计数按编号补回来（只补不删）。已关闭容器口径不动。

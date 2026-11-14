@@ -71,6 +71,8 @@ export interface WorkingSetResult {
   closedMapRows: number
   /** 已关闭地图容器行从哪来：上一份快照 / 冷启动补的一页 / 没有。 */
   closedMapSource: 'previous' | 'page' | 'none'
+  /** 已关闭地图容器行是否由本次完整分页返回（无下一页且未报错）。 */
+  closedMapsComplete?: boolean
 }
 
 /** 这一行的票号：key 优先，number 兜底；两个都没有时回空串（组装层会把它当没有编号的行丢掉）。 */
@@ -241,10 +243,12 @@ export async function assembleWorkingSet(input: WorkingSetInput): Promise<Workin
     }
   }
 
-  // 已关闭地图容器行：热启动先看上一份快照（不用再问远端），没有才冷启动补一页薄行。
-  let closedMapRows = appendClosedRows(rows, seen, previousMaps)
-  let closedMapSource: 'previous' | 'page' | 'none' = closedMapRows > 0 ? 'previous' : 'none'
-  if (closedMapRows === 0 && tracker && typeof tracker.listPage === 'function') {
+  // 已关闭地图容器行：优先走 listPage 取最新薄行（避免远端已删的旧地图靠 previousMaps 一直复活）；
+  // 只有 listPage 取数失败或未提供时，才退回沿用上一份快照里的已关闭容器行。
+  let closedMapRows = 0
+  let closedMapSource: 'previous' | 'page' | 'none' = 'none'
+  let closedMapsComplete = false
+  if (tracker && typeof tracker.listPage === 'function') {
     let page: any = null
     try {
       page = await tracker.listPage(ref, { state: 'closed', labels: [MAP_LABEL] }, { limit: CLOSED_MAP_PAGE_LIMIT }, ctx)
@@ -255,7 +259,14 @@ export async function assembleWorkingSet(input: WorkingSetInput): Promise<Workin
       const items: any[] = page.data && Array.isArray(page.data.items) ? page.data.items : []
       closedMapRows = appendClosedRows(rows, seen, items)
       if (closedMapRows > 0) closedMapSource = 'page'
+      closedMapsComplete = !(page.data && (page.data.nextCursor || page.data.hasNextPage === true))
+    } else {
+      closedMapRows = appendClosedRows(rows, seen, previousMaps)
+      if (closedMapRows > 0) closedMapSource = 'previous'
     }
+  } else {
+    closedMapRows = appendClosedRows(rows, seen, previousMaps)
+    if (closedMapRows > 0) closedMapSource = 'previous'
   }
 
   return {
@@ -267,5 +278,6 @@ export async function assembleWorkingSet(input: WorkingSetInput): Promise<Workin
     failed: failedContainers.join(';'),
     closedMapRows,
     closedMapSource,
+    closedMapsComplete,
   }
 }

@@ -77,6 +77,8 @@ export const MAP_PATH: string = path.join(ROOT, 'tests', 'gate-map.json')
 export const COMPLETION_RECORDED_GATES: Record<string, number> = {
   // 三级父子归属（探索地图 → 规格 → 实施票）与主列表可折叠树门禁：建票规则 optional-map、快照库变化集落点与
   // 客户端合并同步父地图子票、主列表三级缩进与默认展开未关/折叠已关交互及筛选保留父容器上下文。单跑实测 27 条。
+  // 2026-11-14 #127：后端已删除工单在本地快照库落墓碑且主动刷新后不回退——完整开放工作集与已关闭地图集写库时同步对账墓碑、列表截断时严守只补不删、整仓完整枚举补齐全部缺席非 PR 工单墓碑并重置扫描基线、readIssueIndex 包含已关闭容器下的已关闭子票、wf.refresh 携带写库后整数库版本。单跑实测 10 条。
+  'verify-127-deleted-issue-tombstone': 10,
   'verify-list-tree-hierarchy': 27,
   // 2026-11-05 #1887（规格 #1885 S2「统计改库算」）：真 SQLite 临时库 + 假后端——六个数字（总数/开放/
   // 已关闭/可接/阻塞/已认领）由库一次查询算出，与另一条完全独立的 SQL 遍历逐项相等（含已关闭、墓碑、

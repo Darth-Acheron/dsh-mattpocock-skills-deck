@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-14T04:39:38.177Z",
+  "generatedAt": "2026-11-14T09:23:51.651Z",
   "generatedBy": "node scripts/gate-map.mts",
-  "chainLength": 599,
-  "gateCount": 599,
-  "attributedGates": 543,
+  "chainLength": 600,
+  "gateCount": 600,
+  "attributedGates": 544,
   "unattributedGates": 56,
   "buildOutputOnlyGates": 21,
-  "completionRecordedGates": 142,
+  "completionRecordedGates": 143,
   "smokeLength": 8,
   "smokeCompletionRecordedGates": 5,
   "graphFileCount": 994,
@@ -2039,6 +2039,32 @@
       "completionRecord": false,
       "expectedAssertions": 0,
       "reason": "归属来自：源码里的路径字面量 4 条"
+    },
+    {
+      "step": "node tests/verify-127-deleted-issue-tombstone.ts",
+      "file": "tests/verify-127-deleted-issue-tombstone.ts",
+      "guards": [
+        "src/host/tracker/snapshot.ts",
+        "src/host/tracker/snapshotWorkingSet.ts",
+        "src/refresh/rooms/client/snapshot-cache-store.ts",
+        "src/refresh/rooms/client/snapshot-sync.ts",
+        "src/refresh/rooms/host/issue-index-scan.ts",
+        "src/refresh/rooms/host/issue-list-fetch.ts",
+        "src/refresh/rooms/host/session-refresh-schedule.ts",
+        "src/refresh/rooms/host/snapshot-library-first-screen.ts",
+        "src/refresh/rooms/host/snapshot-library-sync.ts",
+        "src/refresh/rooms/host/snapshot-library.ts"
+      ],
+      "dirs": [
+        "src/host/tracker",
+        "src/refresh/rooms/client",
+        "src/refresh/rooms/host"
+      ],
+      "unattributed": false,
+      "buildOutputOnly": false,
+      "completionRecord": true,
+      "expectedAssertions": 10,
+      "reason": "归属来自 文件头 // 门禁归属: 注释（共 10 条）"
     },
     {
       "step": "node tests/verify-1277-md-spec-container.ts",
@@ -15335,6 +15361,7 @@
       "node tests/verify-platform-contract.ts"
     ],
     "src/host/tracker": [
+      "node tests/verify-127-deleted-issue-tombstone.ts",
       "node tests/verify-1277-md-spec-container.ts",
       "node tests/verify-1286-snapshot.ts",
       "node tests/verify-1291-closed-map-open-children.ts",
@@ -15473,6 +15500,7 @@
       "node tests/verify-deck-slots.ts",
       "node tests/verify-1082-work-route-table.ts",
       "node tests/verify-1220-shown-store.ts",
+      "node tests/verify-127-deleted-issue-tombstone.ts",
       "node tests/verify-1305-client-session.ts",
       "node tests/verify-1355-cross-session-table.ts",
       "node tests/verify-1363-first-run-recovery.ts",
@@ -15531,6 +15559,7 @@
       "node tests/verify-1195-budget-start.ts",
       "node tests/verify-1195-timeout-split.ts",
       "node tests/verify-1242-panel-numbers.ts",
+      "node tests/verify-127-deleted-issue-tombstone.ts",
       "node tests/verify-1291-closed-map-open-children.ts",
       "node tests/verify-1304-deps-native.ts",
       "node tests/verify-1363-first-run-recovery.ts",

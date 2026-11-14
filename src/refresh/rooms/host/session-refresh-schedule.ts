@@ -54,7 +54,7 @@ type Levels = { byNumber?: Record<string, unknown>; byKey?: Record<string, unkno
 type Deck = { counts?: { open?: unknown; closed?: unknown } | null; partial?: boolean; missingOpen?: unknown; [k: string]: unknown }
 // 信封（与 wf.snapshot 同一个实例）：这里只声明本文件用到的两口。
 type Envelope = { buildSnap(o: SnapInput): SnapOut; withWorkRouteTable<T>(reply: T, args?: Args): Promise<T> }
-type SnapInput = { repo?: unknown; repoRoot?: unknown; workspaceRoot?: unknown; maps?: unknown[]; issues?: unknown[]; thinTickets?: unknown[]; labels?: unknown[]; repository?: unknown; backendModules?: unknown; selection?: unknown; viewer?: unknown; viewerLogin?: unknown; deck?: unknown; snapshotFetch?: unknown }
+type SnapInput = { repo?: unknown; repoRoot?: unknown; workspaceRoot?: unknown; maps?: unknown[]; issues?: unknown[]; thinTickets?: unknown[]; labels?: unknown[]; repository?: unknown; backendModules?: unknown; selection?: unknown; viewer?: unknown; viewerLogin?: unknown; deck?: unknown; version?: unknown; snapshotFetch?: unknown }
 // 组装出来的快照：本文件读 fromCache / generatedMs / deck / maps / issues / labels，落盘时整份交回去。
 type SnapOut = { [k: string]: unknown; fromCache?: boolean; generatedMs?: number; maps?: unknown[]; issues?: unknown[]; labels?: unknown[]; deck?: Deck | null }
 type LogCtx = { fire(level: string, event: string, payload?: unknown): void; isEnabled(name: string): boolean }
@@ -141,22 +141,17 @@ export function createSessionRefresh(deps: RefreshDeps) {
       const refreshRows: unknown[] = []
       // #1893：这一轮取到了几行（回包的 snapshotFetch 进度）；写库那一步会把 refreshRows 清空，
       // 所以条数在收集时单独记，不靠数组长度后算。
-      let refreshRowCount = 0
-      const collectRows = function (rows: unknown): void { if (Array.isArray(rows)) { refreshRowCount += rows.length; for (let i = 0; i < rows.length; i += 1) refreshRows.push(rows[i]) } }
-      const persistRefreshRows = async function (persistCwd: string, persistBackend: string, persistRepo: RepoRef): Promise<void> {
-        if (!refreshRows.length || typeof getSnapshotLibrary !== 'function') return
+      let refreshRowCount = 0; let refreshMeta: any = null; let refreshVersion: number | null = null
+      const collectRows = function (rows: unknown, meta?: unknown): void { if (meta && typeof meta === 'object') refreshMeta = meta; if (Array.isArray(rows)) { refreshRowCount += rows.length; for (let i = 0; i < rows.length; i += 1) refreshRows.push(rows[i]) } }
+      const persistRefreshRows = async function (persistCwd: string, persistBackend: string, persistRepo: RepoRef, hasPrevRows?: boolean): Promise<void> {
+        const meta = refreshMeta; refreshMeta = null
+        if ((!refreshRows.length && !(hasPrevRows && meta)) || typeof getSnapshotLibrary !== 'function') return
         const rows = refreshRows.splice(0, refreshRows.length)
         let lib: any = null
         try { lib = await Promise.resolve(getSnapshotLibrary()) } catch (e) { lib = null }
         if (!lib || typeof lib.recordIssueRows !== 'function') return
-        const result: any = await lib.recordIssueRows({
-          workspaceRoot: persistCwd,
-          backend: String(persistBackend),
-          repoIdentity: String((persistRepo && persistRepo.refId) || ''),
-          rows: rows,
-          atomic: true,
-        })
-        if (result && result.ok === true) return
+        const result: any = await lib.recordIssueRows(Object.assign({ workspaceRoot: persistCwd, backend: String(persistBackend), repoIdentity: String((persistRepo && persistRepo.refId) || ''), rows: rows, atomic: true }, meta || null))
+        if (result && result.ok === true) { if (typeof result.mergeVersion === 'number') refreshVersion = result.mergeVersion; return }
         const reason = String((result && result.reason) || 'unknown')
         // 只读与开不出库是这一侧已知的降级，不是「写了一半」：照常把新数据交给界面，只是这趟不落库。
         // 典型现场是 1869-04 的多会话——另一个窗口拿着写租约，这一边必须还能刷新看数据。
@@ -208,7 +203,7 @@ export function createSessionRefresh(deps: RefreshDeps) {
           const res = await composer.composeSnapshot(backendId, repoRef, ctx2, { ifNoneMatch: (args && (args.ifNoneMatch || args.version)) || '', force: true, previousSnapshot: (prevScreen && prevScreen.replay) ? prevScreen.replay.snapshot : null, onRows: collectRows })
           if (!res.ok) throw new Error((res.error && res.error.message) || 'composeSnapshot failed')
           // 先提交库，再把新快照交给界面：写库失败就整趟刷新失败，不能让界面显示一份重启后会消失的数据。
-          await persistRefreshRows(cwd, backendId, repoRef)
+          await persistRefreshRows(cwd, backendId, repoRef, !!(prevScreen && prevScreen.replay && prevScreen.replay.rows > 0))
           // #1887：行写进库之后再读六个数字并挂到 deck 上（读不到就原样返回，不补 0）。
           const inner: Inner = await withLibraryCounts(upcaseSnapStates(res.snapshot), prevScreen)
           const flatTickets = (inner.maps || []).flatMap(function(m){ return (m.tickets || []); })
@@ -305,7 +300,7 @@ export function createSessionRefresh(deps: RefreshDeps) {
             repo: null, repoRoot: repoRoot, workspaceRoot: cwd,
             maps: inner.maps, issues: allForList, thinTickets: inner.thinTickets, labels: labels,
             repository: repoRef, backendModules: backendModules, selection: _sel,
-            deck: inner.deck,
+            deck: inner.deck, version: refreshVersion,
             snapshotFetch: { source: 'online-rebuild', rows: refreshRowCount, at: Date.now() },
           })
           return adoptSnapLog(snap, cwd)
@@ -383,7 +378,7 @@ export function createSessionRefresh(deps: RefreshDeps) {
         const prevScreen2 = await previousScreenOf(backendId2, repoRef2)
         const res2 = await composer2.composeSnapshot(backendId2, repoRef2, ctx2b, { ifNoneMatch: (args && (args.ifNoneMatch || args.version)) || '', force: true, previousSnapshot: (prevScreen2 && prevScreen2.replay) ? prevScreen2.replay.snapshot : null, onRows: collectRows })
         if (!res2.ok) throw new Error((res2.error && res2.error.message) || 'composeSnapshot failed')
-        await persistRefreshRows(cwd, backendId2, repoRef2)
+        await persistRefreshRows(cwd, backendId2, repoRef2, !!(prevScreen2 && prevScreen2.replay && prevScreen2.replay.rows > 0))
         // #1887：与主支路同一口径：写库之后读一次六个数字并挂到 deck 上。
         const inner2: Inner = await withLibraryCounts(upcaseSnapStates(res2.snapshot), prevScreen2)
         ;(inner2.maps || []).forEach(function(m){ 
@@ -451,7 +446,7 @@ export function createSessionRefresh(deps: RefreshDeps) {
           repo: repo0b, repoRoot: repoRoot2, workspaceRoot: cwd,
           maps: inner2.maps, issues: allForList2, thinTickets: inner2.thinTickets, labels: labels2,
           repository: repoRef2, backendModules: backendModules2, selection: _sel,
-          viewer: viewer2, viewerLogin: viewerLogin2, deck: inner2.deck,
+          viewer: viewer2, viewerLogin: viewerLogin2, deck: inner2.deck, version: refreshVersion,
           snapshotFetch: { source: 'online-rebuild', rows: refreshRowCount, at: Date.now() },
         })
         return adoptSnapLog(snap2, cwd)

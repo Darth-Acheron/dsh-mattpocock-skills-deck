@@ -179,15 +179,19 @@ export async function firstScreenFromLibrary(options: FirstScreenOptions): Promi
   // 其余 = 库空。三者都回不出数据，但该修的地方完全不同，日志按这三个值分辨。
   const degradeReason = replay ? '' : await degradeReasonOf(lib, key, diagnostics)
   const pendingRows: unknown[] = []
-  const writeRows = function (rows: unknown[]): void {
+  let pendingMeta: Record<string, unknown> | null = null
+  const writeRows = function (rows: unknown[], meta?: Record<string, unknown>): void {
+    if (meta && typeof meta === 'object') pendingMeta = meta
     if (!Array.isArray(rows) || !rows.length) return
     for (let i = 0; i < rows.length; i += 1) pendingRows.push(rows[i])
   }
   const commitRows = async function (): Promise<unknown> {
-    if (!pendingRows.length) return null
+    const meta = pendingMeta
+    pendingMeta = null
+    if (!pendingRows.length && !(replay && Number(replay.rows) > 0 && meta)) return null
     const rows = pendingRows.splice(0, pendingRows.length)
     try {
-      return await Promise.resolve(lib!.recordIssueRows(Object.assign({ rows: rows, atomic: true }, key)))
+      return await Promise.resolve(lib!.recordIssueRows(Object.assign({ rows: rows, atomic: true }, meta || null, key)))
     } catch (e) {
       return null
     }

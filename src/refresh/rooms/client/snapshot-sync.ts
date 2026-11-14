@@ -278,9 +278,13 @@ export const loadSnapshot = function (st: any, force: any, silent: any, why: any
       if (snap && snap.ok === true && Array.isArray(snap.maps)) {
         // #1009：装快照那一整段搬去 refresh/rooms/client/probe-scope-selection.js 的 _snapInstallBody —— 正常那一路与迟到那一路
         //   共用同一处，免得两处各写一遍、判据（缓存优先落表、补标签颜色、回填布局）迟早长岔。
+        const _hasReplyVer: boolean = typeof snap.version === 'number' && Number.isInteger(snap.version) && snap.version >= 0;
+        if (_hasReplyVer && typeof rememberSnapshotVersion === 'function') {
+          try { rememberSnapshotVersion(st.cwd, snap.version); } catch (eVer0) {}
+        }
         _snapInstallBody(st, snap);
-        // #1891：这份整份数据对应「发请求之前」那一版；记下来，下一次拍就从它往上取变化。
-        if (_verAtRequestP) _verAtRequestP.then(function (v: any): void { try { if (typeof v === 'number' && typeof rememberSnapshotVersion === 'function') rememberSnapshotVersion(st.cwd, v); } catch (eVer2) {} });
+        // #1891 / #127：回包自带整数库版本时优先用它（wf.refresh 写库后版本已前进）；没有时退回发请求之前那一版。
+        if (!_hasReplyVer && _verAtRequestP) _verAtRequestP.then(function (v: any): void { try { if (typeof v === 'number' && typeof rememberSnapshotVersion === 'function') rememberSnapshotVersion(st.cwd, v); } catch (eVer2) {} });
       } else {
         st.snapMode = 'err';
         st.snapError = (snap && snap.error) ? String(snap.error).slice(0, 160) : tr('err.snapshotEmpty');

@@ -145,7 +145,7 @@ export const setCachedSnapshot = function (cwd: any, snap: any): void { if(!cwd|
   try{ delete s2.workRouteTable }catch(eW){}
   // #1885 评审修复（规格 §9）：缓存条目的 version 用库版本（getSnapshotVersion 把它交给 ifNoneMatch，
   // 304 的判据就是它）；版本簿记还没记上时退回快照自带的 version（老缓存可能还是内容散列，那会走 200）。
-  try{ const k: any=wsKeyOf(cwd); const lib: any=(typeof snapshotVersionBookOf === 'function') ? snapshotVersionBookOf(cwd) : null; const ver: any=(lib && typeof lib.version === 'number') ? lib.version : (s2.version||s2.etag||''); const ent: any={snapshot:s2, version:ver, libraryVersion:(lib && typeof lib.version === 'number') ? lib.version : null, ts:Date.now(), key:k, lastProbeAt:getProbeAt(k)}; touchLRUClient(snapshotByCwd,k,ent) }catch(e){} }
+  try{ const k: any=wsKeyOf(cwd); const lib: any=(typeof snapshotVersionBookOf === 'function') ? snapshotVersionBookOf(cwd) : null; const sVer: any=(typeof s2.version === 'number' && Number.isInteger(s2.version) && s2.version >= 0) ? s2.version : null; const libVer: any=(lib && typeof lib.version === 'number') ? lib.version : sVer; const ver: any=(libVer !== null) ? libVer : (s2.version||s2.etag||''); const ent: any={snapshot:s2, version:ver, libraryVersion:libVer, ts:Date.now(), key:k, lastProbeAt:getProbeAt(k)}; touchLRUClient(snapshotByCwd,k,ent) }catch(e){} }
 // #1355 · 本会话手上那份快照缺自己的 workRouteTable 吗？缺的来路不止一种：同工作区别的会话水合过来的、升级前旧缓存留下的、
 //   或这一版宿主根本没带这个字段；不管哪种，都得补发一次带当前会话号的快照请求。
 //   忙（正在刷新 / 后端还说不准）时不判缺，所以三处接线重复触发也不会重复发请求。

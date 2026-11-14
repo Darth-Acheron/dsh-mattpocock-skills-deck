@@ -85,7 +85,7 @@ export function createIssueIndexWindowState(deps: IssueIndexWindowDeps | null | 
     )
     if (!seed) return
     // 走唯一的推进口，不直接写两张表：起点也是「水印往前走一步」，同样要过 next>0 与单调性那两道检查。
-    commit(rk, seed.watermarkMs, seed.baseline)
+    commit(rk, seed.watermarkMs, (got as any).baseline || seed.baseline)
   }
 
   // 扫一次窗口。opts.commit === true 时才把「基线 + 下一次的水印」记下来（默认不记）。
@@ -106,7 +106,7 @@ export function createIssueIndexWindowState(deps: IssueIndexWindowDeps | null | 
     const remote = await d.fetchIssueIndex!(cwd, w.sinceIso, o.budget)
     if (!remote || remote.ok !== true) return remote || { ok: false, error: { kind: 'env', error: '索引扫描没有回包' } }
     const before = lastIndexBaselineByRepo[rk] || null
-    const merged = (indexWindow as any).mergeDelta(before, remote.index)
+    const merged = w.full ? Object.assign({}, remote.index) : (indexWindow as any).mergeDelta(before, remote.index)
     const changed = (indexWindow as any).indexDiffers(before, merged)
     const nextWatermarkMs = (indexWindow as any).nextWatermark(startedMs)
     // 基线同水印一条理由：基线一推，「有没有变」这个判断也跟着提前消费掉——被推迟的那一次就再也补不回来。
