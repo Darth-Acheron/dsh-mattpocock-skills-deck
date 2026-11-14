@@ -26,14 +26,17 @@ const FIXTURE_NAMES = fs
   .filter((name) => name.endsWith('.json'))
   .map((name) => name.slice(0, -'.json'.length))
   .sort()
-// 必备夹具：票面要求的三条红路径、全绿路径，以及 #1647 实现里补的三份（模板收口写法、缺场景块、作废行）。
+// 必备夹具：票面要求的三条红路径、全绿路径，#1647 实现里补的三份（模板收口写法、缺场景块、作废行），
+// 以及 #26 补的两份：2 位来源票判绿（含日期不误认的守卫）与非法编号仍红（序号不足两位）。
 const REQUIRED_FIXTURES = [
   'green',
+  'green-2digit-source-ticket',
   'green-template-closing',
   'green-with-void',
   'red-body-missing-row',
   'red-count-mismatch',
   'red-id-set-diff',
+  'red-invalid-scenario-id',
   'red-missing-block',
 ]
 for (const required of REQUIRED_FIXTURES) {

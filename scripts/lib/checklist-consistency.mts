@@ -29,6 +29,13 @@
 // 同一条评论里同一场景出现多个结果时（收口评论既写分批判述又写最终计数），按 RESULT_PRIORITY 取最终结论；
 // 这套写法与优先级在 docs/agents/real-machine-verification.md 第二节对写票的人说明。
 // 记录里用了别的写法而没被认出来时，报告会以「找不到明确结果」出现，不会静默放过。
+//
+// 场景编号的形状不在本文件里定义，从 base 发布门禁（dsh-featherhunter-plugin-base）的
+// DEFAULT_CHECKLIST_FORMAT 派生——发布前检查与本地判据共用同一份形状定义。#26 之前两边各写
+// 各的，本仓 2 位来源票的记录被本地判据误判成「看不懂」；改派生之后形状只有一处可改，
+// 口径与 docs/adr/20261021-config-ownership.md「一个值只有一处定义、能导入就连起来」一致。
+
+import { DEFAULT_CHECKLIST_FORMAT } from 'dsh-featherhunter-plugin-base/real-machine-verification'
 
 /**
  * 一条场景的状态。取值与清单票总览表「状态」一列一致；带括号补充的写法（如「通过（条件）」）在解析时归一成本值。
@@ -127,18 +134,25 @@ const RESULT_PRIORITY: Record<ScenarioStatus, number> = {
 const STATUS_ALTERNATION = STATUS_WORDS.join('|')
 
 /**
- * 场景编号的形状只在这里定义一次：来源票号 3~5 位、连字符、两位序号；前后不能紧挨数字或连字符，
- * 免得把日期（2026-10-29）或更长的编号认成场景号。下面几处正则都从这三段拼出来，改形状只改这里。
+ * 场景编号的形状只有一份定义：base 发布门禁 DEFAULT_CHECKLIST_FORMAT 的 scenarioIdPattern
+ * （1~10 位字母数字的来源票号、连字符、两位序号——1600-01 与 24-01 都合法）。本地判据从这里
+ * 派生，不再手抄一份宽度：#26 之前两边各写各的，本仓 2 位来源票的记录被误判成「看不懂」。
+ * base 的模式没有前置守卫（实测会把日期 2026-11-01 里的 11-01 认成编号），而本地判据要扫
+ * 整段评论文本，所以派生时在前面加回「编号前不能紧挨数字或连字符」这道守卫；尾部 base 自带
+ * 一道，本地再拼一道语义不变。外面包一层捕获组，匹配到的就是完整编号；要拆回票号与序号时
+ * 按最后一个连字符切，不能假定票号是几位数字。
  */
-const SCENARIO_ID_SOURCE = '(\\d{3,5})-(\\d{2})'
+const SCENARIO_ID_SOURCE = '(' + DEFAULT_CHECKLIST_FORMAT.scenarioIdPattern.source + ')'
 const SCENARIO_ID_BEFORE = '(?<![\\d-])'
 const SCENARIO_ID_AFTER = '(?![\\d-])'
+/** base 模式的旗子去掉全局与粘滞位后原样带上：形状将来用到 unicode 语法时，派生不静默变义。 */
+const BASE_ID_FLAGS = DEFAULT_CHECKLIST_FORMAT.scenarioIdPattern.flags.replace(/[gy]/gu, '')
 /** 从一段文字里找出所有完整场景编号及其位置。 */
-const ID_PATTERN = new RegExp(SCENARIO_ID_BEFORE + SCENARIO_ID_SOURCE + SCENARIO_ID_AFTER, 'g')
+const ID_PATTERN = new RegExp(SCENARIO_ID_BEFORE + SCENARIO_ID_SOURCE + SCENARIO_ID_AFTER, BASE_ID_FLAGS + 'g')
 /** 整格恰好是一个场景编号（总览表的编号列）。 */
-const EXACT_ID_PATTERN = new RegExp('^' + SCENARIO_ID_SOURCE + '$')
+const EXACT_ID_PATTERN = new RegExp('^' + SCENARIO_ID_SOURCE + '$', BASE_ID_FLAGS)
 /** 单元格以场景编号开头（结果表首格可能跟着一句话）。 */
-const ID_PREFIX_PATTERN = new RegExp('^' + SCENARIO_ID_SOURCE + SCENARIO_ID_AFTER)
+const ID_PREFIX_PATTERN = new RegExp('^' + SCENARIO_ID_SOURCE + SCENARIO_ID_AFTER, BASE_ID_FLAGS)
 /** 编号列表之间允许出现的连接物：收口评论里「…、1600-01、1599-01 为登记前已验证」这种写法。 */
 const CONNECTOR_PATTERN = /^(?:[\s、，,和与及/]|为|均|都|已|全部|登记前|本版|真机)*$/u
 const CLOSING_COMMENT_PATTERN = /发布就绪|验证收口|收口关闭|已登记场景/u
@@ -162,13 +176,15 @@ function classifyStatus(text: string): ScenarioStatus | null {
 
 /**
  * 把简写编号展开成完整编号：「1612-01/02/03」→「1612-01、1612-02、1612-03」。
- * 先展开再解析，后面的位置判断才不用为简写单独写一套。
+ * 先展开再解析，后面的位置判断才不用为简写单独写一套。捕获组里拿到的是完整编号，按最后一个
+ * 连字符拆回票号与序号——base 的形状允许票号里出现字母（abc-01），不能假定固定宽度。
  */
 function expandShorthand(text: string): string {
   return String(text || '').replace(
-    new RegExp(SCENARIO_ID_BEFORE + SCENARIO_ID_SOURCE + '((?:\\s*/\\s*\\d{2}' + SCENARIO_ID_AFTER + ')+)', 'g'),
-    (_all, ticket: string, first: string, rest: string) => {
-      const sequence = [first, ...rest.split('/').map((part) => part.trim())]
+    new RegExp(SCENARIO_ID_BEFORE + SCENARIO_ID_SOURCE + '((?:\\s*/\\s*\\d{2}' + SCENARIO_ID_AFTER + ')+)', BASE_ID_FLAGS + 'g'),
+    (_all, first: string, rest: string) => {
+      const ticket = first.slice(0, first.lastIndexOf('-'))
+      const sequence = [first.slice(first.lastIndexOf('-') + 1), ...rest.split('/').map((part) => part.trim())]
       return sequence.map((number) => ticket + '-' + number).join('、')
     },
   )
@@ -179,10 +195,10 @@ type FoundId = { id: string; start: number; end: number }
 /** 找出一段文字里所有完整编号及其位置。日期（2026-10-29）与版本号不会被当成编号。 */
 function findIds(text: string): FoundId[] {
   const found: FoundId[] = []
-  const pattern = new RegExp(ID_PATTERN.source, 'g')
+  const pattern = new RegExp(ID_PATTERN.source, ID_PATTERN.flags)
   let matched: RegExpExecArray | null
   while ((matched = pattern.exec(text)) !== null) {
-    found.push({ id: matched[1] + '-' + matched[2], start: matched.index, end: matched.index + matched[0].length })
+    found.push({ id: matched[1], start: matched.index, end: matched.index + matched[0].length })
   }
   return found
 }
@@ -337,7 +353,7 @@ function extractResults(commentText: string): Map<string, ScenarioStatus> {
     const ids = uniqueIds(content)
     if (ids.length === 0) continue
     const rest = content
-      .replace(new RegExp(ID_PATTERN.source, 'g'), '')
+      .replace(new RegExp(ID_PATTERN.source, ID_PATTERN.flags), '')
       .replace(/[、，,\/\s]/g, '')
     if (!/^(?:场景级|场景编号|场景|编号)?[:：]?$/.test(rest)) continue
     if (Number(countedMatch[2]) !== ids.length) continue
@@ -380,19 +396,29 @@ function extractResults(commentText: string): Map<string, ScenarioStatus> {
   return results
 }
 
+/**
+ * 场景块标题里写的是来源票号（不是场景编号），一个不含连字符的词。票号形状不再手抄一份宽度：
+ * 一个词是合法票号，当且仅当「票号 + '-01'」恰好是一个完整场景编号——base 的编号形状改了，
+ * 标题的票号形状跟着改，不会再像 #26 那样两边漂移。词里含连字符的不当票号：那更像把场景编号
+ * 本身写进了标题，模板要求标题写的是来源票号。
+ */
+function isScenarioSourceTicket(token: string): boolean {
+  return !token.includes('-') && EXACT_ID_PATTERN.test(token + '-01')
+}
+
 /** 解析评论：场景块登记了哪些编号、整段评论提到过哪些编号、每条评论给出的结果。 */
 function parseComment(comment: ChecklistCommentInput): ParsedComment {
   const text = expandShorthand(String(comment.body || ''))
   const lines = text.split(/\r?\n/)
   const tickets: string[] = []
-  // 场景块标题里写的是来源票号（不是场景编号），单独一个三位到五位数字，所以不复用场景编号的常量。
   for (const line of lines) {
-    const heading = /^#{2,6}\s*场景块[:：]\s*#?(\d{3,5})(?!\d)/.exec(line.trim())
-    if (heading) tickets.push(heading[1])
+    // 票号后面常跟一句话说明，词边界停在空白或常见标点上；#24、#1783 都是合法票号。
+    const heading = /^#{2,6}\s*场景块[:：]\s*#?([^\s，。；、！？,;!?（）()]+)/.exec(line.trim())
+    if (heading && isScenarioSourceTicket(heading[1])) tickets.push(heading[1])
   }
   const registered: string[] = []
   if (tickets.length > 0) {
-    const explicit = [...text.matchAll(new RegExp('^#{2,6}\\s*场景\\s+(' + SCENARIO_ID_SOURCE + ')' + SCENARIO_ID_AFTER, 'gm'))].map((matched) => matched[1])
+    const explicit = [...text.matchAll(new RegExp('^#{2,6}\\s*场景\\s+(' + SCENARIO_ID_SOURCE + ')' + SCENARIO_ID_AFTER, 'gm' + BASE_ID_FLAGS))].map((matched) => matched[1])
     if (explicit.length > 0) registered.push(...explicit)
     else for (const ticket of tickets) registered.push(ticket + '-01')
   }
