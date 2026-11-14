@@ -210,7 +210,7 @@ function assertCombo(tag: string, lang: string, skin: string, width: number, m: 
 async function main(): Promise<void> {
   const React = require('react')
   const ReactDOMServer = require('react-dom/server')
-  const { chromium } = require('playwright')
+  const { getBrowser, closeBrowser } = require('./lib/browser-pool.js')
   const { renderToStaticMarkup } = ReactDOMServer
 
   // 1) 真实样式：kernel/styles 与像素皮肤都按真源导入，量到的就是线上那套 CSS。
@@ -256,7 +256,7 @@ async function main(): Promise<void> {
     }))
   }
 
-  const browser = await chromium.launch({ headless: true })
+  const browser = await getBrowser({ headless: true })
   try {
     const page = await browser.newPage({ viewport: { width: 900, height: 1200 } })
     for (const lang of LANGS) {
@@ -283,7 +283,7 @@ async function main(): Promise<void> {
       '反证：锁死不许换行后，300 宽英文必须量出溢出（图例溢出 ' + Math.max(bad.legendOverflow, 0).toFixed(2) + '、标题行溢出 ' + Math.max(bad.headOverflow, 0).toFixed(2) + '、文档溢出 ' + bad.docOverflow.toFixed(2) + '）')
     await page.close()
   } finally {
-    await browser.close()
+    await closeBrowser()
   }
 }
 

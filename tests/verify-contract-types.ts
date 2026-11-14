@@ -705,50 +705,38 @@ function main(): void {
       const printEnvScript = 'console.log(JSON.stringify({ pwPath: process.env.PLAYWRIGHT_BROWSERS_PATH || "" }))'
       const cleanEnv: NodeJS.ProcessEnv = { ...process.env }
       delete cleanEnv.PLAYWRIGHT_BROWSERS_PATH
+      const runHookProbe = (env: NodeJS.ProcessEnv): { status: number | null; pwPath: string } => {
+        const res = spawnSync(process.execPath, ['--import', tmpHookUrl, '--eval', printEnvScript], {
+          cwd: tmpDir,
+          env,
+          encoding: 'utf8',
+          timeout: 30000,
+        })
+        const parsed = JSON.parse(String(res.stdout || '').trim().split(/\r?\n/).pop() || '{}')
+        return { status: res.status, pwPath: String(parsed.pwPath || '') }
+      }
 
       // 情形 1：工作区缓存为空时，不改动 PLAYWRIGHT_BROWSERS_PATH（保持空，交给系统默认缓存）
-      const emptyRun = spawnSync(process.execPath, ['--import', tmpHookUrl, '--eval', printEnvScript], {
-        cwd: tmpDir,
-        env: cleanEnv,
-        encoding: 'utf8',
-        timeout: 30000,
-      })
-      const emptyParsed = JSON.parse(String(emptyRun.stdout || '').trim().split(/\r?\n/).pop() || '{}')
+      const emptyProbe = runHookProbe(cleanEnv)
       check(
-        emptyRun.status === 0 && emptyParsed.pwPath === '',
+        emptyProbe.status === 0 && emptyProbe.pwPath === '',
         '工作区无额外 Playwright 浏览器缓存时不改写 PLAYWRIGHT_BROWSERS_PATH（保持系统默认缓存）',
       )
 
       // 情形 2：工作区缓存含系统默认缓存没有的 chromium-* 目录且未设环境变量时，自动指到工作区缓存
       fs.mkdirSync(path.join(tmpWsCache, 'chromium-999999-fixture'), { recursive: true })
-      const fallbackRun = spawnSync(process.execPath, ['--import', tmpHookUrl, '--eval', printEnvScript], {
-        cwd: tmpDir,
-        env: cleanEnv,
-        encoding: 'utf8',
-        timeout: 30000,
-      })
-      const fallbackParsed = JSON.parse(String(fallbackRun.stdout || '').trim().split(/\r?\n/).pop() || '{}')
+      const fallbackProbe = runHookProbe(cleanEnv)
       check(
-        fallbackRun.status === 0 && fallbackParsed.pwPath === tmpWsCache,
+        fallbackProbe.status === 0 && fallbackProbe.pwPath === tmpWsCache,
         '未设 PLAYWRIGHT_BROWSERS_PATH 且系统默认缓存缺少工作区已装 chromium-* 时自动回落到工作区缓存' +
-          (fallbackParsed.pwPath === tmpWsCache ? '' : '（实际 pwPath=' + JSON.stringify(fallbackParsed.pwPath) + '）'),
+          (fallbackProbe.pwPath === tmpWsCache ? '' : '（实际 pwPath=' + JSON.stringify(fallbackProbe.pwPath) + '）'),
       )
 
       // 情形 3：调用方显式指定 PLAYWRIGHT_BROWSERS_PATH 时，原样保留不覆盖
       const explicitPath = path.join(tmpDir, 'custom-pw-browsers')
-      const explicitRun = spawnSync(
-        process.execPath,
-        ['--import', tmpHookUrl, '--eval', printEnvScript],
-        {
-          cwd: tmpDir,
-          env: { ...cleanEnv, PLAYWRIGHT_BROWSERS_PATH: explicitPath },
-          encoding: 'utf8',
-          timeout: 30000,
-        },
-      )
-      const explicitParsed = JSON.parse(String(explicitRun.stdout || '').trim().split(/\r?\n/).pop() || '{}')
+      const explicitProbe = runHookProbe({ ...cleanEnv, PLAYWRIGHT_BROWSERS_PATH: explicitPath })
       check(
-        explicitRun.status === 0 && explicitParsed.pwPath === explicitPath,
+        explicitProbe.status === 0 && explicitProbe.pwPath === explicitPath,
         '调用方显式设置 PLAYWRIGHT_BROWSERS_PATH 时装载钩子原样保留不覆盖',
       )
     } finally {

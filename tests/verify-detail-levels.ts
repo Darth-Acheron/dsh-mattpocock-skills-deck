@@ -26,13 +26,18 @@ function fixtureGraphqlReply(argv) {
       },
     })
   }
-  const mkNode = function (num, title, state, labels, parentNum, blockedNums, assigneeLogin) {
+  const mkNode = function (opts) {
+    const state = opts.state || 'OPEN'
+    const labels = opts.labels || ['wayfinder:task']
+    const parentNum = opts.parentNum === undefined ? 900 : opts.parentNum
+    const blockedNums = opts.blockedNums || []
+    const assigneeLogin = opts.assigneeLogin || ''
     return {
-      number: num,
-      title: title,
+      number: opts.num,
+      title: opts.title,
       state: state,
       body: '',
-      url: 'https://github.com/acme/levels-fixture/issues/' + num,
+      url: 'https://github.com/acme/levels-fixture/issues/' + opts.num,
       createdAt: '2026-11-01T00:00:00Z',
       updatedAt: '2026-11-10T00:00:00Z',
       closedAt: state === 'CLOSED' ? '2026-11-09T00:00:00Z' : null,
@@ -56,12 +61,12 @@ function fixtureGraphqlReply(argv) {
       repository: {
         issues: {
           nodes: [
-            mkNode(900, '分层验证夹具地图', 'OPEN', ['wayfinder:map'], null, [], ''),
-            mkNode(901, '第 0 层可接子票', 'OPEN', ['wayfinder:task'], 900, [], ''),
-            mkNode(902, '第 0 层已认领子票', 'OPEN', ['wayfinder:task'], 900, [], 'alice'),
-            mkNode(903, '第 0 层已关闭子票', 'CLOSED', ['wayfinder:task'], 900, [], ''),
-            mkNode(904, '第 1 层被阻塞子票', 'OPEN', ['wayfinder:task'], 900, [901], ''),
-            mkNode(905, '第 2 层串行被阻塞子票', 'OPEN', ['wayfinder:task'], 900, [904], ''),
+            mkNode({ num: 900, title: '分层验证夹具地图', labels: ['wayfinder:map'], parentNum: null }),
+            mkNode({ num: 901, title: '第 0 层可接子票' }),
+            mkNode({ num: 902, title: '第 0 层已认领子票', assigneeLogin: 'alice' }),
+            mkNode({ num: 903, title: '第 0 层已关闭子票', state: 'CLOSED' }),
+            mkNode({ num: 904, title: '第 1 层被阻塞子票', blockedNums: [901] }),
+            mkNode({ num: 905, title: '第 2 层串行被阻塞子票', blockedNums: [904] }),
           ],
           pageInfo: { hasNextPage: false, endCursor: null },
         },
@@ -198,9 +203,15 @@ async function main() {
 
   const { start, callEndpoint } = loadPlugin({ subprocess, timer, fs: fsSvc })
   await start()
-  let snap = await callEndpoint('refresh', { cwd: REPO_CWD })
-  let maps = (snap && Array.isArray(snap.maps)) ? snap.maps : []
-  let withTickets = maps.filter(function (m) { return m.tickets && m.tickets.length > 0 })
+  const refreshMapsWithTickets = async function (targetCwd) {
+    const nextSnap = await callEndpoint('refresh', { cwd: targetCwd })
+    const nextMaps = (nextSnap && Array.isArray(nextSnap.maps)) ? nextSnap.maps : []
+    return {
+      snap: nextSnap,
+      withTickets: nextMaps.filter(function (m) { return m.tickets && m.tickets.length > 0 }),
+    }
+  }
+  let { snap, withTickets } = await refreshMapsWithTickets(REPO_CWD)
   // 当前仓库若已无含子票的开放地图（如全部探索地图已关闭收口），回落到自建夹具工作区跑同一条 refresh 通路。
   if (withTickets.length === 0 && !process.argv[2]) {
     const tmpDir = fsx.realpathSync(fsx.mkdtempSync(path.join(os.tmpdir(), 'verify-detail-levels-')))
@@ -209,11 +220,11 @@ async function main() {
       execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/levels-fixture.git'], { cwd: tmpDir, stdio: 'ignore' })
       const agentsDir = path.join(tmpDir, 'docs', 'agents')
       fsx.mkdirSync(agentsDir, { recursive: true })
-      fsx.writeFileSync(path.join(agentsDir, ['issue', 'tracker.md'].join('-')), '# Issue tracker\n\nIssues live as GitHub issues.\n', 'utf8')
+      fsx.writeFileSync(path.join(agentsDir, 'issue-tracker.md'), '# Issue tracker\n\nIssues live as GitHub issues.\n', 'utf8')
       fixtureCwd = tmpDir
-      snap = await callEndpoint('refresh', { cwd: tmpDir })
-      maps = (snap && Array.isArray(snap.maps)) ? snap.maps : []
-      withTickets = maps.filter(function (m) { return m.tickets && m.tickets.length > 0 })
+      const fallback = await refreshMapsWithTickets(tmpDir)
+      snap = fallback.snap
+      withTickets = fallback.withTickets
     } finally {
       fixtureCwd = ''
       try { fsx.rmSync(tmpDir, { recursive: true, force: true }) } catch (e) { /* ignore */ }
