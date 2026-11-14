@@ -26,6 +26,8 @@ let sharedEndpoint: string | null = null
 
 /** 取 playwright 的 chromium。走动态 import：保持懒加载，单测进程加载本文件时不解析 playwright。 */
 async function loadChromium(): Promise<Chromium> {
+  // 复用 scripts/ts-hook.mts 的工作区 Playwright 浏览器缓存回落逻辑，即使调用方未挂 --import 也能生效。
+  await import('../../scripts/ts-hook.mts')
   const mod = await import('playwright') as unknown as { chromium?: Chromium; default?: { chromium?: Chromium } }
   const chromium: Chromium | undefined = mod.chromium ?? mod.default?.chromium
   if (!chromium) throw new Error('playwright 里找不到 chromium：' + Object.keys(mod).join(','))

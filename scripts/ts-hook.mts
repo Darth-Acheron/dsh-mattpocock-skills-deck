@@ -26,7 +26,8 @@
 // 约定三（2026-10-19 第三阶段）：域产物搬出源码树之后，源码树里只剩 `<域>/src/*.ts`，
 // 而说明符仍写着 "src/shared/<域>/<名>.js"。同目录同名 .ts 找不到时，再试一次
 // 「<目标所在目录>/src/<同名>.ts」——这正是域源码的形状，测试与 host 源码里的说明符一个都不用改。
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { registerHooks } from 'node:module'
@@ -38,6 +39,58 @@ if (typeof registerHooks !== 'function') {
     '[ts-hook] 当前 Node 没有 module.registerHooks()，本仓开发链要求 Node 22.22.2 及以上（24 线要 24.15 及以上），见根 package.json 的 engines.node。'
   )
 }
+
+// 当调用方没有显式设置 PLAYWRIGHT_BROWSERS_PATH，且系统默认缓存目录里缺少本仓工作区缓存已装好的
+// chromium 二进制（例如文件沙箱禁止写用户主目录默认缓存，只能把浏览器装进 node_modules/.cache/ms-playwright）时，
+// 在门禁加载 playwright 之前自动把 PLAYWRIGHT_BROWSERS_PATH 指到工作区缓存目录；系统默认缓存已装好或调用方已指定时不改动。
+function defaultPlaywrightCacheDir(): string {
+  if (process.platform === 'darwin') return join(homedir(), 'Library', 'Caches', 'ms-playwright')
+  if (process.platform === 'win32') return join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'ms-playwright')
+  return join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'ms-playwright')
+}
+
+function candidateWorkspaceBrowserCaches(repoRoot: string): string[] {
+  const candidates: string[] = [join(repoRoot, 'node_modules', '.cache', 'ms-playwright')]
+  try {
+    const dotGit = join(repoRoot, '.git')
+    if (existsSync(dotGit) && statSync(dotGit).isFile()) {
+      const m = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, 'utf8'))
+      if (m && m[1]) {
+        const gitDir = resolve(repoRoot, m[1].trim())
+        const mainGitDir = resolve(gitDir, '..', '..')
+        if (basename(mainGitDir) === '.git') {
+          candidates.push(join(dirname(mainGitDir), 'node_modules', '.cache', 'ms-playwright'))
+        }
+      }
+    }
+  } catch {
+    /* 读不到 .git 文件时只看当前工作树自己的缓存目录 */
+  }
+  return candidates
+}
+
+function ensurePlaywrightBrowsersPath(repoRoot: string): void {
+  if (String(process.env.PLAYWRIGHT_BROWSERS_PATH || '').trim()) return
+  const defaultDir = defaultPlaywrightCacheDir()
+  for (const wsCache of candidateWorkspaceBrowserCaches(repoRoot)) {
+    try {
+      if (!existsSync(wsCache)) continue
+      const entries: string[] = (readdirSync(wsCache) as string[]).filter(
+        (name: string) => name.startsWith('chromium-') || name.startsWith('chromium_headless_shell-')
+      )
+      if (entries.length === 0) continue
+      const missingInDefault = entries.some((name: string) => !existsSync(join(defaultDir, name)))
+      if (missingInDefault) {
+        process.env.PLAYWRIGHT_BROWSERS_PATH = wsCache
+      }
+      return
+    } catch {
+      /* 缓存目录不可读时原样跳过，交给 playwright 自己的报错路径处理 */
+    }
+  }
+}
+
+ensurePlaywrightBrowsersPath(resolve(dirname(fileURLToPath(import.meta.url)), '..'))
 
 // "D:\a\b.js" 或 "/a/b.js" 这种不带协议头的绝对路径；带协议头的走 file: 那一支。
 function isAbsolutePath(specifier: string): boolean {

@@ -54,6 +54,9 @@
 //       跑一份不含顶层 import/export 的 CommonJS 形态 `.ts` 入口，里面裸 `require('./sibling.js')`
 //       必须命中同目录下的 `./sibling.ts`（防止 Node v24.17.0 把 `commonjs-typescript` 送进
 //       绕过 `registerHooks` 的重造 `requireFn`）。
+//       5d、装载钩子工作区 Playwright 浏览器缓存回落证明：未设 `PLAYWRIGHT_BROWSERS_PATH` 且系统默认缓存
+//       缺少工作区 `node_modules/.cache/ms-playwright` 已装好的 `chromium-*` 目录时，自动指到工作区缓存；
+//       调用方显式指定时不改动；工作区缓存无缺失条目时不改动（继续走系统默认缓存）。
 //
 // 再撤四项（2026-10-14 #1147 决策 8：类型检查接管后撤掉。顺序是先立后撤——
 //   跟踪器配置落地、三条断言写好、三种错故意造出确认变红之后，才动手删）：
@@ -678,6 +681,76 @@ function main(): void {
             (ok ? '' : '（退出码 ' + cr.status + '，stderr=' + String(cr.stderr || '').trim().slice(-240) + '）'),
         )
       }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
+  }
+
+  // ---- 5d) 装载钩子工作区 Playwright 浏览器缓存回落证明 ----
+  // 为什么有这一项：文件沙箱禁止写用户主目录默认缓存时，Playwright 浏览器只能装进工作区
+  // node_modules/.cache/ms-playwright；若不设环境变量直接跑门禁，Playwright 只查系统默认缓存会报
+  // Executable doesn't exist。装载钩子在系统默认缓存缺少工作区已装好的 chromium-* 目录时自动回落到工作区缓存，
+  // 系统默认缓存已有或调用方显式指定环境变量时原样不动。
+  {
+    const hookSrc = fs.readFileSync(path.join(ROOT, 'scripts', 'ts-hook.mts'), 'utf8')
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-pw-cache-hook-')))
+    try {
+      const tmpScripts = path.join(tmpDir, 'scripts')
+      const tmpWsCache = path.join(tmpDir, 'node_modules', '.cache', 'ms-playwright')
+      fs.mkdirSync(tmpScripts, { recursive: true })
+      fs.mkdirSync(tmpWsCache, { recursive: true })
+      const tmpHookAbs = path.join(tmpScripts, 'ts-hook.mts')
+      fs.writeFileSync(tmpHookAbs, hookSrc, 'utf8')
+      const tmpHookUrl = pathToFileURL(tmpHookAbs).href
+      const printEnvScript = 'console.log(JSON.stringify({ pwPath: process.env.PLAYWRIGHT_BROWSERS_PATH || "" }))'
+      const cleanEnv: NodeJS.ProcessEnv = { ...process.env }
+      delete cleanEnv.PLAYWRIGHT_BROWSERS_PATH
+
+      // 情形 1：工作区缓存为空时，不改动 PLAYWRIGHT_BROWSERS_PATH（保持空，交给系统默认缓存）
+      const emptyRun = spawnSync(process.execPath, ['--import', tmpHookUrl, '--eval', printEnvScript], {
+        cwd: tmpDir,
+        env: cleanEnv,
+        encoding: 'utf8',
+        timeout: 30000,
+      })
+      const emptyParsed = JSON.parse(String(emptyRun.stdout || '').trim().split(/\r?\n/).pop() || '{}')
+      check(
+        emptyRun.status === 0 && emptyParsed.pwPath === '',
+        '工作区无额外 Playwright 浏览器缓存时不改写 PLAYWRIGHT_BROWSERS_PATH（保持系统默认缓存）',
+      )
+
+      // 情形 2：工作区缓存含系统默认缓存没有的 chromium-* 目录且未设环境变量时，自动指到工作区缓存
+      fs.mkdirSync(path.join(tmpWsCache, 'chromium-999999-fixture'), { recursive: true })
+      const fallbackRun = spawnSync(process.execPath, ['--import', tmpHookUrl, '--eval', printEnvScript], {
+        cwd: tmpDir,
+        env: cleanEnv,
+        encoding: 'utf8',
+        timeout: 30000,
+      })
+      const fallbackParsed = JSON.parse(String(fallbackRun.stdout || '').trim().split(/\r?\n/).pop() || '{}')
+      check(
+        fallbackRun.status === 0 && fallbackParsed.pwPath === tmpWsCache,
+        '未设 PLAYWRIGHT_BROWSERS_PATH 且系统默认缓存缺少工作区已装 chromium-* 时自动回落到工作区缓存' +
+          (fallbackParsed.pwPath === tmpWsCache ? '' : '（实际 pwPath=' + JSON.stringify(fallbackParsed.pwPath) + '）'),
+      )
+
+      // 情形 3：调用方显式指定 PLAYWRIGHT_BROWSERS_PATH 时，原样保留不覆盖
+      const explicitPath = path.join(tmpDir, 'custom-pw-browsers')
+      const explicitRun = spawnSync(
+        process.execPath,
+        ['--import', tmpHookUrl, '--eval', printEnvScript],
+        {
+          cwd: tmpDir,
+          env: { ...cleanEnv, PLAYWRIGHT_BROWSERS_PATH: explicitPath },
+          encoding: 'utf8',
+          timeout: 30000,
+        },
+      )
+      const explicitParsed = JSON.parse(String(explicitRun.stdout || '').trim().split(/\r?\n/).pop() || '{}')
+      check(
+        explicitRun.status === 0 && explicitParsed.pwPath === explicitPath,
+        '调用方显式设置 PLAYWRIGHT_BROWSERS_PATH 时装载钩子原样保留不覆盖',
+      )
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true })
     }

@@ -20,6 +20,7 @@
 //
 // 注意：标准输出上只有 WS= 那一行，别的诊断一律走标准错误，免得抓地址的上层脚本读串。
 
+import './ts-hook.mts'
 import { chromium } from 'playwright'
 
 // 纯兜底定时器：playwright 的传输层通常自己撑得住事件循环，这里再放一个空转的心跳，
