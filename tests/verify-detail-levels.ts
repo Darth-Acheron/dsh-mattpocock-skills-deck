@@ -7,10 +7,79 @@
 //   再照客户端的样子发一次真信封，走的就是生产那一条通路。
 const fsx = require('fs')
 const fsp = fsx.promises
+const os = require('os')
 const path = require('path')
-const { spawn } = require('child_process')
+const { spawn, execFileSync } = require('child_process')
 
 const REPO_CWD = process.argv[2] || process.cwd()
+let fixtureCwd = ''
+
+// 当仓库里的探索地图已经全部收口关闭（#691/#1923 起首屏快照不再给已关闭容器挂子票，因此真仓刷新回来的
+// maps 里没有含子票的开放地图）时，回落到独立临时夹具工作区走同一条 refresh RPC 通路验证分层统计与 DAG 语义。
+function fixtureGraphqlReply(argv) {
+  const joined = argv.join(' ')
+  if (joined.indexOf('pullRequests(') >= 0) {
+    return JSON.stringify({
+      data: {
+        rateLimit: { cost: 1 },
+        repository: { pullRequests: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } },
+      },
+    })
+  }
+  const mkNode = function (num, title, state, labels, parentNum, blockedNums, assigneeLogin) {
+    return {
+      number: num,
+      title: title,
+      state: state,
+      body: '',
+      url: 'https://github.com/acme/levels-fixture/issues/' + num,
+      createdAt: '2026-11-01T00:00:00Z',
+      updatedAt: '2026-11-10T00:00:00Z',
+      closedAt: state === 'CLOSED' ? '2026-11-09T00:00:00Z' : null,
+      author: { login: 'maintainer', avatarUrl: '', __typename: 'User', name: 'Maintainer' },
+      assignees: {
+        nodes: assigneeLogin
+          ? [{ login: assigneeLogin, name: assigneeLogin, avatarUrl: '', __typename: 'User' }]
+          : [],
+      },
+      labels: { nodes: labels.map(function (n) { return { name: n, color: '10b981', description: '' } }) },
+      milestone: null,
+      parent: parentNum ? { number: parentNum } : null,
+      blockedBy: {
+        nodes: blockedNums.map(function (b) { return { number: b, title: 'Ticket ' + b, state: 'OPEN' } }),
+      },
+    }
+  }
+  return JSON.stringify({
+    data: {
+      rateLimit: { cost: 1 },
+      repository: {
+        issues: {
+          nodes: [
+            mkNode(900, '分层验证夹具地图', 'OPEN', ['wayfinder:map'], null, [], ''),
+            mkNode(901, '第 0 层可接子票', 'OPEN', ['wayfinder:task'], 900, [], ''),
+            mkNode(902, '第 0 层已认领子票', 'OPEN', ['wayfinder:task'], 900, [], 'alice'),
+            mkNode(903, '第 0 层已关闭子票', 'CLOSED', ['wayfinder:task'], 900, [], ''),
+            mkNode(904, '第 1 层被阻塞子票', 'OPEN', ['wayfinder:task'], 900, [901], ''),
+            mkNode(905, '第 2 层串行被阻塞子票', 'OPEN', ['wayfinder:task'], 900, [904], ''),
+          ],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+    },
+  })
+}
+
+function mockDone(stdoutText) {
+  return {
+    done: Promise.resolve({ exitCode: 0, signal: null }),
+    collected: {
+      stdout: { readFrom: () => ({ text: stdoutText }) },
+      stderr: { readFrom: () => ({ text: '' }) },
+    },
+    terminate: () => {},
+  }
+}
 
 const subprocess = {
   async resolveExecutable(name) {
@@ -24,9 +93,20 @@ const subprocess = {
     const cands = []
     for (const d of dirs) { for (const ext of exts) cands.push(path.join(d, name + ext.toLowerCase())); cands.push(path.join(d, name)) }
     for (const c of cands) { try { fsx.accessSync(c); return c } catch (e) { /* 继续 */ } }
+    if (name === 'gh' && fixtureCwd) return 'MOCK_GH'
     throw new Error('executable not found: ' + name)
   },
   spawn(spec) {
+    const base0 = String((spec.argv && spec.argv[0]) || '').split(/[\\/]/).pop().toLowerCase()
+    const isGh = base0 === 'gh' || base0 === 'gh.exe' || spec.argv[0] === 'MOCK_GH'
+    if (fixtureCwd && isGh) {
+      const joined = spec.argv.slice(1).join(' ')
+      if (joined.indexOf('auth status') >= 0) return mockDone('Logged in to github.com')
+      if (joined.indexOf('repo view') >= 0) return mockDone('acme/levels-fixture\n')
+      if (joined.indexOf('api user') >= 0) return mockDone(JSON.stringify({ login: 'maintainer', name: 'Maintainer', avatarUrl: '' }))
+      if (joined.indexOf('api repos/') >= 0) return mockDone(JSON.stringify({ full_name: 'acme/levels-fixture', permissions: { push: true, triage: true } }))
+      if (joined.indexOf('api graphql') >= 0) return mockDone(fixtureGraphqlReply(spec.argv))
+    }
     const cp = spawn(spec.argv[0], spec.argv.slice(1), { cwd: spec.cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
     let out = '', err = ''
     cp.stdout.on('data', d => { out += d })
@@ -118,12 +198,30 @@ async function main() {
 
   const { start, callEndpoint } = loadPlugin({ subprocess, timer, fs: fsSvc })
   await start()
-  const snap = await callEndpoint('refresh', { cwd: REPO_CWD })
+  let snap = await callEndpoint('refresh', { cwd: REPO_CWD })
+  let maps = (snap && Array.isArray(snap.maps)) ? snap.maps : []
+  let withTickets = maps.filter(function (m) { return m.tickets && m.tickets.length > 0 })
+  // 当前仓库若已无含子票的开放地图（如全部探索地图已关闭收口），回落到自建夹具工作区跑同一条 refresh 通路。
+  if (withTickets.length === 0 && !process.argv[2]) {
+    const tmpDir = fsx.realpathSync(fsx.mkdtempSync(path.join(os.tmpdir(), 'verify-detail-levels-')))
+    try {
+      execFileSync('git', ['init'], { cwd: tmpDir, stdio: 'ignore' })
+      execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/levels-fixture.git'], { cwd: tmpDir, stdio: 'ignore' })
+      const agentsDir = path.join(tmpDir, 'docs', 'agents')
+      fsx.mkdirSync(agentsDir, { recursive: true })
+      fsx.writeFileSync(path.join(agentsDir, ['issue', 'tracker.md'].join('-')), '# Issue tracker\n\nIssues live as GitHub issues.\n', 'utf8')
+      fixtureCwd = tmpDir
+      snap = await callEndpoint('refresh', { cwd: tmpDir })
+      maps = (snap && Array.isArray(snap.maps)) ? snap.maps : []
+      withTickets = maps.filter(function (m) { return m.tickets && m.tickets.length > 0 })
+    } finally {
+      fixtureCwd = ''
+      try { fsx.rmSync(tmpDir, { recursive: true, force: true }) } catch (e) { /* ignore */ }
+    }
+  }
   expect('快照 ok', snap && snap.ok === true)
-  const maps = (snap && Array.isArray(snap.maps)) ? snap.maps : []
 
   // T1a：每个 map 的 stats.levels 存在且结构正确
-  const withTickets = maps.filter(function (m) { return m.tickets && m.tickets.length > 0 })
   expect('存在含子票的 map', withTickets.length > 0)
   withTickets.forEach(function (m) {
     const lv = m.stats && m.stats.levels

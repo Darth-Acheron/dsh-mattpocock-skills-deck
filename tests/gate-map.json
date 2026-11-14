@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-13T23:19:54.072Z",
+  "generatedAt": "2026-11-14T04:29:17.606Z",
   "generatedBy": "node scripts/gate-map.mts",
   "chainLength": 599,
   "gateCount": 599,
@@ -10292,16 +10292,18 @@
       "step": "node tests/verify-detail-levels.ts",
       "file": "tests/verify-detail-levels.ts",
       "guards": [
+        "docs/agents",
         "src/host/index.ts"
       ],
       "dirs": [
+        "docs/agents",
         "src/host"
       ],
       "unattributed": false,
       "buildOutputOnly": false,
       "completionRecord": false,
       "expectedAssertions": 0,
-      "reason": "归属来自：载入模块（require / import / pathToFileURL） 1 条"
+      "reason": "归属来自：读文件调用（readFileSync / readFile / path.join(ROOT, ...)） 1 条；载入模块（require / import / pathToFileURL） 1 条"
     },
     {
       "step": "node tests/verify-detection-cascade.ts",
@@ -14241,6 +14243,7 @@
       "node tests/verify-683-host-wiring.ts",
       "node tests/verify-947-workspace-file.ts",
       "node tests/verify-957-workspace-writer.ts",
+      "node tests/verify-detail-levels.ts",
       "node tests/verify-detection-cascade.ts",
       "node tests/verify-detection-evidence.ts",
       "node tests/verify-github-label-colors.ts",
