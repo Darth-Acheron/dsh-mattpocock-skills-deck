@@ -268,6 +268,8 @@ const REFERENCES: RefRow[] = [
   // #1862 工作区快照库的单写者租约：心跳与过期两个时长，分别出自 config/intervals.yaml 与 config/ttl.yaml。
   { file: 'src/workspace-snapshot/runtime/lease.ts', access: 'LEASE_HEARTBEAT_MS', gen: 'SNAPSHOT_LEASE_HEARTBEAT_MS', key: 'snapshotLeaseHeartbeatMs' },
   { file: 'src/workspace-snapshot/runtime/lease.ts', access: 'LEASE_TTL_MS', gen: 'SNAPSHOT_LEASE_TTL_MS', key: 'snapshotLeaseTtlMs' },
+  // #128 句柄缓存对只读句柄按租约 TTL 节流重开：同一个过期时长，direct import 生成常量（无别名）。
+  { file: 'src/refresh/rooms/host/snapshot-library-handles.ts', access: 'SNAPSHOT_LEASE_TTL_MS', gen: 'SNAPSHOT_LEASE_TTL_MS', key: 'snapshotLeaseTtlMs' },
 ]
 
 // ---------------------------------------------------------------------------

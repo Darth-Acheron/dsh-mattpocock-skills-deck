@@ -14,6 +14,8 @@ import type {
   SnapshotBackend,
   WorkspaceSnapshotHandle,
 } from '../../../workspace-snapshot/contract/types.js'
+// 只读句柄重开的节流窗就取单写者租约的过期时长：租约不可能比这更快释放，节流比它短只是白费连接。
+import { SNAPSHOT_LEASE_TTL_MS } from '../../../shared/time-config/src/values.js'
 
 declare const process: { pid: number } | undefined
 
@@ -36,6 +38,8 @@ export interface SnapshotLibraryKey {
 interface HandleEntry {
   handle: WorkspaceSnapshotHandle
   key: string
+  /** 上一次对只读句柄尝试重开抢租约的时刻；按租约 TTL 节流，避免每拍重开一个确实被占着的库。 */
+  leaseRetryAtMs?: number
 }
 
 const handles = new Map<string, HandleEntry>()
@@ -58,32 +62,55 @@ export function supportedBackend(backend: string): backend is SnapshotBackend {
   return backend === 'github' || backend === 'gitlab' || backend === 'markdown'
 }
 
-/** 拿一个可用的句柄；开不出来回 null（首屏不许因为库不可用而空，调用方会回落在线路径）。 */
-export async function handleOf(input: SnapshotLibraryKey): Promise<WorkspaceSnapshotHandle | null> {
+/** 开一份新句柄；开不出来回 null（首屏不许因为库不可用而空，调用方会回落在线路径）。 */
+async function openHandle(input: SnapshotLibraryKey, clock: () => number): Promise<WorkspaceSnapshotHandle | null> {
+  try {
+    leaseSeq += 1
+    const pid = (typeof process !== 'undefined' && process) ? process.pid : 0
+    const opened = await openSnapshot({
+      workspaceRoot: input.workspaceRoot,
+      // handleOf 已用 supportedBackend 挡过一道，这里后端必是三者之一；窄化只在 handleOf 作用域生效，故此处显式断言。
+      backend: input.backend as SnapshotBackend,
+      repoIdentity: input.repoIdentity,
+      leaseOwner: 'refresh-' + pid + '-' + leaseSeq,
+      now: clock,
+      ...(logSink ? { logEvent: logSink as any } : null),
+    })
+    return opened.handle
+  } catch (e) {
+    return null
+  }
+}
+
+/** 拿一个可用的句柄；开不出来回 null（首屏不许因为库不可用而空，调用方会回落在线路径）。
+ * now 缺省用真实时钟；测试注入假时钟以便跨过租约 TTL 而不真等。 */
+export async function handleOf(input: SnapshotLibraryKey, now?: () => number): Promise<WorkspaceSnapshotHandle | null> {
   if (!input.workspaceRoot || !supportedBackend(input.backend)) return null
+  const clock = now ?? (() => Date.now())
   const key = cacheKeyOf(input)
   const hit = handles.get(key)
   if (hit) {
     // Map 的插入顺序当 LRU：每次命中挪到队尾。
     handles.delete(key)
     handles.set(key, hit)
+    if (hit.handle.mode === 'writable') return hit.handle
+    // 只读句柄：写者租约可能被上一个宿主实例占着（重载或崩溃）。租约最迟一个 TTL 后过期，
+    // 上一进程关库也会立刻释放；但缓存若一直返回这份只读句柄，本进程就永远写不进库——
+    // 刷新与写回执都被库层判 readonly，面板停在新票建出之前的旧数据（#128）。
+    // 所以按租约 TTL 节流重开：重开会自动重抢租约，抢到就升级回可写，仍被占就继续只读。
+    // 节流是为了不去每拍重开一个确实被别的活进程拿着的库——TTL 内重开也抢不到，白费连接。
+    const t = clock()
+    if (t - (hit.leaseRetryAtMs ?? 0) < SNAPSHOT_LEASE_TTL_MS) return hit.handle
+    hit.leaseRetryAtMs = t
+    const reopened = await openHandle(input, clock)
+    if (reopened) {
+      try { hit.handle.close() } catch (e) { /* 旧只读句柄关不掉也不影响新句柄 */ }
+      hit.handle = reopened
+    }
     return hit.handle
   }
-  let opened: { handle: WorkspaceSnapshotHandle }
-  try {
-    leaseSeq += 1
-    const pid = (typeof process !== 'undefined' && process) ? process.pid : 0
-    opened = await openSnapshot({
-      workspaceRoot: input.workspaceRoot,
-      backend: input.backend,
-      repoIdentity: input.repoIdentity,
-      leaseOwner: 'refresh-' + pid + '-' + leaseSeq,
-      now: () => Date.now(),
-      ...(logSink ? { logEvent: logSink as any } : null),
-    })
-  } catch (e) {
-    return null
-  }
+  const opened = await openHandle(input, clock)
+  if (!opened) return null
   while (handles.size >= MAX_HANDLES) {
     const oldestKey = handles.keys().next().value as string | undefined
     if (oldestKey === undefined) break
@@ -91,8 +118,8 @@ export async function handleOf(input: SnapshotLibraryKey): Promise<WorkspaceSnap
     handles.delete(oldestKey)
     try { if (oldest) oldest.handle.close() } catch (e) { /* 关不掉也不影响新句柄 */ }
   }
-  handles.set(key, { handle: opened.handle, key })
-  return opened.handle
+  handles.set(key, { handle: opened, key })
+  return opened
 }
 
 /** 测试与进程收尾用：关掉所有缓存句柄；之后再用会重新开库。 */
