@@ -296,6 +296,21 @@ export function createIssueList(deps: any): any {
         if (next === cursor) return Object.assign(fail('parse', '索引翻页游标没有前进，拒绝死循环'), { pages: pages, budget: round.view() })
         cursor = next
       }
+      if (!useSince && persisted && typeof deps.getSnapshotLibrary === 'function') {
+        try {
+          const lib: any = await Promise.resolve(deps.getSnapshotLibrary())
+          if (lib && typeof lib.reconcileFullEnumeration === 'function') {
+            const rec = await lib.reconcileFullEnumeration({
+              workspaceRoot: cwd,
+              backend: String(ref.backend || ''),
+              repoIdentity: String(ref.refId || ''),
+              presentKeys: index,
+              effortId: String((ref as any).effortId || ''),
+            })
+            if (rec && rec.ok === false) persisted = false
+          }
+        } catch (eRec: any) {}
+      }
       return {
         ok: true,
         repo: { owner: ref.refId.split('/')[0], name: ref.refId.slice(ref.refId.indexOf('/') + 1) },
@@ -348,7 +363,11 @@ export function createIssueList(deps: any): any {
         repo: { backend: backend, refId: refId, name: refId, url: '' },
       })
       if (!replay || !replay.snapshot) return null
-      return { snapshot: replay.snapshot, oldestRowAtMs: Number(replay.oldestRowAtMs) || 0 }
+      let baseline: Record<string, string> | null = null
+      if (typeof lib.readIssueIndex === 'function') {
+        try { baseline = await lib.readIssueIndex({ workspaceRoot: cwd, backend: backend, repoIdentity: refId }) } catch (eB: any) { baseline = null }
+      }
+      return Object.assign({ snapshot: replay.snapshot, oldestRowAtMs: Number(replay.oldestRowAtMs) || 0 }, baseline ? { baseline } : null)
     } catch (e: any) { return null }
   }
 

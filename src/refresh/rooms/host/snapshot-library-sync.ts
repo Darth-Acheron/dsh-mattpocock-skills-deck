@@ -10,27 +10,22 @@
 //      重试等于用旧读结果盖新数据。列表写入那条路会重试一次，两条路的语义本来就不同。
 //   3. 差分基线用组装层的同一份口径（indexFromSnapshot + 库回放出来的快照），不另写一套
 //      「哪些票算进索引」的规则：两套口径迟早会漂成「探测说变了、补行却按没变处理」。
-import type { Issue, RepositoryRef } from '../../../tracker/contract/entities.js'
+import type { Issue } from '../../../tracker/contract/entities.js'
 import type {
+  IssueWrite,
   ListProjection,
   SyncBookkeeping,
   SyncBookkeepingResult,
   SyncBookkeepingWrite,
+  WorkspaceSnapshotHandle,
 } from '../../../workspace-snapshot/contract/types.js'
-import { indexFromSnapshot } from '../../kernel/index-window-rules.js'
 import { changeIssueWriteOf } from './snapshot-library-adapter.js'
 import { handleOf, type SnapshotLibraryKey } from './snapshot-library-handles.js'
-import { snapshotOfProjection } from './snapshot-library-view.js'
 
 /** 读簿记时顺带交回的合并版本：行级增量发起时要拿它当 startMergeVersion。 */
 export interface LibrarySyncState {
   state: SyncBookkeeping
   mergeVersion: number
-}
-
-/** 把库身份三格拼回一个仓库引用；差分基线只用它填快照信封，不读它的字段。 */
-function repoOfKey(input: SnapshotLibraryKey): RepositoryRef {
-  return { backend: input.backend as any, refId: input.repoIdentity, name: input.repoIdentity, url: '' }
 }
 
 /**
@@ -79,10 +74,114 @@ export async function readIssueIndex(input: SnapshotLibraryKey): Promise<Record<
   }
   if (!projection || !projection.issues.length) return null
   try {
-    return indexFromSnapshot(snapshotOfProjection(repoOfKey(input), projection))
+    const out: Record<string, string> = {}
+    for (const item of projection.issues) {
+      if (!item || !item.row || item.row.isPullRequest === true) continue
+      const n = parseInt(String(item.key), 10)
+      const k = !isNaN(n) ? String(n) : String(item.key || '')
+      if (!k) continue
+      const ms = item.row.updatedAtMs
+      const iso = typeof ms === 'number' && Number.isFinite(ms) ? new Date(ms).toISOString() : ''
+      out[k] = String(item.row.state || '').toUpperCase() + '|' + iso
+    }
+    return Object.keys(out).length ? out : null
   } catch (e) {
     return null
   }
+}
+
+/** 完整来源对账选项：指明本次列表覆盖了哪一类完整集合，缺席的旧行将写成墓碑。 */
+export interface ReconcileScopeOptions {
+  reconcileOpen?: boolean
+  reconcileClosedMaps?: boolean
+  reconcileAll?: boolean
+  effortId?: string
+}
+
+/**
+ * 在完整来源写入时，找出库里属于该完整集合但本次缺席的非 PR 工单，生成墓碑写入项（#127）。
+ *
+ * 为什么只在明确传入 reconcile* 时生成：常规分批写入或列表被截断/降级时来源不完整，必须遵守「只补不删」；
+ * 只有调用方确认本次开放工作集、已关闭地图集或整仓枚举完整无截断时，缺席才代表在远端已不再属于该集合。
+ */
+export function reconcileMissingWrites(
+  handle: WorkspaceSnapshotHandle,
+  rows: readonly Issue[],
+  opts: ReconcileScopeOptions,
+): IssueWrite[] {
+  if (!opts.reconcileOpen && !opts.reconcileClosedMaps && !opts.reconcileAll) return []
+  let projection: ListProjection
+  try {
+    projection = handle.readList({ state: 'all' })
+  } catch (e) {
+    return []
+  }
+  if (!projection || !projection.issues.length) return []
+  const seen = new Set<string>()
+  for (const r of rows || []) {
+    if (!r) continue
+    const eff = String((r as any).effortId || '')
+    const rawKey = String((r as any).key ?? (r as any).number ?? '')
+    if (!rawKey) continue
+    seen.add(eff + '\u0000' + rawKey)
+    const n = parseInt(rawKey, 10)
+    if (!isNaN(n)) seen.add(eff + '\u0000' + String(n))
+  }
+  const missing: IssueWrite[] = []
+  for (const item of projection.issues) {
+    if (!item || !item.row || item.row.isPullRequest === true) continue
+    if (opts.effortId && item.effortId !== opts.effortId) continue
+    const id1 = item.effortId + '\u0000' + item.key
+    const n = parseInt(String(item.key), 10)
+    const id2 = !isNaN(n) ? (item.effortId + '\u0000' + String(n)) : id1
+    if (seen.has(id1) || seen.has(id2)) continue
+    const st = String(item.row.state || '').toLowerCase()
+    const hit = opts.reconcileAll === true
+      || (opts.reconcileOpen === true && st === 'open')
+      || (opts.reconcileClosedMaps === true && item.row.type === 'map' && st === 'closed')
+    if (!hit) continue
+    missing.push({
+      effortId: item.effortId,
+      key: item.key,
+      groups: {
+        row: {
+          completeness: 'complete',
+          value: null,
+          source: 'refresh-list',
+          operation: 'list',
+        },
+      },
+    })
+  }
+  return missing
+}
+
+/**
+ * 整仓完整枚举（无 since 窗口且翻完所有页）收尾对账：把库里存在但远端完整索引里已不存在的非 PR 工单写成墓碑（#127）。
+ */
+export async function reconcileFullEnumeration(
+  input: SnapshotLibraryKey & { presentKeys: Record<string, unknown> | readonly string[]; effortId?: string },
+): Promise<{ ok: boolean; marked: number; mergeVersion: number | null }> {
+  const handle = await handleOf(input)
+  if (!handle) return { ok: false, marked: 0, mergeVersion: null }
+  const keys = Array.isArray(input.presentKeys)
+    ? input.presentKeys
+    : Object.keys((input.presentKeys as Record<string, unknown>) || {})
+  const pseudoRows: Issue[] = keys.map((k) => ({
+    key: String(k),
+    effortId: String(input.effortId || ''),
+  } as Issue))
+  const writes = reconcileMissingWrites(handle, pseudoRows, {
+    reconcileAll: true,
+    effortId: input.effortId,
+  })
+  if (!writes.length) return { ok: true, marked: 0, mergeVersion: handle.getMergeVersion() }
+  let res = handle.ingest({ startMergeVersion: handle.getMergeVersion(), writes })
+  if (!res.committed && res.reason === 'stale') {
+    res = handle.ingest({ startMergeVersion: handle.getMergeVersion(), writes })
+  }
+  if (!res.committed) return { ok: false, marked: 0, mergeVersion: null }
+  return { ok: true, marked: writes.length, mergeVersion: res.mergeVersion }
 }
 
 /** 一批变化行 + 簿记的提交输入。rows 是假后端交回来的 tracker 票（适配层换算成组写入）。 */
