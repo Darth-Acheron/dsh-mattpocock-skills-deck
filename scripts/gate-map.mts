@@ -132,6 +132,9 @@ export const COMPLETION_RECORDED_GATES: Record<string, number> = {
   //   上一进程崩溃租约过期后同样接手、租约确实被占时按 TTL 节流（到点重开一次仍只读、TTL 内不重开）、
   //   可写句柄照常缓存复用不被误伤。单跑实测 13 条。
   'verify-128-lease-readonly-recover': 13,
+  // 2026-11-15 #129：右侧边栏面板标签页 DeckSidebarTab 的完整 props 透传（含 useSessions）与双跳 rAF
+  //   在后台/隐藏会话子树被挂起时的宏任务定时器兜底（SLOT_QUEUE_STEP_MS），防止面板永久停在 .dsws-hold 空白壳。单跑实测 9 条。
+  'verify-129-sidebar-tab-mount': 9,
   // 2026-11-05 #1891（规格 #1885 S4「客户端按版本取变化」）：假信号源 + 假宿主电话驱动同步引擎——
   // 同一版本连续两拍一条数据都不取、版本变了只取一次变化集且只把变化的那一行换成新对象（其余行连
   // 对象引用都不换）、墓碑行让那一行从手上那份消失、版本回退整份重取且先重置本地版本、落后超限退回

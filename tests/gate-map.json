@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-15T10:36:59.457Z",
+  "generatedAt": "2026-11-15T12:03:08.673Z",
   "generatedBy": "node scripts/gate-map.mts",
-  "chainLength": 600,
-  "gateCount": 600,
-  "attributedGates": 544,
+  "chainLength": 601,
+  "gateCount": 601,
+  "attributedGates": 545,
   "unattributedGates": 56,
   "buildOutputOnlyGates": 21,
-  "completionRecordedGates": 143,
+  "completionRecordedGates": 144,
   "smokeLength": 8,
   "smokeCompletionRecordedGates": 5,
   "graphFileCount": 994,
@@ -2187,6 +2187,21 @@
       "completionRecord": false,
       "expectedAssertions": 0,
       "reason": "归属来自：读文件调用（readFileSync / readFile / path.join(ROOT, ...)） 4 条"
+    },
+    {
+      "step": "node tests/verify-129-sidebar-tab-mount.ts",
+      "file": "tests/verify-129-sidebar-tab-mount.ts",
+      "guards": [
+        "src/client/kernel/router.ts"
+      ],
+      "dirs": [
+        "src/client/kernel"
+      ],
+      "unattributed": false,
+      "buildOutputOnly": false,
+      "completionRecord": true,
+      "expectedAssertions": 9,
+      "reason": "归属来自 文件头 // 门禁归属: 注释（共 1 条）"
     },
     {
       "step": "node tests/verify-1291-closed-map-open-children.ts",
@@ -14680,6 +14695,7 @@
       "node tests/verify-1281-entries.ts",
       "node tests/verify-1286-detail.ts",
       "node tests/verify-1286-list.ts",
+      "node tests/verify-129-sidebar-tab-mount.ts",
       "node tests/verify-1291-closed-map-open-children.ts",
       "node tests/verify-1295-dual-panel.ts",
       "node tests/verify-1297-entry.ts",

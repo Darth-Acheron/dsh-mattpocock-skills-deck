@@ -299,6 +299,8 @@ const CLIENTS: ClientRow[] = [
   { file: 'src/refresh/rooms/client/probe-chain-subscription.ts', name: 'STEP_WAIT_MS', key: 'stepWaitMs' },
   { file: 'src/refresh/rooms/client/snapshot-sync-helpers.ts', name: 'SNAPSHOT_PROBE_MS', key: 'snapshotProbeMs' },
   { file: 'src/client/kernel/slotRenderer-queue.ts', name: 'SLOT_QUEUE_STEP_MS', key: 'slotQueueStepMs' },
+  // #129：右侧栏面板标签页的双跳 rAF 在后台/隐藏子树被挂起时的宏任务兜底时长（与队列步进同档 80ms）。
+  { file: 'src/client/kernel/router.ts', name: 'SLOT_QUEUE_STEP_MS', key: 'slotQueueStepMs' },
   { file: 'src/client/kernel/slotRenderer-modal-view.ts', name: 'SLOT_MODAL_OPEN_DELAY_MS', key: 'slotModalOpenDelayMs' },
   { file: 'src/refresh/rooms/client/snapshot-cache-store.ts', name: 'STORE_NOTICE_DISMISS_MS', key: 'storeNoticeDismissMs' },
   { file: 'src/client/kernel/store-switch.ts', name: 'STORE_SWITCH_CONFIRM_MS', key: 'storeSwitchConfirmMs' },

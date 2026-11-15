@@ -47,6 +47,7 @@ declare const inspectPrompt: any;
 declare const completePrompt: any;
 declare const dswsLogHash: any;
 declare const isDeckClosed: any;
+declare const SLOT_QUEUE_STEP_MS: any;
 // #606 面板打开各阶段计时的唯一状态。一次点开面板的调用链上只写读这几个数：
 //   openPanel 记下点击那一刻；Dock 记下进入渲染那一刻与提交完成；
 //   列表把提交阶段里做折叠测量花掉的毫秒累加进来；DockSync 在副作用里把各段落成日志。
@@ -85,10 +86,13 @@ export const DeckSidebarTab = function (props: any): any {
   React.useEffect(function (): any {
     if (ready) return;
     // 两跳：第一跳让本次渲染提交、浏览器有机会画外壳；第二跳才挂内容。
+    // #129：原生右侧栏在后台预挂载非激活会话（hidden 子树）或切换帧时，浏览器可能挂起 requestAnimationFrame，
+    //   导致 ready 永远停在 false、面板卡在 .dsws-hold 空白壳；配一支宏任务定时器兜底，rAF 被挂起时到点照常挂上内容。
     const raf: any = (typeof requestAnimationFrame === 'function') ? requestAnimationFrame : function (fn: any): any { return setTimeout(fn, 0); };
     let id2: any = null;
     const id1: any = raf(function (): void { id2 = raf(function (): void { setReady(true); }); });
-    return function (): void { try { if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(id1); } catch (eC1) {} try { if (id2 !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(id2); } catch (eC2) {} };
+    const fb: any = setTimeout(function (): void { setReady(true); }, typeof SLOT_QUEUE_STEP_MS === 'number' ? SLOT_QUEUE_STEP_MS : 0);
+    return function (): void { try { clearTimeout(fb); } catch (eFb) {} try { if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(id1); } catch (eC1) {} try { if (id2 !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(id2); } catch (eC2) {} };
   }, [ready]);
   // #1612 验收 ②：这个工作区关掉 deck 工具箱后，右侧面板不再开 —— 原生右栏直接点进来（含右栏「+」的引导页）
   //   也一律只画一句说明，不挂面板本体。这里就是面板内容体那一格，挡住了别处也就绕不进来。
@@ -99,7 +103,9 @@ export const DeckSidebarTab = function (props: any): any {
     return h('div', { className: 'dsws-deckclosed' }, tr('panel.deckClosed'));
   }
   if (!ready) return h('div', { className: 'dsws-hold' });
-  return h('div', { className: 'dsws-hold' }, h(DetailsDock, { sessionId: sessionId }));
+  // #129：把宿主 SessionEntry 注入的完整 props（含 useSessions 等标准钩子）连同 sessionId 一起透传给 DetailsDock，
+  //   避免 DetailsDock 因拿不到 props.useSessions 而令 summaryCwd 恒为 undefined。
+  return h('div', { className: 'dsws-hold' }, h(DetailsDock, Object.assign({}, props, { sessionId: sessionId })));
 };
 // 右栏标签条上那枚标题：内容就是面板名。
 export const DeckNativeTabTitle = function (): any { return h('span', null, tr('panel.title')); };
