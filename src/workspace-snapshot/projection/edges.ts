@@ -8,6 +8,7 @@
 // 缺省表示「状态未知」，不是 open，消费方不得据此拦动作。
 import type { DatabaseSync } from 'node:sqlite'
 import type { ListIssueRef } from '../model/types.js'
+import { isSpecHeaderMarked } from '../../shared/issue-file/src/marker.js'
 import { normalizeState } from './members.js'
 
 export interface IssueEdges {
@@ -84,9 +85,11 @@ export function readFirstParents(
   if (issueIds.length === 0) return out
   const placeholders = issueIds.map(() => '?').join(', ')
   const rows = db.prepare(
-    `SELECT e.subject_id AS subject_id, i.effort_id AS effort_id, i.key AS key, i.type AS type, i.state AS state
+    `SELECT e.subject_id AS subject_id, i.effort_id AS effort_id, i.key AS key, i.type AS type, i.state AS state,
+            substr(b.body, 1, 1024) AS body_head
        FROM issue_edge e
        JOIN issue i ON i.issue_id = e.object_id
+       LEFT JOIN issue_body b ON b.issue_id = i.issue_id
       WHERE e.subject_id IN (${placeholders}) AND e.kind = ?
       ORDER BY e.subject_id, e.object_id`).all(...issueIds, KIND_PARENT) as Array<{
         subject_id: number
@@ -94,11 +97,15 @@ export function readFirstParents(
         key: string
         type: string | null
         state: string | null
+        body_head: string | null
       }>
   for (const row of rows) {
     const subjectId = Number(row.subject_id)
     if (out.has(subjectId)) continue
-    out.set(subjectId, { effortId: row.effort_id, key: row.key, type: row.type, state: row.state })
+    const effectiveType = (row.type === 'issue' || row.type === null) && isSpecHeaderMarked(row.body_head)
+      ? 'spec'
+      : row.type
+    out.set(subjectId, { effortId: row.effort_id, key: row.key, type: effectiveType, state: row.state })
   }
   return out
 }

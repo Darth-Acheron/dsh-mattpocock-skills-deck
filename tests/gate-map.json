@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-15T17:12:04.496Z",
+  "generatedAt": "2026-11-15T17:26:30.559Z",
   "generatedBy": "node scripts/gate-map.mts",
-  "chainLength": 602,
-  "gateCount": 602,
-  "attributedGates": 546,
+  "chainLength": 603,
+  "gateCount": 603,
+  "attributedGates": 547,
   "unattributedGates": 56,
   "buildOutputOnlyGates": 21,
-  "completionRecordedGates": 145,
+  "completionRecordedGates": 146,
   "smokeLength": 8,
   "smokeCompletionRecordedGates": 5,
   "graphFileCount": 994,
@@ -2328,6 +2328,32 @@
       "completionRecord": false,
       "expectedAssertions": 0,
       "reason": "归属来自 文件头 // 门禁归属: 注释（共 6 条）"
+    },
+    {
+      "step": "node tests/verify-130-refresh-change-merge-crash.ts",
+      "file": "tests/verify-130-refresh-change-merge-crash.ts",
+      "guards": [
+        "src/client/kernel/router.ts",
+        "src/client/kernel/store-derived.ts",
+        "src/refresh/rooms/client/snapshot-change-merge.ts",
+        "src/refresh/rooms/host/snapshot-library-adapter.ts",
+        "src/workspace-snapshot/persistence/issue-body-write.ts",
+        "src/workspace-snapshot/persistence/issue-row-write.ts",
+        "src/workspace-snapshot/projection/edges.ts",
+        "src/workspace-snapshot/projection/list.ts"
+      ],
+      "dirs": [
+        "src/client/kernel",
+        "src/refresh/rooms/client",
+        "src/refresh/rooms/host",
+        "src/workspace-snapshot/persistence",
+        "src/workspace-snapshot/projection"
+      ],
+      "unattributed": false,
+      "buildOutputOnly": false,
+      "completionRecord": true,
+      "expectedAssertions": 14,
+      "reason": "归属来自 文件头 // 门禁归属: 注释（共 8 条）"
     },
     {
       "step": "node tests/verify-1302-panel-list-skeleton.ts",
@@ -14726,6 +14752,7 @@
       "node tests/verify-1295-dual-panel.ts",
       "node tests/verify-1297-entry.ts",
       "node tests/verify-1298-spec-close.ts",
+      "node tests/verify-130-refresh-change-merge-crash.ts",
       "node tests/verify-1302-panel-list-skeleton.ts",
       "node tests/verify-1355-cross-session-table.ts",
       "node tests/verify-1373-stale-table-graft.ts",
@@ -15533,6 +15560,7 @@
       "node tests/verify-1082-work-route-table.ts",
       "node tests/verify-1220-shown-store.ts",
       "node tests/verify-127-deleted-issue-tombstone.ts",
+      "node tests/verify-130-refresh-change-merge-crash.ts",
       "node tests/verify-1305-client-session.ts",
       "node tests/verify-1355-cross-session-table.ts",
       "node tests/verify-1363-first-run-recovery.ts",
@@ -15594,6 +15622,7 @@
       "node tests/verify-127-deleted-issue-tombstone.ts",
       "node tests/verify-128-lease-readonly-recover.ts",
       "node tests/verify-1291-closed-map-open-children.ts",
+      "node tests/verify-130-refresh-change-merge-crash.ts",
       "node tests/verify-1304-deps-native.ts",
       "node tests/verify-1363-first-run-recovery.ts",
       "node tests/verify-1373-stale-table-graft.ts",
@@ -16421,6 +16450,7 @@
       "node tests/verify-1923-closed-container.ts"
     ],
     "src/workspace-snapshot/persistence": [
+      "node tests/verify-130-refresh-change-merge-crash.ts",
       "node tests/verify-1866-write-receipt.ts",
       "node tests/verify-1885-review-seams.ts",
       "node tests/verify-1886-schema-migration.ts",
@@ -16429,6 +16459,7 @@
       "node tests/verify-time-config.ts"
     ],
     "src/workspace-snapshot/projection": [
+      "node tests/verify-130-refresh-change-merge-crash.ts",
       "node tests/verify-1885-review-tombstone.ts",
       "node tests/verify-1887-counts-from-library.ts",
       "node tests/verify-1890-read-channels.ts",

@@ -173,6 +173,44 @@ export function applySnapshotChangeSet(
     for (let i = 0; i < keys.length; i++) if (!changeSameValue(held[keys[i]], patch[keys[i]], keys[i])) return true
     return false
   }
+  /** 换位置前先找回手上已有的完整行（未挂图票或容器子票），避免从 issues 迁入容器 tickets 时丢掉已知标签/指派/阻塞。 */
+  const findHeldTicket = function (id: string): any {
+    const at = issueIndexOf(id)
+    if (at >= 0) return issues[at]
+    for (let mi = 0; mi < maps.length; mi++) {
+      const tickets = maps[mi].tickets || []
+      for (let ti = 0; ti < tickets.length; ti++) if (identity(tickets[ti]) === id) return tickets[ti]
+    }
+    return null
+  }
+  /** 容器子票必须带齐 compute / 地图详情首帧直接读取的默认字段（blockedBy 数组等），避免 unknown 组缺省时渲染抛 TypeError。 */
+  const withChildTicketDefaults = function (row: any, patch?: any): any {
+    if (!Array.isArray(row.blockedBy)) row.blockedBy = []
+    if (!Array.isArray(row.blocks)) row.blocks = []
+    if (patch && Array.isArray(patch.assignees)) {
+      const first = patch.assignees[0]
+      row.claimedBy = first ? String(first.login || first.name || '') : ''
+    } else if (row.claimedBy === undefined) {
+      const list = Array.isArray(row.assignees) ? row.assignees : []
+      const first = list[0]
+      row.claimedBy = first ? String(first.login || first.name || '') : ''
+    }
+    return row
+  }
+  /** 新建容器行的默认空段（避免点进尚未拉取详情的新容器时 MapDetail 读 decisions.length 抛错）。 */
+  const withContainerDefaults = function (row: any): any {
+    if (!Array.isArray(row.tickets)) row.tickets = []
+    if (String(row.type || '') === 'spec') {
+      if (!row.sections || typeof row.sections !== 'object') row.sections = {}
+      return row
+    }
+    if (typeof row.destination !== 'string') row.destination = ''
+    if (typeof row.notes !== 'string') row.notes = ''
+    if (!Array.isArray(row.decisions)) row.decisions = []
+    if (!Array.isArray(row.fog)) row.fog = []
+    if (!Array.isArray(row.outOfScope)) row.outOfScope = []
+    return row
+  }
   /** 把这一行从所有「票所在的位置」拿掉（容器本身不在内）：换位置、或墓碑都走这一句。 */
   const detachFromPlaces = function (id: string): boolean {
     let hit = false
@@ -194,7 +232,9 @@ export function applySnapshotChangeSet(
       redrawn.push(id)
       return
     }
-    issues.push(Object.assign({}, patch))
+    const prior = findHeldTicket(id)
+    detachFromPlaces(id)
+    issues.push(Object.assign({}, prior || {}, patch))
     redrawn.push(id)
   }
   const markRedrawn = function (id: string): void {
@@ -207,14 +247,15 @@ export function applySnapshotChangeSet(
       found = true
       if (differs(maps[mi], patch)) {
         // 更新容器头时保留它已经拼好的 tickets / stats 等派生格（补丁只表达这一行知道的字段）。
-        maps[mi] = Object.assign({}, maps[mi], patch)
+        maps[mi] = withContainerDefaults(Object.assign({}, maps[mi], patch))
         markRedrawn(id)
       }
       break
     }
     if (!found) {
+      const prior = findHeldTicket(id)
       detachFromPlaces(id)
-      maps.push(Object.assign({ tickets: [] }, patch))
+      maps.push(withContainerDefaults(Object.assign({ tickets: [] }, prior || {}, patch)))
       markRedrawn(id)
     }
     // 三级归属：规格自身既是 maps 里的容器，又可能挂在某张探索地图的 tickets（或已关闭父图的 thin）下。
@@ -227,14 +268,15 @@ export function applySnapshotChangeSet(
           if (identity(pMap.tickets[ti]) !== id) continue
           inParent = true
           if (differs(pMap.tickets[ti], patch)) {
-            pMap.tickets[ti] = Object.assign({}, pMap.tickets[ti], patch)
+            pMap.tickets[ti] = withChildTicketDefaults(Object.assign({}, pMap.tickets[ti], patch), patch)
             markRedrawn(id)
           }
           break
         }
         if (!inParent) {
+          const prior = findHeldTicket(id)
           detachFromPlaces(id)
-          pMap.tickets.push(Object.assign({ blockedBy: [] }, patch))
+          pMap.tickets.push(withChildTicketDefaults(Object.assign({ blockedBy: [] }, prior || {}, patch), patch))
           markRedrawn(id)
         }
       }
@@ -251,12 +293,13 @@ export function applySnapshotChangeSet(
     for (let ti = 0; ti < map.tickets.length; ti++) {
       if (identity(map.tickets[ti]) !== id) continue
       if (!differs(map.tickets[ti], patch)) return
-      map.tickets[ti] = Object.assign({}, map.tickets[ti], patch)
+      map.tickets[ti] = withChildTicketDefaults(Object.assign({}, map.tickets[ti], patch), patch)
       redrawn.push(id)
       return
     }
+    const prior = findHeldTicket(id)
     detachFromPlaces(id)
-    map.tickets.push(Object.assign({}, patch))
+    map.tickets.push(withChildTicketDefaults(Object.assign({ blockedBy: [] }, prior || {}, patch), patch))
     redrawn.push(id)
   }
   const putThin = function (id: string, patch: any, placement: ChangePlacement): void {
@@ -287,7 +330,12 @@ export function applySnapshotChangeSet(
     putIssue(id, patch)
   }
 
-  ;(Array.isArray(changes) ? changes : []).forEach(function (item: any): void {
+  // 先落容器（place === 'map'），再落子票与未挂图票：同一批变化按 updatedAt 倒序排列时，新子票常排在新容器前面，
+  // 先把容器放进 maps 才能让同批到达的子票在 mapIndexOf 中找到父容器，不至于误落进顶层 issues。
+  const rawChanges: any[] = Array.isArray(changes) ? changes : []
+  const orderedChanges: any[] = rawChanges.filter(function (it: any): boolean { return changePlacementOf(it).place === 'map' })
+    .concat(rawChanges.filter(function (it: any): boolean { return changePlacementOf(it).place !== 'map' }))
+  orderedChanges.forEach(function (item: any): void {
     const patch = changeRowPatch(item, fieldsOf)
     const id = identity(patch)
     if (!id) return

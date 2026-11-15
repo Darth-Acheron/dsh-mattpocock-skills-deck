@@ -20,6 +20,7 @@ import type {
   ListQuery,
   SubIssueCountsValue,
 } from '../model/types.js'
+import { isSpecHeaderMarked } from '../../shared/issue-file/src/marker.js'
 import { readMergeVersion } from '../persistence/schema.js'
 import { readIssueEdges } from './edges.js'
 import {
@@ -119,13 +120,18 @@ export function projectListRows(db: DatabaseSync, rows: ListRow[]): ListIssue[] 
   const labelsByIssue = readLabels(db, issueIds)
   const assigneesByIssue = readAssignees(db, issueIds)
   const edgesByIssue = readIssueEdges(db, issueIds)
+  const specByBodyIds = readSpecMarkedIssueIds(
+    db,
+    rows.filter((row) => row.type === 'issue' || row.type === null).map((row) => Number(row.issue_id)),
+  )
 
   return rows.map((row) => {
     const issueId = Number(row.issue_id)
+    const effectiveRow = specByBodyIds.has(issueId) ? Object.assign({}, row, { type: 'spec' }) : row
     return {
       effortId: row.effort_id,
       key: row.key,
-      row: toRowValue(row),
+      row: toRowValue(effectiveRow),
       labels: labelsByIssue.get(issueId) ?? [],
       assignees: assigneesByIssue.get(issueId) ?? [],
       parents: edgesByIssue.get(issueId)?.parents ?? [],
@@ -144,6 +150,21 @@ export function projectListRows(db: DatabaseSync, rows: ListRow[]): ListIssue[] 
       },
     }
   })
+}
+
+function readSpecMarkedIssueIds(db: DatabaseSync, candidateIds: readonly number[]): Set<number> {
+  const out = new Set<number>()
+  if (candidateIds.length === 0) return out
+  const placeholders = candidateIds.map(() => '?').join(', ')
+  const rows = db.prepare(
+    `SELECT issue_id, substr(body, 1, 1024) AS body_head
+       FROM issue_body
+      WHERE issue_id IN (${placeholders})`,
+  ).all(...candidateIds) as Array<{ issue_id: number, body_head: string | null }>
+  for (const row of rows) {
+    if (isSpecHeaderMarked(row.body_head)) out.add(Number(row.issue_id))
+  }
+  return out
 }
 
 function normalizeLimit(raw: number | undefined): number | null {

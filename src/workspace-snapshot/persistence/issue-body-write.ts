@@ -10,6 +10,7 @@
 // （都表示没有正文），删行让库小一点；真正的「确认没有」由 issue_group 的三态表达。
 import type { DatabaseSync } from 'node:sqlite'
 import type { GroupWrite } from '../contract/types.js'
+import { isSpecHeaderMarked } from '../../shared/issue-file/src/marker.js'
 import { decideScalarMerge } from '../merge/scalar.js'
 
 /** 落正文组。调用方已保证 issueId 存在（同一事务里刚 ensure 过）。 */
@@ -37,8 +38,14 @@ export function applyIssueBody(
       `INSERT INTO issue_body (issue_id, body) VALUES (?, ?)
        ON CONFLICT(issue_id) DO UPDATE SET body = excluded.body`,
     ).run(issueId, text)
+    if (isSpecHeaderMarked(text)) {
+      db.prepare(`UPDATE issue SET type = 'spec' WHERE issue_id = ? AND (type IS NULL OR type = 'issue')`).run(issueId)
+    }
     return
   }
   // truncated：只补空缺，不覆盖已经取到的正文。
   db.prepare('INSERT OR IGNORE INTO issue_body (issue_id, body) VALUES (?, ?)').run(issueId, text)
+  if (isSpecHeaderMarked(text)) {
+    db.prepare(`UPDATE issue SET type = 'spec' WHERE issue_id = ? AND (type IS NULL OR type = 'issue')`).run(issueId)
+  }
 }

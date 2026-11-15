@@ -150,27 +150,29 @@ export const mapBlockOf = function (snapshot: any): any {
 //   算两遍——而 openBlocker 只读快照、算一遍与算两遍结果必然相同，所以两遍是白算。今天每张票只读一次状态、
 //   阻塞判定只算一遍，趟数从六降到二。
 // 不能改的约定：五个数组的元素顺序仍与 m.tickets 一致（面板按这个顺序画）；
-//   判定表达式与短路条件原样保留——t.claimedBy 为真时根本不碰 blockedBy，blockedBy 是 undefined 时照旧当场抛错（不兜底、不吞）。
+//   判定表达式与短路条件原样保留——t.claimedBy 为真时根本不碰 blockedBy；m.tickets 或 t.blockedBy 缺省时按空数组安全处理，不崩渲染树。
 // 这一笔优化成立的前提：state 与 blockedBy 是纯数据（普通属性，读几次结果都一样）。哪天它们变成带副作用的取值器
 //   （getter 或 Proxy），「每张票只读一次状态」就不再等价于原来读三次，届时要么改回多趟，要么把票据在入口处先拍成纯数据。
 export const compute = (st: any): any => {
   const maps: any[] = (st.snapshot && Array.isArray(st.snapshot.maps)) ? st.snapshot.maps : []
   return maps.map(function (m: any): any {
+    const tickets: any[] = (m && Array.isArray(m.tickets)) ? m.tickets : []
     // effort 维度：地图内的票按身份 (effort, 编号) 索引；阻塞引用只在同一 effort 内解析
     // #1431 双键索引（同 mapBlockOf）：原样身份之外再记一笔规范键，数字边也能命中补零键的票。
-    const byId: any = {}; m.tickets.forEach(function (t: any): void { byId[idOf(t)] = t; try { const nk: string = idOfParts(effortOf(t), normIdentityKey((t || {}).key)); if (nk && nk !== idOf(t)) byId[nk] = t } catch (e) { /* 键异常不挡整表 */ } })
+    const byId: any = {}; tickets.forEach(function (t: any): void { if (!t) return; byId[idOf(t)] = t; try { const nk: string = idOfParts(effortOf(t), normIdentityKey((t || {}).key)); if (nk && nk !== idOf(t)) byId[nk] = t } catch (e) { /* 键异常不挡整表 */ } })
     const openBlocker = (b: any): any => { const raw: any = byId[idOfParts(effortOf(m), refKeyOf(b))]; const t: any = (raw !== undefined && raw !== null) ? raw : byId[idOfParts(effortOf(m), normIdentityKey(refKeyOf(b)))]; return t !== undefined && t.state === 'OPEN' }
     const open: any[] = []
     const closed: any[] = []
     const frontier: any[] = []
     const claimed: any[] = []
     const blocked: any[] = []
-    m.tickets.forEach(function (t: any): void {
+    tickets.forEach(function (t: any): void {
+      if (!t) return
       if (t.state === 'CLOSED') { closed.push(t); return }
       if (t.state !== 'OPEN') return
       open.push(t)
       if (t.claimedBy) { claimed.push(t); return }
-      if (t.blockedBy.some(openBlocker)) blocked.push(t)
+      if (Array.isArray(t.blockedBy) && t.blockedBy.some(openBlocker)) blocked.push(t)
       else frontier.push(t)
     })
     return { m: m, open: open, closed: closed, frontier: frontier, claimed: claimed, blocked: blocked }

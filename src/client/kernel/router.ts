@@ -70,6 +70,47 @@ export const logPanelStage = function (stage: any, ms: any): void {
 //   这里两个标识必须成对：kind 是打开请求上带的类型名，id 是类型在登记表里的身份，右栏按 id 找内容体与标题。
 export const DECK_NATIVE_TAB_KIND: string = 'dsh-mattpocock-skills-deck:deck-map';
 export const DECK_NATIVE_TYPE_ID: string = 'dsh-mattpocock-skills-deck/deck:map';
+// 会话级面板错误边界：把单个会话渲染树里的意外异常拦在插件内部，不让它穿透到宿主
+// SlotErrorBoundary 触发 sidebar.right.pane.tab 全局退位（一旦退位会让所有工作区的右侧面板一起失效）。
+let _deckPanelBoundaryCtor: any = null;
+let _deckPanelBoundaryBase: any = null;
+export const getDeckPanelBoundary = function (): any {
+  const Base: any = React && (React as any).Component;
+  if (typeof Base !== 'function') return null;
+  if (_deckPanelBoundaryCtor && _deckPanelBoundaryBase === Base) return _deckPanelBoundaryCtor;
+  const Bound: any = function DeckPanelBoundary(this: any, p: any) {
+    Base.call(this, p);
+    this.state = { failed: false };
+  };
+  Bound.prototype = Object.create(Base.prototype);
+  Bound.prototype.constructor = Bound;
+  Bound.getDerivedStateFromError = function () { return { failed: true }; };
+  Bound.prototype.componentDidCatch = function () { /* 拦在本会话内，防止宿主全局退位 */ };
+  Bound.prototype.render = function () {
+    const self: any = this;
+    if (self.state && self.state.failed) {
+      return h(
+        'div',
+        { className: 'dsws-deckclosed', 'data-deck-error-boundary': '1' },
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'dsws-btn ghost',
+            'data-press': 'button',
+            'data-log': 'panel.boundary.retry',
+            onClick: function () { self.setState({ failed: false }); },
+          },
+          tr('lc.retry')
+        )
+      );
+    }
+    return self.props ? self.props.children : null;
+  };
+  _deckPanelBoundaryBase = Base;
+  _deckPanelBoundaryCtor = Bound;
+  return Bound;
+};
 // 右侧边栏里那张标签的内容体（面板本体）。
 //   先出空壳、下一帧再挂内容（#603）：打开是在点击处理器里同步跑完的，一次把整棵树建完会让浏览器
 //   在处理器返回前画不出第一帧 —— 用户看到的就是点了半天面板不出来。
@@ -105,7 +146,14 @@ export const DeckSidebarTab = function (props: any): any {
   if (!ready) return h('div', { className: 'dsws-hold' });
   // #129：把宿主 SessionEntry 注入的完整 props（含 useSessions 等标准钩子）连同 sessionId 一起透传给 DetailsDock，
   //   避免 DetailsDock 因拿不到 props.useSessions 而令 summaryCwd 恒为 undefined。
-  return h('div', { className: 'dsws-hold' }, h(DetailsDock, Object.assign({}, props, { sessionId: sessionId })));
+  // #130：外包会话级错误边界（按 sessionId 隔离），避免单工作区渲染异常穿透至宿主 SlotErrorBoundary 导致全工作区退位。
+  const dockEl: any = h(DetailsDock, Object.assign({}, props, { sessionId: sessionId }));
+  const Boundary: any = getDeckPanelBoundary();
+  return h(
+    'div',
+    { className: 'dsws-hold' },
+    Boundary ? h(Boundary, { key: String(sessionId || ''), sessionId: sessionId }, dockEl) : dockEl
+  );
 };
 // 右栏标签条上那枚标题：内容就是面板名。
 export const DeckNativeTabTitle = function (): any { return h('span', null, tr('panel.title')); };

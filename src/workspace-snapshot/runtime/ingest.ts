@@ -326,7 +326,7 @@ function applyIssueWrite(
     }
     const issueId = ensureIssueId(db, write.effortId, write.key, nowMs)
     if (decision.kind === 'replace') {
-      replaceIssueRow(db, issueId, decision.value, nowMs)
+      replaceIssueRow(db, issueId, decision.value, nowMs, { bodyExpressed: body !== undefined })
     } else if (decision.kind === 'fill') {
       fillIssueRow(db, issueId, decision.value, nowMs)
     }

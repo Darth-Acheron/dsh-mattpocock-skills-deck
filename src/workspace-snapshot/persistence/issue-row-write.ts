@@ -6,6 +6,7 @@
 // 布尔在 STRICT 表里只收 0/1；null 继续表示没有值，不承担语义。
 import type { DatabaseSync } from 'node:sqlite'
 import type { IssueRowValue } from '../model/types.js'
+import { isSpecHeaderMarked } from '../../shared/issue-file/src/marker.js'
 import { pickPresentFields } from '../merge/row.js'
 
 /** row 组字段 → issue 表列。顺序固定，门禁与排查都按这一份看。 */
@@ -28,15 +29,35 @@ export const ROW_COLUMNS: ReadonlyArray<readonly [keyof IssueRowValue, string]> 
   ['statusConflictJson', 'status_conflict_json'],
 ]
 
-/** complete 的 row：整组替换，没给的列写 NULL（这是「我全知道」的语义）。 */
+/**
+ * complete 的 row：整组替换，没给的列写 NULL（这是「我全知道」的语义）。
+ *
+ * 例外（无正文列表写入保护）：GitHub / GitLab 的规格容器（spec）靠正文文件头标记
+ * `<!-- DSH-ISSUE-KIND: spec -->` 识别，而周期性列表扫描（listPage）不拉取正文，会把规格行也标成
+ * 泛化的 `type = 'issue'`。若本次写入未同时表达 `body` 组，且库内该票已是 `'spec'`（或已落盘的正文
+ * 文件头含规格标记），则保留 `'spec'` 不被无正文列表降级覆盖。
+ */
 export function replaceIssueRow(
   db: DatabaseSync,
   issueId: number,
   value: IssueRowValue,
   nowMs: number,
+  options?: { bodyExpressed?: boolean },
 ): void {
+  let effectiveValue = value
+  if (value.type === 'issue' && !(options && options.bodyExpressed)) {
+    const prior = db.prepare(
+      `SELECT i.type AS type, substr(b.body, 1, 1024) AS body_head
+         FROM issue i
+         LEFT JOIN issue_body b ON b.issue_id = i.issue_id
+        WHERE i.issue_id = ?`,
+    ).get(issueId) as { type?: string | null, body_head?: string | null } | undefined
+    if (prior && (prior.type === 'spec' || isSpecHeaderMarked(prior.body_head))) {
+      effectiveValue = Object.assign({}, value, { type: 'spec' })
+    }
+  }
   const assignments = ROW_COLUMNS.map(([, column]) => `${column} = ?`).join(', ')
-  const params = ROW_COLUMNS.map(([field]) => sqlRowValue(field, value[field]))
+  const params = ROW_COLUMNS.map(([field]) => sqlRowValue(field, effectiveValue[field]))
   db.prepare(
     `UPDATE issue SET ${assignments}, last_seen_ms = ? WHERE issue_id = ?`,
   ).run(...params, nowMs, issueId)

@@ -19,6 +19,7 @@
  * 读方向（库里的投影 → tracker 的 Issue / 界面认的详情形状）在同一目录的 snapshot-library-view.ts。
  */
 import type { Comment, Issue, IssueFieldStates, Review } from '../../../tracker/contract/entities.js'
+import { isSpecHeaderMarked } from '../../../shared/issue-file/src/marker.js'
 import type {
   IssueGroupsWrite,
   IssueRowValue,
@@ -116,8 +117,12 @@ function refKeysOf(issue: Issue): string[] {
  * 子票计数与合并时间不在这里：它们各自成组（见 subIssuesGroupOf / mergeInfoGroupOf）。
  */
 export function issueRowValueOf(issue: Issue): IssueRowValue {
+  const rawType = nonEmptyString(issue.type) || 'issue'
+  const effectiveType = (rawType === 'issue' && typeof issue.body === 'string' && isSpecHeaderMarked(issue.body))
+    ? 'spec'
+    : rawType
   const row: IssueRowValue = {
-    type: nonEmptyString(issue.type) || 'issue',
+    type: effectiveType,
     title: typeof issue.title === 'string' ? issue.title : '',
     state: nonEmptyString(issue.state),
     url: nonEmptyString(issue.url),

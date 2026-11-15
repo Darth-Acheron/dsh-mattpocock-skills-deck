@@ -137,6 +137,10 @@ export const COMPLETION_RECORDED_GATES: Record<string, number> = {
   // 2026-11-15 #129：右侧边栏面板标签页 DeckSidebarTab 的完整 props 透传（含 useSessions）与双跳 rAF
   //   在后台/隐藏会话子树被挂起时的宏任务定时器兜底（SLOT_QUEUE_STEP_MS），防止面板永久停在 .dsws-hold 空白壳。单跑实测 9 条。
   'verify-129-sidebar-tab-mount': 9,
+  // 2026-11-16 #130：刷新后增量变化集合并（putChild 补齐子票默认 blockedBy: []、保留从 issues 迁入的已知字段、先落容器再落子票）、
+  //   快照库无正文列表扫描保留已有 spec 容器类型（及 issue_body 规格标记自愈投影）、以及 DeckSidebarTab 会话级错误边界
+  //   （阻断单工作区异常穿透至宿主 SlotErrorBoundary 导致全工作区退位）。单跑实测 14 条。
+  'verify-130-refresh-change-merge-crash': 14,
   // 2026-11-05 #1891（规格 #1885 S4「客户端按版本取变化」）：假信号源 + 假宿主电话驱动同步引擎——
   // 同一版本连续两拍一条数据都不取、版本变了只取一次变化集且只把变化的那一行换成新对象（其余行连
   // 对象引用都不换）、墓碑行让那一行从手上那份消失、版本回退整份重取且先重置本地版本、落后超限退回
