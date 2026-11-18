@@ -83,6 +83,15 @@ export function markerKindInHeader(text: unknown): ObjectKind | null {
     const kind = markerKindOnLine(line)
     if (kind) return kind
   }
+  if (h1 && /^##\s+维护者原话[ \t]*$/m.test(raw.slice(h1.index, h1.index + 32))) {
+    const afterHeading = raw.slice(h1.index).replace(/^##\s+维护者原话[ \t]*\r?\n?/, '')
+    const nextHeading = /^#+\s+/m.exec(afterHeading)
+    const afterOriginalWords = nextHeading ? afterHeading.slice(0, nextHeading.index) : afterHeading.split('\n').slice(0, 25).join('\n')
+    for (const line of afterOriginalWords.split('\n')) {
+      const kind = markerKindOnLine(line)
+      if (kind) return kind
+    }
+  }
   return null
 }
 

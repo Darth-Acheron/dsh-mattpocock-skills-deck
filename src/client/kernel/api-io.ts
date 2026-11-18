@@ -37,7 +37,7 @@
     declare const markRowWrite: any; declare const deckPromptFiltered: any; declare const isDeckClosed: any
     // #1695：详情读投影开关与静默快照刷新（同一闭包里的叶子与内核片提供）。
     declare const projectionUsesSnapshot: any
-    declare const loadSnapshot: any
+    declare const loadSnapshot: any; declare const runSnapshotVersionTick: any
     export const openInNewSession = function (st: any, x: any) {
       let title = null
       try { title = newSessionTitle(x) } catch(e) {
@@ -256,9 +256,8 @@
         return Promise.resolve(failDetail({ kind: 'env', message: tr('err.hostUnavailable'), raw: '' }))
       }
       st.issueMode = 'loading'; st.issueError = null; emit(st)
-      const cwdArg = st.cwd ? { cwd: st.cwd } : {}
-      const dtT0 = Date.now()
-      return host.call('wf.issueDetail', Object.assign({ number: num }, effortId ? { effortId } : {}, cwdArg)).then(function (res: any) {
+      const cwdArg = st.cwd ? { cwd: st.cwd } : {}; const dtT0 = Date.now()
+      return host.call('wf.issueDetail', Object.assign({ number: num }, effortId ? { effortId } : {}, force ? { force: true } : {}, cwdArg)).then(function (res: any) {
         try { if (res && res.ok) log('info', 'host.call', { method: 'wf.issueDetail', latencyMs: Date.now() - dtT0, ok: true, kind: 'detail' }); else log('warn', 'host.call.fail', { method: 'wf.issueDetail', kind: 'detail', errorHash: dswsLogHash(dswsLogTrunc(String(((res && res.error && (res.error.message || res.error.kind)) || 'detail-not-ok')), 120, 'error')) }) } catch (eL) {}
         if (!res) return failDetail({ kind: 'network', message: tr('err.snapshotEmpty'), raw: '' })
         if (res.ok) {
@@ -268,8 +267,8 @@
           if (snapMode) { if (!st.detailSeenAt) st.detailSeenAt = {}; st.detailSeenAt[cacheKey] = Date.now() }
           else { if (!st.issueCache) st.issueCache = {}; st.issueCache[cacheKey] = { ts: Date.now(), data: issue } }
           st.issueDetail = issue; st.issueMode = 'real'; st.issueError = null; emit(st)
-          // 宿主已把这次详情写进本地快照库；静默重取一次快照，让投影读到刚落库的那一份。
-          if (snapMode && typeof loadSnapshot === 'function') { try { loadSnapshot(st, false, true) } catch (eS) {} }
+          // 宿主已把这次详情写进本地快照库；若本次走了远端写库（非本地库回放），同步一次快照版本变化集，让投影读到刚落库的那一份。
+          if (snapMode && res.fromSnapshot !== true) { try { if (typeof runSnapshotVersionTick === 'function') runSnapshotVersionTick(st); else if (typeof loadSnapshot === 'function') loadSnapshot(st, false, true) } catch (eS) {} }
           return { ok: true, issue: issue }
         }
         // #1111：档位只认宿主报上来那一个（认不出才按 HTTP 码兜底，再兜是 network），不再照原文里的

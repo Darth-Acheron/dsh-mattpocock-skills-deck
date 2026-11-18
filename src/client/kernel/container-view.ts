@@ -100,6 +100,33 @@ export const containerTitleKey = function (kind: string): string {
   return kind === 'spec' ? 'list.specTitle' : 'list.mapTitle';
 };
 
+/** 合并快照中的 issues、maps 容器及其子票（去重）：避免 applySnapshotChangeSet 将容器或子票从 issues 摘除后列表/计数漏行。 */
+export const allSnapshotIssuesOf = function (snap: any): any[] {
+  const issues: any[] = (snap && Array.isArray(snap.issues)) ? snap.issues : [];
+  const maps: any[] = (snap && Array.isArray(snap.maps)) ? snap.maps : [];
+  if (!maps.length) return issues;
+  const out: any[] = [];
+  const seen: Record<string, boolean> = {};
+  const idOf = function (r: any): string {
+    if (!r || typeof r !== 'object') return '';
+    const eff = r.effort !== undefined && r.effort !== null ? String(r.effort) : (r.effortId !== undefined && r.effortId !== null ? String(r.effortId) : '');
+    const k = r.key !== undefined && r.key !== null && String(r.key) !== '' ? String(r.key) : (r.number !== undefined && r.number !== null ? String(r.number) : '');
+    return k ? (eff + '\u0000' + k) : '';
+  };
+  const push = function (r: any): void {
+    const id = idOf(r);
+    if (!id || seen[id]) return;
+    seen[id] = true;
+    out.push(r);
+  };
+  issues.forEach(push);
+  maps.forEach(function (m: any): void {
+    if (m && Array.isArray(m.tickets)) m.tickets.forEach(push);
+  });
+  maps.forEach(push);
+  return out;
+};
+
 /** 这一态该注入什么提示词。列表页与详情页共用这一份，
   * 这样「按钮上写什么」与「点下去注入什么」永远对得上。
   * url 由调用方给（issueUrlFor 在各视图里已经算过一次链接）。 */

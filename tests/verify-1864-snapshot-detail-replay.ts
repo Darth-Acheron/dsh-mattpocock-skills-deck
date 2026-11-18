@@ -233,13 +233,17 @@ async function main(): Promise<void> {
     // ── E. 引用骨架：只有身份、没有正文的票，不当成完整详情交回 ──────────────────
     await recordIssueRows({
       workspaceRoot: tempRoot, backend: 'github', repoIdentity: REPO.refId,
-      rows: [issue({ key: '5', title: '子票五', parentKey: '100' })],
+      rows: [issue({ key: '5', title: '子票五', parentKey: '100' }), issue({ key: '6', title: '子票六', parentKey: '100' })],
     })
     const hostF = hostOf({ workspaceRoot: tempRoot, detail: detailIssue() })
     const skeleton: any = await hostF.threads.handleIssueDetail({ number: 404, cwd: tempRoot })
     check(skeleton && skeleton.ok === true && skeleton.fromSnapshot !== true, 'E1 库里没有的票仍走取数', skeleton && skeleton.fromSnapshot)
     const rowsOnly = await readIssueDetail({ workspaceRoot: tempRoot, backend: 'github', repoIdentity: REPO.refId, key: '5' })
     check(!!rowsOnly && rowsOnly.issue?.referenceSkeleton === false, 'E2 列表写过的票不是引用骨架', rowsOnly && rowsOnly.issue?.referenceSkeleton)
+    const hostRowsOnly = hostOf({ workspaceRoot: tempRoot, detail: detailIssue({ key: '6', title: '子票六', body: '子票六完整正文' }) })
+    const fetched6: any = await hostRowsOnly.threads.handleIssueDetail({ number: 6, cwd: tempRoot })
+    check(!!fetched6 && fetched6.ok === true && fetched6.fromSnapshot !== true && hostRowsOnly.calls.get === 1 && fetched6.issue?.body === '子票六完整正文',
+      'E3 列表刚写过（60 秒内）但未落库正文的票（body completeness=unknown）点开详情时直走后端取数，不回放空正文', fetched6)
   } finally {
     closeSnapshotLibraries()
     rmSync(tempRoot, { recursive: true, force: true })

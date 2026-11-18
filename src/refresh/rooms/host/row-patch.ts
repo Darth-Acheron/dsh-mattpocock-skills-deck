@@ -201,13 +201,18 @@ export function createPatch(deps?: PatchDeps | null): any {
     // o.full 那一档是「整扫」：每 10 分钟的对账那一趟走它。整扫回来的是完整一份，基线要重置而不是并进去，
     // 否则删票永远观察不到（定稿第十一章「消失（删票）」）。增量那一趟才是缩着窗口问的。
     const win: any = o.full === true ? { sinceIso: '', full: true, sinceMs: 0 } : d.windowRules.scanWindow(watermarkMs, scanStartedMs)
-    const remote: any = await Promise.resolve(d.probeIndex(cwd, win.sinceIso))
+    // ⑥ 差分基线必须在 probeIndex 之前从库读（#1888）：probeIndex（fetchIssueIndex）翻页时会边翻边把薄页行写进 SQLite，
+    //    若在 probeIndex 之后才读库，读到的基线已经包含本次探测写进去的新时间戳与新行，差分会恒判成 nothing。
+    const baseline: any = (o.preloadedBaseline && typeof o.preloadedBaseline === 'object')
+      ? o.preloadedBaseline
+      : (loaded.fromLibrary ? await store.baseline(cwd, true, snap) : d.indexOfSnapshot(snap))
+    const remote: any = (o.preloadedRemote && typeof o.preloadedRemote === 'object')
+      ? o.preloadedRemote
+      : await Promise.resolve(d.probeIndex(cwd, win.sinceIso))
     if (!remote || remote.ok !== true || !remote.index) { stats.failed += 1; fire('failed', 'probe-failed', { keyHash: keyHash }); return { mode: 'failed', reason: 'probe-failed', pending: st.pending.length } }
-    // ⑥ 差分（纯逻辑在 delta.js）：「哪些行变了」与「该走哪条路」一次算清。
-    //    差分基线从库读（#1888）：库里的行才是唯一真相；没接库时仍从快照算（老调用方）。
-    const baseline: any = loaded.fromLibrary ? await store.baseline(cwd, true, snap) : d.indexOfSnapshot(snap)
     const plan: any = delta.planDelta(baseline, remote.index, { full: win.full === true })
-    if (plan.mode === 'rebuild') { stats.rebuildNeeded += 1; fire('rebuild', plan.reason, { keyHash: keyHash, changed: plan.changed.length, pending: st.pending.length }); return { mode: 'rebuild', reason: plan.reason, added: plan.added.length, removed: plan.removed.length } }
+    const canPatchAddedInLibrary: boolean = !!(loaded.fromLibrary && plan.mode === 'rebuild' && plan.reason === 'ticket-set-changed' && plan.added.length > 0 && plan.removed.length === 0)
+    if (plan.mode === 'rebuild' && !canPatchAddedInLibrary) { stats.rebuildNeeded += 1; fire('rebuild', plan.reason, { keyHash: keyHash, changed: plan.changed.length, pending: st.pending.length }); return { mode: 'rebuild', reason: plan.reason, added: plan.added.length, removed: plan.removed.length } }
     if (plan.mode === 'nothing') {
       const wv: any = delta.watermarkAfter({ previousMs: st.watermarkMs || watermarkMs, scanStartedMs: scanStartedMs, outcome: 'not-need' })
       const written: any = await store.writeState(cwd, snap, Object.assign({}, st, { watermarkMs: wv.watermarkMs }), { watermarkMs: wv.watermarkMs, expectedGeneration: st.generation })
@@ -216,28 +221,30 @@ export function createPatch(deps?: PatchDeps | null): any {
       fire('nothing', wv.reason, { keyHash: keyHash, watermark: wv.advanced ? 'advanced' : 'held', pending: st.pending.length })
       return { mode: 'nothing', reason: wv.reason, watermarkMs: wv.watermarkMs }
     }
+    const targetKeys: string[] = canPatchAddedInLibrary ? plan.changed.concat(plan.added) : plan.changed
     // ⑦ 变的那几条太多：一条一请求地补过去已经不划算，交给整池（整池 13 点 7 条请求，见 budget.js）。
-    if (plan.changed.length > maxRows) { stats.rebuildNeeded += 1; fire('rebuild', 'too-many-rows', { keyHash: keyHash, changed: plan.changed.length, pending: st.pending.length }); return { mode: 'rebuild', reason: 'too-many-rows', changed: plan.changed.length } }
+    if (targetKeys.length > maxRows) { stats.rebuildNeeded += 1; fire('rebuild', 'too-many-rows', { keyHash: keyHash, changed: targetKeys.length, pending: st.pending.length }); return { mode: 'rebuild', reason: 'too-many-rows', changed: targetKeys.length } }
     // ⑧ 取那几条薄的（取数三件套在 ./thin-row-fetch.js，依赖由这里注入）。
     //    #1689 降级常驻时这一轮先过预算闸：探测那一条已经预扣过，增量这一轮最多 3 条；
     //    要补的行超过预算剩余就整轮推迟 —— 水印不动、变化进待办，下一拍或整仓枚举再补，绝不超发。
     const roundBudget: any = o.fallbackBudget || null
-    if (roundBudget && plan.changed.length > roundBudget.view().remaining) {
-      const pend: any = await rememberPending(cwd, snap, st, plan.changed, 'fallback-budget')
+    if (roundBudget && targetKeys.length > roundBudget.view().remaining) {
+      const pend: any = await rememberPending(cwd, snap, st, targetKeys, 'fallback-budget')
       stats.deferred += 1
-      fire('deferred', 'fallback-budget', { keyHash: keyHash, changed: plan.changed.length, watermark: 'held', pending: pend.pending })
-      return { mode: 'deferred', reason: 'fallback-budget', pending: pend.pending, keys: plan.changed }
+      fire('deferred', 'fallback-budget', { keyHash: keyHash, changed: targetKeys.length, watermark: 'held', pending: pend.pending })
+      return { mode: 'deferred', reason: 'fallback-budget', pending: pend.pending, keys: targetKeys }
     }
     const startedGeneration = st.generation
     // #1690：合并服务是唯一写入入口。起读时先记下当前合并版本，取数回来再过版本门；
     // 版本门与世代号是两扇门：世代号防「迟到的整池覆盖更新的增量」，合并版本号防「更旧的结果整份回退」。
-    // 起读版本也来自库（#1888）：行级增量写库时版本门比的就是它，与快照里那份内存版本无关。
-    const startedMergeVersion: number = loaded.mergeVersion
-    const got: any = await fetchThinRows({ openSession: d.openSession, stats: stats, budget: roundBudget }, cwd, repo, plan.changed)
+    // 起读版本也来自库（#1888）：probeIndex 翻页可能已推进库里的 merge_version，故在 fetchThinRows 前取当前库版本。
+    const postProbeLoaded: any = loaded.fromLibrary ? await store.load(cwd, snap) : null
+    const startedMergeVersion: number = (postProbeLoaded && typeof postProbeLoaded.mergeVersion === 'number') ? postProbeLoaded.mergeVersion : loaded.mergeVersion
+    const got: any = await fetchThinRows({ openSession: d.openSession, stats: stats, budget: roundBudget }, cwd, repo, targetKeys)
     if (!got.ok) {
-      const pend: any = await rememberPending(cwd, snap, st, got.keys || plan.changed, got.reason)
+      const pend: any = await rememberPending(cwd, snap, st, got.keys || targetKeys, got.reason)
       if (got.outcome === 'deferred') stats.deferred += 1; else stats.failed += 1
-      fire(got.outcome === 'deferred' ? 'deferred' : 'failed', got.reason, { keyHash: keyHash, changed: plan.changed.length, watermark: 'held', pending: pend.pending })
+      fire(got.outcome === 'deferred' ? 'deferred' : 'failed', got.reason, { keyHash: keyHash, changed: targetKeys.length, watermark: 'held', pending: pend.pending })
       return { mode: got.outcome === 'deferred' ? 'deferred' : 'failed', reason: got.reason, pending: pend.pending, keys: got.keys }
     }
     // ⑨ 两扇门：世代号（迟到的整池结果不许覆盖更新的增量结果）与合并版本号（更旧的结果整份丢弃）。
@@ -247,17 +254,17 @@ export function createPatch(deps?: PatchDeps | null): any {
     if (!latestLoaded) { stats.failed += 1; fire('failed', 'store-unavailable', { keyHash: keyHash }); return { mode: 'failed', reason: 'store-unavailable' } }
     const latestState: DeltaState = latestLoaded.state
     const g: any = delta.admitResult(latestState.generation, startedGeneration)
-    if (!g.accept) { stats.staleDropped += 1; fire('patch', g.reason, { keyHash: keyHash, changed: plan.changed.length, watermark: 'held' }); return { mode: 'stale-dropped', reason: g.reason } }
+    if (!g.accept) { stats.staleDropped += 1; fire('patch', g.reason, { keyHash: keyHash, changed: targetKeys.length, watermark: 'held' }); return { mode: 'stale-dropped', reason: g.reason } }
     // ⑩ 并进列表（唯一写入入口在 kernel/snapshot-merge.ts）：字段组级合并——位置不动、读路径不新增行、
     //    只有完整来源能覆盖或清空字段组；降级/截断来源只能补空缺，已知的父边、依赖、计数、正文、评论、评审一条不丢。
     const merged: any = merger.mergeSnapshot(latest, {
       kind: 'read', startMergeVersion: startedMergeVersion, startedMs: scanStartedMs,
-      rows: got.rows, allowNewRows: false,
+      rows: got.rows, allowNewRows: canPatchAddedInLibrary,
     })
     if (merged.verdict !== 'merged') {
       stats.staleDropped += 1
       const staleReason = 'merge-stale' + staleSuffix(merged)
-      fire('patch', staleReason, { keyHash: keyHash, changed: plan.changed.length, watermark: 'held' })
+      fire('patch', staleReason, { keyHash: keyHash, changed: targetKeys.length, watermark: 'held' })
       return { mode: 'stale-dropped', reason: staleReason }
     }
     if (merged.missing.length) {
@@ -452,10 +459,11 @@ export function createPatch(deps?: PatchDeps | null): any {
       if (v && v.verdict === 'defer') { stats.deferred += 1; fire('deferred', v.reason, { keyHash: keyHash, watermark: 'held', pending: st.pending.length }); return { mode: 'deferred', reason: v.reason, pending: st.pending.length } }
     }
     const win: any = d.windowRules.scanWindow(watermarkMs, scanStartedMs)
+    // 差分基线必须在 probeIndex 之前从库读（#1888）：probeIndex（fetchIssueIndex）翻页时会边翻边把薄页行写进 SQLite，
+    // 若在 probeIndex 之后才读库，读到的基线已经包含本次探测写进去的新时间戳与新行，差分会恒判成 nothing。
+    const baseline: any = pre.fromLibrary ? await store.baseline(cwd, true, snap) : d.indexOfSnapshot(snap)
     const remote: any = await Promise.resolve(d.probeIndex(cwd, win.sinceIso))
     if (!remote || remote.ok !== true || !remote.index) { stats.failed += 1; fire('failed', 'probe-failed', { keyHash: keyHash }); return { mode: 'failed', reason: 'probe-failed', pending: st.pending.length } }
-    // 差分基线从库读（#1888）；没接库时仍从快照算（老调用方）。
-    const baseline: any = pre.fromLibrary ? await store.baseline(cwd, true, snap) : d.indexOfSnapshot(snap)
     const plan: any = delta.planDelta(baseline, remote.index, { full: win.full === true })
     if (plan.mode === 'nothing') {
       const wv: any = delta.watermarkAfter({ previousMs: st.watermarkMs || watermarkMs, scanStartedMs: scanStartedMs, outcome: 'not-need' })

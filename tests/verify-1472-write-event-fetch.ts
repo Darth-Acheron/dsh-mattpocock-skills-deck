@@ -302,6 +302,35 @@ async function main() {
       '⑥ 下一次探针把新票的行号交给客户端（不带整份快照）')
   }
 
+  // ---- ⑦ to-tickets 连续调用 deck_issue_create（入参无 key、回执 data.ticket.key 有新票号）：直走 patch-now 不被 10s 扫描窗口吞掉 ----
+  {
+    const w = buildWorld()
+    await w.focus({ windowId: 'win-1472-g', workspaceRoot: CWD, kind: 'focus', visible: true })
+    w.windowIndex['107'] = 'OPEN|' + w.FIX_AT
+    w.windowIndex['108'] = 'OPEN|' + w.FIX_AT
+    const out1 = await w.wiring.writeEvents.handle(
+      { id: 'sess-1472-g', header: { cwd: CWD } },
+      'tools/result',
+      'deck_issue_create',
+      { title: '子票 107', kind: 'spec-ticket', parentKey: '100' },
+      true,
+      JSON.stringify({ ok: true, data: { ticket: { key: '107' }, kind: 'spec-ticket', parentKey: '100' } }),
+    )
+    const out2 = await w.wiring.writeEvents.handle(
+      { id: 'sess-1472-g', header: { cwd: CWD } },
+      'tools/result',
+      'deck_issue_create',
+      { title: '子票 108', kind: 'spec-ticket', parentKey: '100' },
+      true,
+      JSON.stringify({ ok: true, data: { ticket: { key: '108' }, kind: 'spec-ticket', parentKey: '100' } }),
+    )
+    check(out1 && out1.verdictOfGate === 'in-pipeline' && !out1.coalesced, '⑦ 第 1 张新建子票从回执拿到票号直走 patch-now（未折叠）')
+    check(out2 && out2.verdictOfGate === 'in-pipeline' && !out2.coalesced, '⑦ 紧跟的第 2 张新建子票同样直走 patch-now（不被 10s 扫描窗口吞掉）')
+    check(w.probeCalls.length === 0, '⑦ 回执自带票号时无需调窗口索引（实问 ' + w.probeCalls.length + ' 次）')
+    const snap = w.cacheBox.snapshot
+    check(!!rowIn(snap, 107) && !!rowIn(snap, 108), '⑦ 连续新建的两张子票 107、108 均已补进快照')
+  }
+
   console.log('\n' + (failed ? '存在失败 — #1472 门禁未通过' : '全部通过 — 写事件真取数 + 探针短路（' + total + ' 条断言）'))
   process.exit(failed ? 1 : 0)
 }

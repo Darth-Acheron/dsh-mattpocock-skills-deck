@@ -20,6 +20,7 @@ declare const CONTAINER_CHIP_MARKER_CLASS: any;
 // #1295：容器种类判定（内核 container-view.ts 给出）：列表页的分桶与行渲染必须看同一个结论，
 //   否则同一张票会「行画成地图、却排在普通票堆里」。
 declare function containerKindOf(...args: any[]): any;
+declare function allSnapshotIssuesOf(...args: any[]): any;
 declare function closedPagesNode(...args: any[]): any;
 declare function listFilterRowNode(...args: any[]): any;
 // #1639：顶部那排 md目录签的画法与目录名文字上限（内联流跨行切断，见 views/mdEffortRow.ts）。
@@ -208,10 +209,12 @@ export     const ListTab = ({ st, narrow }: any) => {
         return !sel.length || sel.indexOf(effortOf(x)) >= 0
       }
       // #689 工单口径：拉取请求不进主列表（面板另有专门的拉取请求页签；口径判断住在 store-derived 的
-      //   isTicketRow，与 KPI、状态栏共用同一处）。池子（snapshot.issues）本身不动，仍是原样全收。
+      //   isTicketRow，与 KPI、状态栏共用同一处）。池子本身不动，仍是原样全收；当增量变化集（applySnapshotChangeSet）
+      //   将容器或子票归入 projectionSnapshot.maps 时，合并 issues + maps + maps[*].tickets 去重后投影。
       // #690：再并上「按需翻回来的那些页」里池子没有的行（issuePageRowsOf 已按身份去掉重复的），
       //   于是已关闭那一堆里既有首屏那一百条、也有用户翻出来的更早的票；静默刷新只换池子，页数据不动。
-      const issues = ticketRowsOf((projectionSnapshot && Array.isArray(projectionSnapshot.issues)) ? projectionSnapshot.issues : []).concat(issuePageRowsOf(st, 'list'))
+      const rawProjectionRows = (typeof allSnapshotIssuesOf === 'function') ? allSnapshotIssuesOf(projectionSnapshot) : ((projectionSnapshot && Array.isArray(projectionSnapshot.issues)) ? projectionSnapshot.issues : [])
+      const issues = ticketRowsOf(rawProjectionRows).concat(issuePageRowsOf(st, 'list'))
       // 列表排序：置顶的探索地图组与规格组各自按面板所选排序档排，组内与普通票共用下面同一套比较；
       //   组间顺序固定「探索地图 → 规格 → 普通票」，不跨组比较时间。默认排序档是「编号升序」
       //   （来自内核 store-prefs 里的初始偏好，不是「更新时间降序」）。

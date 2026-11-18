@@ -299,7 +299,10 @@ export function createProbeHandler(deps: ProbeHandlerDeps): { handleProbe: (args
       let delta: any = null
       // #1689：降级常驻时把这一轮的预算本子一起交下去 —— 薄行补取（row-patch → thin-row-fetch）
       //   每发一条都从这里预扣、校正、失败回填，与窗口探测的翻页记在同一本账上（一轮 ≤3 条）。
-      const deltaOpts: any = degraded ? { fallbackBudget: roundBudget } : {}
+      const deltaOpts: any = Object.assign(
+        { preloadedBaseline: remote.baseline },
+        degraded ? { fallbackBudget: roundBudget } : {},
+      )
       try { delta = (typeof deltaRefresh === 'function') ? await deltaRefresh(cwd, deltaOpts) : null } catch (eD: any) { delta = null }
       if (delta && delta.mode === 'patch' && delta.rows && delta.rows.length) {
         // 并进列表了：水印与基线跟着走。客户端按库版本取变化，不再等这一份整份快照（#1891）：

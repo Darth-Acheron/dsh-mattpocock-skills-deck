@@ -230,6 +230,42 @@ export function createWriteEvents(deps?: WriteEventsDeps | null): any {
     return data.isError === false
   }
 
+  /** 从工具返回结果（结构化对象或 JSON 文本）提取本次写入触及的票号列表（如 deck_issue_create 新建回包的 data.ticket.key）。 */
+  function ticketsFromOutput(rawResult: any, fallbackText: string): string[] {
+    const out: string[] = []
+    function pushKey(v: any): void {
+      if (v === null || v === undefined || typeof v === 'boolean') return
+      const s = String(v).trim().replace(/^#/, '')
+      if (!s || s.length > 64 || /\s/.test(s)) return
+      if (out.indexOf(s) < 0) out.push(s)
+    }
+    function inspectObj(obj: any): void {
+      if (!obj || typeof obj !== 'object') return
+      const d = (obj.data && typeof obj.data === 'object') ? obj.data : obj
+      if (d.ticket && typeof d.ticket === 'object') { pushKey(d.ticket.key !== undefined ? d.ticket.key : d.ticket.number); pushKey(d.ticket.parentKey) }
+      if (d.issue && typeof d.issue === 'object') { pushKey(d.issue.key !== undefined ? d.issue.key : d.issue.number); pushKey(d.issue.parentKey) }
+      if (d.map && typeof d.map === 'object') pushKey(d.map.key !== undefined ? d.map.key : d.map.number)
+      pushKey(d.key !== undefined ? d.key : d.number)
+      pushKey(d.parentKey)
+      if (Array.isArray(d.created)) d.created.forEach((it: any) => { if (it && typeof it === 'object') pushKey(it.key !== undefined ? it.key : it.number); else pushKey(it) })
+      if (Array.isArray(d.children)) d.children.forEach((it: any) => { if (it && typeof it === 'object') pushKey(it.key !== undefined ? it.key : it.number) })
+      if (Array.isArray(d.results)) d.results.forEach((it: any) => { if (it && typeof it === 'object') pushKey(it.key !== undefined ? it.key : it.number) })
+      if (Array.isArray(obj.touched)) obj.touched.forEach(pushKey)
+    }
+    try {
+      if (rawResult && typeof rawResult === 'object') {
+        inspectObj(rawResult)
+        if (rawResult.value && typeof rawResult.value === 'object') inspectObj(rawResult.value)
+      }
+      const txt = (typeof rawResult === 'string' && rawResult) ? rawResult : (fallbackText || textOf(rawResult && rawResult.value ? rawResult.value : rawResult))
+      if (txt && txt.indexOf('{') >= 0) {
+        const parsed = parsedArgs(txt.trim())
+        if (parsed) inspectObj(parsed)
+      }
+    } catch (eT: any) {}
+    return out
+  }
+
   /** 真的去做那一次取数（判定完、该发的才会走到这里）。
    *
    * #1445 起这一趟不再过闸：写事件触发的取数只是一趟读，按 #1444 的裁决由管线直接放行
@@ -242,7 +278,7 @@ export function createWriteEvents(deps?: WriteEventsDeps | null): any {
    * 一刀切的代价：10 秒窗口把第二笔以后的写直接丢掉、不排队也不补发，连做十次写只有第一笔
    * 真的会刷新，后面的只能干等兜底探针 —— 这正是 #1472 要修的症状。
    */
-  async function fire(shape: any, verdict: any, plan: any, rootHash: string, cycle: string, tool: string): Promise<any> {
+  async function fire(shape: any, verdict: any, plan: any, rootHash: string, cycle: string, tool: string, extraTickets?: string[]): Promise<any> {
     stats.fired += 1
     // 只有扫描类取数看窗口：点名补行自带票号，只取那一行，没有合并的必要（见函数头）。
     const isScan: boolean = plan.action !== 'patch-now'
@@ -275,6 +311,14 @@ export function createWriteEvents(deps?: WriteEventsDeps | null): any {
     const step = { action: plan.action, ticket: plan.ticket }
     const meta = { source: WRITE_EVENT_SOURCE, kind: kind, workspaceKey: rootHash, plan: [{ action: plan.action, ticket: plan.ticket }], cycle: cycle }
     await doFetch(step, meta)
+    if (plan.action === 'patch-now' && Array.isArray(extraTickets)) {
+      for (let i = 0; i < extraTickets.length; i++) {
+        const extra = extraTickets[i]
+        if (extra && extra !== String(plan.ticket || '')) {
+          await doFetch({ action: 'patch-now', ticket: extra }, meta)
+        }
+      }
+    }
     // 走到这里就说明这一趟真交给管线了（不是被合并掉、也不是没有取数函数）。
     // stats.sent 从此数的是「真交给管线几趟」，不再是「闸放行了几趟」。
     stats.sent += 1
@@ -312,9 +356,19 @@ export function createWriteEvents(deps?: WriteEventsDeps | null): any {
   }
 
   /** 一条工具结果（运行时事件 `tools/result` 与它的会话事件版本共用这一条路）。 */
-  async function handle(session: any, shape: any, tool: any, rawArgs: any, succeeded: any): Promise<any> {
+  async function handle(session: any, shape: any, tool: any, rawArgs: any, succeeded: any, rawResult?: any, fallbackText?: string): Promise<any> {
     const argsObj: any = parsedArgs(rawArgs)
-    const verdict: any = detectWrite({ shape: shape, tool: String(tool || ''), command: commandOf(argsObj), args: argsObj, succeeded: succeeded })
+    const outTickets: string[] = succeeded ? ticketsFromOutput(rawResult, fallbackText || '') : []
+    if (outTickets.length > 0 && argsObj && typeof argsObj === 'object' && argsObj.parentKey !== undefined && argsObj.parentKey !== null) {
+      const pk = String(argsObj.parentKey).trim().replace(/^#/, '')
+      if (pk && outTickets.indexOf(pk) < 0) outTickets.push(pk)
+    }
+    const detectArgs: any = (argsObj && typeof argsObj === 'object')
+      ? ((outTickets.length > 0 && argsObj.key === undefined && argsObj.issue === undefined && argsObj.number === undefined && argsObj.ticket === undefined && argsObj.id === undefined)
+          ? Object.assign({}, argsObj, { key: outTickets[0] })
+          : argsObj)
+      : (outTickets.length > 0 ? { key: outTickets[0] } : argsObj)
+    const verdict: any = detectWrite({ shape: shape, tool: String(tool || ''), command: commandOf(argsObj), args: detectArgs, succeeded: succeeded })
     const plan: any = actionFor(verdict, limits)
     const ours = await isOurs(session)
     if (!ours) return null
@@ -328,13 +382,13 @@ export function createWriteEvents(deps?: WriteEventsDeps | null): any {
     if (plan.action === 'wait-tick') return { tier: verdict.tier, reason: verdict.reason, action: plan.action }
     // 只有真的要取数的那两档才开一趟 cycle；工具名只留前 40 个字符（它不是凭证，但也没有无限长的道理）。
     const cycle = nextCycle()
-    return await fire(shape, verdict, plan, keyHash, cycle, String(tool || '').slice(0, 40))
+    return await fire(shape, verdict, plan, keyHash, cycle, String(tool || '').slice(0, 40), outTickets)
   }
 
   /** 运行时事件的第一条订阅：`ctx.on('tools/result', (exec, result) => …)`（原生与 ptc 内层派发都会到）。 */
   function onToolResult(exec: any, result: any): Promise<any> {
     const session: any = (exec && exec.agent && exec.agent.session) || null
-    return handle(session, 'tools/result', exec && exec.name, exec && exec.arguments, succeededFromRuntime(result))
+    return handle(session, 'tools/result', exec && exec.name, exec && exec.arguments, succeededFromRuntime(result), result, '')
   }
 
   /** 会话事件第二条订阅。第一行先过门：不归我们的会话立刻返回，不留任何痕迹。 */
@@ -350,7 +404,7 @@ export function createWriteEvents(deps?: WriteEventsDeps | null): any {
     }
     if (SESSION_RESULT_SHAPES.indexOf(String(type || '')) < 0) return null
     const data: any = (event && event.data) || null
-    return await handle(session, String(type), data && data.name, data && data.arguments, succeededFromSession(data))
+    return await handle(session, String(type), data && data.name, data && data.arguments, succeededFromSession(data), data, textOf(data))
   }
 
   /** 真订阅。两条各自的解绑函数一起交回去（宿主收摊时用）。 */

@@ -26,6 +26,7 @@ declare function moduleMetaOf(...args: any[]): any;
 declare const CONTAINER_ACCENT: any;
 // #1286 收口：规格与地图也是快照里的「行」，行级动作要先认出容器再走三态口径（见下方 containerActionOf）。
 declare function containerKindOf(...args: any[]): any;
+declare function allSnapshotIssuesOf(...args: any[]): any;
 declare function containerStateOf(...args: any[]): any;
 declare function containerTriState(...args: any[]): any;
 declare function containerPromptText(...args: any[]): any;
@@ -228,7 +229,7 @@ export const kpiCountsOf = function (st: any, scoped: any, local: any): any {
 }
 // v18-30：状态栏可接/占用改用「列表 open issue」口径（与面板列表一致）：
 //   可接 = open issue 中未认领且未被 open 阻塞；占用 = 已认领 + 被阻塞；两者之和 = 全部 open issue
-export const openIssuesOf = (st: any): any => ticketRowsOf((st.snapshot && Array.isArray(st.snapshot.issues)) ? st.snapshot.issues : []).filter(function (x: any): any { return x.state !== 'CLOSED' })
+export const openIssuesOf = (st: any): any => ticketRowsOf((typeof allSnapshotIssuesOf === 'function') ? allSnapshotIssuesOf(st && st.snapshot) : ((st && st.snapshot && st.snapshot.issues) || [])).filter(function (x: any): any { return x.state !== 'CLOSED' })
 // #544 独立票阻塞边共用小函数（isOccupied 回落与 applyStandaloneBlocks 共用）：
 //   standaloneKeyOfRef 把数字/字符串/{key}/{number} 等形状归一成 key 字符串；
 //   standaloneStateMapOf 把快照里全部票（issues + 各地图子票）的状态按数字与 key 双键收成大写表。

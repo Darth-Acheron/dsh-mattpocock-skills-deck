@@ -145,7 +145,7 @@ const session = {
  * 造一份行级增量。snapshot 是内存副本的可变盒子（写回会改它）；
  * library 传 null 就走改造前的内存路径（用来对照「没有库时行为不变」）。
  */
-function makePatch(options: { snapshot: any; library: any; onWrite?: (snap: any) => void }): any {
+function makePatch(options: { snapshot: any; library: any; onWrite?: (snap: any) => void; onProbe?: () => Promise<void> }): any {
   const state: any = { snap: options.snapshot, writes: 0 }
   const patch = createPatch({
     now: NOW,
@@ -160,7 +160,10 @@ function makePatch(options: { snapshot: any; library: any; onWrite?: (snap: any)
     indexOfSnapshot: win.indexFromSnapshot,
     windowRules: win,
     getRepoKey: async () => ({ owner: 'acme', name: 'widgets' }),
-    probeIndex: async () => ({ ok: true, index: remoteIndex }),
+    probeIndex: async () => {
+      if (options.onProbe) await options.onProbe()
+      return { ok: true, index: remoteIndex }
+    },
     openSession: async () => ({ ok: true, backendId: 'github', repoRef: REPO, call: (fn: any) => fn(session, {}) }),
     decide: () => ({ verdict: 'send' }),
     ...(options.library ? { library: options.library } : null),
@@ -373,6 +376,33 @@ async function main(): Promise<void> {
     const shape = Object.keys(made.state.snap.delta).sort().join(',')
     check(shape === 'generation,pending,pendingAt,pendingReason,structureVersion,watermarkMs',
       'G3 快照 delta 的键集与改造前逐字相同', shape)
+
+    // 回归：生产里 probeIndex（fetchIssueIndex）翻页时会边翻边把薄页行写进 SQLite；
+    // rowPatch.run 必须在 probeIndex 改写库之前读出差分基线，否则差分会恒判成 nothing。
+    clock += 60000
+    const snapBeforeProbeWrite = memorySnapshot([
+      memoryRow('101', 'CLOSED', '2026-09-23T00:00:00Z'),
+      memoryRow('102', 'CLOSED', '2026-09-25T00:00:00Z'),
+      memoryRow('103', 'OPEN', '2026-09-18T00:00:00Z'),
+    ])
+    remoteIssues['103'] = issueOf('103', 'closed', '票 103（已收口）', '2026-09-26T00:00:00Z')
+    remoteIndex = {
+      '101': 'CLOSED|2026-09-23T00:00:00.000Z',
+      '102': 'CLOSED|2026-09-25T00:00:00.000Z',
+      '103': 'CLOSED|2026-09-26T00:00:00.000Z',
+    }
+    const madeWithProbeWrite = makePatch({
+      snapshot: snapBeforeProbeWrite,
+      library: portsWith(),
+      onProbe: async () => {
+        await recordIssueRows(Object.assign({
+          rows: [issueOf('103', 'closed', '票 103（薄页）', '2026-09-26T00:00:00Z')],
+        }, KEY))
+      },
+    })
+    const resAfterProbeWrite: any = await madeWithProbeWrite.patch.run(CWD)
+    check(resAfterProbeWrite.mode === 'patch' && Array.isArray(resAfterProbeWrite.rows) && resAfterProbeWrite.rows.includes('103'),
+      'G4 probeIndex 期间把薄页行写进 SQLite 时，rowPatch.run 仍在 probeIndex 之前读取库基线并补全变化行 #103', resAfterProbeWrite)
   }
 
   console.log('')

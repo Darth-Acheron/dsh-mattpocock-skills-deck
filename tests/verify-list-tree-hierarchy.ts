@@ -28,6 +28,7 @@ import { assembleSnapshot } from '../src/host/tracker/snapshotAssemble.js'
 import { applySnapshotChangeSet } from '../src/refresh/rooms/client/snapshot-change-merge.ts'
 import { snapshotRowFieldsOf } from '../src/shared/snapshot-row-fields.ts'
 import { resolveCreateKind, ruleFor } from '../src/deck/rules/object-kind.ts'
+import { isSpecHeaderMarked } from '../src/shared/issue-file/src/marker.js'
 import type { IssueWrite } from '../src/workspace-snapshot/contract/types.js'
 
 const GATE = 'verify-list-tree-hierarchy'
@@ -388,6 +389,43 @@ async function run() {
     check(orderDeep.join(',') === '1,21,24',
       'S3.14 标签筛选命中第 2 层实施票 #24 时，完整保留「地图 #1 → 规格 #21 → 实施票 #24」三级祖先链（实得 ' + orderDeep.join(',') + '）')
     check(emitCount >= 0, 'S3.15 渲染全程零异常且不误触发额外写状态')
+
+    // 3.4 回归：正文无「## 目的」导致「## 维护者原话」前置时，isSpecHeaderMarked 仍能识别规格标记
+    const specWithLeadingOriginalWords = [
+      '## 维护者原话',
+      '',
+      '> 批量改判选中样本范围与弹框确认收口',
+      '> —— 本会话',
+      '',
+      '<!-- DSH-ISSUE-KIND: spec -->',
+      '## Problem Statement',
+      '',
+      '正文内容',
+    ].join('\n')
+    check(isSpecHeaderMarked(specWithLeadingOriginalWords) === true,
+      'S3.16 规格正文顶部前置「## 维护者原话」区块时，isSpecHeaderMarked 仍能准确识别 <!-- DSH-ISSUE-KIND: spec -->')
+
+    // 3.5 回归：applySnapshotChangeSet 把规格与实施子票移入 snapshot.maps 并从 snapshot.issues 摘除后，ListTab 仍完整渲染规格容器与子票层级
+    const snapDetachedFromIssues = {
+      maps: [
+        Object.assign({}, ds.rows[8], {
+          tickets: [Object.assign({}, ds.rows[9])],
+        }),
+      ],
+      issues: [Object.assign({}, ds.rows[13])],
+    }
+    const docDetached = renderDom({
+      snapshot: snapDetachedFromIssues,
+      search: '',
+      lblFilters: [],
+      effFilters: [],
+      healthFilter: false,
+      listFilters: { sortKey: 'number', sortDir: 'asc', stateFilter: 'all' },
+    })
+    const detachedOrder = openRowOrderOf(docDetached)
+    const kidsOf30AfterChangeSet = docDetached.querySelector('[data-tree-children-of="30"] [data-log="list.row.31"]')
+    check(detachedOrder.join(',') === '30,31,19' && !!kidsOf30AfterChangeSet,
+      'S3.17 applySnapshotChangeSet 将规格 #30 与子票 #31 归入 snapshot.maps 后，ListTab 仍完整投影规格容器与子票缩进（实得 ' + detachedOrder.join(',') + '）')
   }
 
   console.log('\n' + (failed === 0 ? '全部通过：' + total + ' 条断言' : '失败 ' + failed + ' / 共 ' + total + ' 条断言'))

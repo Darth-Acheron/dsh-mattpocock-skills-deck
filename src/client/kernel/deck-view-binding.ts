@@ -19,6 +19,7 @@ declare const host: any;
 declare const wsKeyOf: any;
 declare const snapshotVersionBookOf: any;
 declare const ticketRowsOf: any;
+declare const allSnapshotIssuesOf: any;
 declare const issuePageRowsOf: any;
 declare const isOccupied: any;
 declare const effortOf: any;
@@ -126,7 +127,7 @@ function deckWsKeyOf(scope: DeckViewScope, st: any): string {
 }
 
 function deckRowsOf(scope: DeckViewScope, projection: any): any[] {
-  try { const issues = (projection && Array.isArray(projection.issues)) ? projection.issues : []; return scope.ticketRowsOf ? scope.ticketRowsOf(issues) : issues } catch (e) { return [] }
+  try { const rows = (typeof allSnapshotIssuesOf === 'function') ? allSnapshotIssuesOf(projection) : ((projection && Array.isArray(projection.issues)) ? projection.issues : []); return scope.ticketRowsOf ? scope.ticketRowsOf(rows) : rows } catch (e) { return [] }
 }
 
 function deckPageRowsOf(scope: DeckViewScope, st: any): any[] {
