@@ -87,7 +87,11 @@ export const mapHasLinkedSpec = function (mapObj: any, snap?: any): boolean {
   * - 探索地图：没有子票 empty，还有未关子票 open；探索子票全关但尚未挂接规格票（或地图已关闭但尚未挂接规格票）时为 handoff（提示「生成规格」注入 /to-spec）；已挂接规格票且探索子票全关（或已关闭且已挂接规格票）时为 done。 */
 export const containerStateOf = function (container: any, snap?: any): string {
   const kind: string | null = containerKindOf(container);
-  const stats: any = container && container.stats;
+  const rawStats: any = container && container.stats;
+  const tickets: any[] | null = (!rawStats || typeof rawStats.total !== 'number') && container && Array.isArray(container.tickets) ? container.tickets : null;
+  const stats: any = (rawStats && typeof rawStats.total === 'number')
+    ? rawStats
+    : (tickets ? { total: tickets.length, closed: tickets.filter(function (t: any): boolean { return String((t && t.state) || '').toUpperCase() === 'CLOSED'; }).length } : rawStats);
   if (kind === 'map') {
     const isClosed: boolean = String((container && container.state) || '').toUpperCase() === 'CLOSED';
     if (isClosed) return mapHasLinkedSpec(container, snap) ? 'done' : 'handoff';
@@ -140,24 +144,38 @@ export const allSnapshotIssuesOf = function (snap: any): any[] {
   const maps: any[] = (snap && Array.isArray(snap.maps)) ? snap.maps : [];
   if (!maps.length) return issues;
   const out: any[] = [];
-  const seen: Record<string, boolean> = {};
+  const idxById: Record<string, number> = {};
   const idOf = function (r: any): string {
     if (!r || typeof r !== 'object') return '';
     const eff = r.effort !== undefined && r.effort !== null ? String(r.effort) : (r.effortId !== undefined && r.effortId !== null ? String(r.effortId) : '');
     const k = r.key !== undefined && r.key !== null && String(r.key) !== '' ? String(r.key) : (r.number !== undefined && r.number !== null ? String(r.number) : '');
     return k ? (eff + '\u0000' + k) : '';
   };
-  const push = function (r: any): void {
+  const push = function (r: any, fallbackParentKey?: string): void {
     const id = idOf(r);
-    if (!id || seen[id]) return;
-    seen[id] = true;
+    if (!id) return;
+    const pKey = (r.parentKey !== undefined && r.parentKey !== null && r.parentKey !== '') ? String(r.parentKey) : (fallbackParentKey || '');
+    if (idxById[id] !== undefined) {
+      const prev = out[idxById[id]];
+      if (prev && (prev.parentKey === undefined || prev.parentKey === null || prev.parentKey === '') && pKey) {
+        out[idxById[id]] = Object.assign({}, prev, { parentKey: pKey });
+      }
+      return;
+    }
+    idxById[id] = out.length;
+    if ((r.parentKey === undefined || r.parentKey === null || r.parentKey === '') && pKey) {
+      out.push(Object.assign({}, r, { parentKey: pKey }));
+      return;
+    }
     out.push(r);
   };
-  issues.forEach(push);
+  issues.forEach(function (r: any): void { push(r); });
   maps.forEach(function (m: any): void {
-    if (m && Array.isArray(m.tickets)) m.tickets.forEach(push);
+    if (!m || !Array.isArray(m.tickets)) return;
+    const pKey = m.key !== undefined && m.key !== null && String(m.key) !== '' ? String(m.key) : (m.number !== undefined && m.number !== null ? String(m.number) : '');
+    m.tickets.forEach(function (t: any): void { push(t, pKey); });
   });
-  maps.forEach(push);
+  maps.forEach(function (m: any): void { push(m); });
   return out;
 };
 

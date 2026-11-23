@@ -230,11 +230,31 @@ export function createSessionSnapshot(deps: SnapshotDeps) {
           const replyVersion = await libraryVersionOf(first)
           const flatTickets = (inner.maps || []).flatMap(function(m){ return (m.tickets || []); })
           let allForList: Row[] = []
+          flatTickets.forEach(function(t){
+            fillClaimedBy(t)
+            if (t.key != null && t.number == null) { const n = parseInt(t.key, 10); if (!isNaN(n)) t.number = n }
+            if (t.key != null) t.key = String(t.key)
+            if (Array.isArray(t.blockedBy)) {
+              // #1431 阻塞边压成数字（与刷新路同形）：服务端分组按数字索引（byNum）、详情行按数字严格相等，
+              // 都只认数字；纯数字串（本地补零键 '02'、前后带空格）折成数字，非数字原样保留。
+              // 列表按身份查的那边已做规范键兼容（store-derived.ts 的 normIdentityKey），两边都通。
+              t.blockedBy = t.blockedBy.map(function(ref: BlockedRef){
+                if (typeof ref === 'number') return ref
+                if (typeof ref === 'string') {
+                  const s = ref.trim()
+                  if (/^0*\d+$/.test(s)) { const nn = parseInt(s, 10); if (!isNaN(nn)) return nn }
+                  return ref
+                }
+                if (ref && typeof ref === 'object' && ref.key != null) {
+                  const nk = String(ref.key); const nn = parseInt(nk, 10)
+                  return !isNaN(nn) ? nn : nk
+                }
+                return ref
+              })
+            } else { t.blockedBy = [] }
+          })
           ;(inner.maps || []).forEach(function(m){
-            if (m.key != null && m.number == null) {
-              const n = parseInt(m.key, 10)
-              if (!isNaN(n)) m.number = n
-            }
+            if (m.key != null && m.number == null) { const n = parseInt(m.key, 10); if (!isNaN(n)) m.number = n }
             if (m.key != null) m.key = String(m.key)
             // #1431 首屏也要算分组计数（与刷新路同口径）：没这段，首屏地图行就没有 0/4，必须多点一次刷新才出来。
             try {
@@ -249,40 +269,9 @@ export function createSessionSnapshot(deps: SnapshotDeps) {
             } catch {}
             allForList.push(m)
           })
-          flatTickets.forEach(function(t){
-            fillClaimedBy(t)
-            if (t.key != null && t.number == null) {
-              const n = parseInt(t.key, 10)
-              if (!isNaN(n)) t.number = n
-            }
-            if (t.key != null) t.key = String(t.key)
-            if (Array.isArray(t.blockedBy)) {
-              // #1431 阻塞边压成数字（与刷新路同形）：服务端分组按数字索引（byNum）、详情行按数字严格相等，
-              // 都只认数字；纯数字串（本地补零键 '02'、前后带空格）折成数字，非数字原样保留。
-              // 列表按身份查的那边已做规范键兼容（store-derived.ts 的 normIdentityKey），两边都通。
-              t.blockedBy = t.blockedBy.map(function(ref: BlockedRef){
-                if (typeof ref === 'number') return ref
-                if (typeof ref === 'string') {
-                  const s = ref.trim()
-                  if (/^0*\d+$/.test(s)) { const nn = parseInt(s, 10); if (!isNaN(nn)) return nn }
-                  return ref
-                }
-                if (ref && typeof ref === 'object' && ref.key != null) {
-                  const nk = String(ref.key)
-                  const nn = parseInt(nk, 10)
-                  if (!isNaN(nn)) return nn
-                  return nk
-                }
-                return ref
-              })
-            }
-            allForList.push(t)
-          })
+          flatTickets.forEach(function(t){ allForList.push(t) })
           ;(inner.issues || []).forEach(function(it){
-            if (it.key != null && it.number == null) {
-              const n = parseInt(it.key, 10)
-              if (!isNaN(n)) it.number = n
-            }
+            if (it.key != null && it.number == null) { const n = parseInt(it.key, 10); if (!isNaN(n)) it.number = n }
             if (it.key != null) it.key = String(it.key)
             allForList.push(it)
           })
@@ -421,6 +410,8 @@ export function createSessionSnapshot(deps: SnapshotDeps) {
                   if (ref && typeof ref === 'object' && ref.key != null) return String(ref.key)
                   return ref
                 })
+              } else if (t) {
+                t.blockedBy = []
               }
               if (t && t.claimedBy == null) {
                 const owners = t.assignees

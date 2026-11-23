@@ -142,7 +142,7 @@ function mergeTicketRow(rows: any[], seen: Record<string, number>, item: any, ma
   rows.push(row)
 }
 
-/** 已关闭地图容器行：只带列表画一行所需的事实，正文显式给空串（薄行，不冒充详情）。 */
+/** 已关闭地图容器行：只带列表画一行所需的事实，正文显式给空串（薄行，不冒充详情），同时保留列表页带回的时间戳、标签与三态标记以防写库冲掉已有字段。 */
 function thinClosedMapRow(row: any): any {
   const out: any = {}
   out.key = keyOfRow(row)
@@ -154,6 +154,23 @@ function thinClosedMapRow(row: any): any {
   out.title = String(row && row.title !== undefined && row.title !== null ? row.title : '')
   out.body = ''
   out.isPullRequest = false
+  if (row && typeof row === 'object') {
+    if (typeof row.url === 'string' && row.url) out.url = row.url
+    if (typeof row.createdAt === 'string' && row.createdAt) out.createdAt = row.createdAt
+    if (typeof row.updatedAt === 'string' && row.updatedAt) out.updatedAt = row.updatedAt
+    if (typeof row.closedAt === 'string' && row.closedAt) out.closedAt = row.closedAt
+    if (Array.isArray(row.labels)) out.labels = row.labels
+    if (Array.isArray(row.assignees)) out.assignees = row.assignees
+    if (row.author && typeof row.author === 'object') out.author = row.author
+    if (row.parentKey != null && row.parentKey !== '') out.parentKey = String(row.parentKey)
+    if (row.fieldStates && typeof row.fieldStates === 'object') out.fieldStates = row.fieldStates
+    else if (row.parentKey == null) {
+      out.fieldStates = {
+        parents: { known: false, value: null, reason: 'not-expressed' },
+        dependencies: { known: false, value: null, reason: 'not-expressed' },
+      }
+    }
+  }
   return out
 }
 

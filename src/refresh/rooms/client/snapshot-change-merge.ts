@@ -173,20 +173,23 @@ export function applySnapshotChangeSet(
     for (let i = 0; i < keys.length; i++) if (!changeSameValue(held[keys[i]], patch[keys[i]], keys[i])) return true
     return false
   }
-  /** 换位置前先找回手上已有的完整行（未挂图票或容器子票），避免从 issues 迁入容器 tickets 时丢掉已知标签/指派/阻塞。 */
+  /** 换位置前先找回手上已有的完整行（优先容器子票，其次未挂图票），避免从 issues 迁入容器 tickets 时丢掉已知标签/指派/阻塞。 */
   const findHeldTicket = function (id: string): any {
-    const at = issueIndexOf(id)
-    if (at >= 0) return issues[at]
     for (let mi = 0; mi < maps.length; mi++) {
       const tickets = maps[mi].tickets || []
       for (let ti = 0; ti < tickets.length; ti++) if (identity(tickets[ti]) === id) return tickets[ti]
     }
+    const at = issueIndexOf(id)
+    if (at >= 0) return issues[at]
     return null
   }
-  /** 容器子票必须带齐 compute / 地图详情首帧直接读取的默认字段（blockedBy 数组等），避免 unknown 组缺省时渲染抛 TypeError。 */
-  const withChildTicketDefaults = function (row: any, patch?: any): any {
+  /** 容器子票必须带齐 compute / 地图详情首帧 / 列表树直接读取的默认字段（blockedBy 数组与 parentKey 等），避免 unknown 组缺省时渲染抛错或脱离父容器。 */
+  const withChildTicketDefaults = function (row: any, patch?: any, containerKey?: any): any {
     if (!Array.isArray(row.blockedBy)) row.blockedBy = []
     if (!Array.isArray(row.blocks)) row.blocks = []
+    if (containerKey !== undefined && containerKey !== null && String(containerKey) !== '' && (row.parentKey === undefined || row.parentKey === null || row.parentKey === '')) {
+      row.parentKey = String(containerKey)
+    }
     if (patch && Array.isArray(patch.assignees)) {
       const first = patch.assignees[0]
       row.claimedBy = first ? String(first.login || first.name || '') : ''
@@ -224,11 +227,25 @@ export function applySnapshotChangeSet(
     }
     return hit
   }
+  /** 把这一行从所有容器 tickets（除了 keepMapIndex 指定的父容器）与 thin 池中摘除。 */
+  const detachFromContainersAndThin = function (id: string, keepMapIndex?: number): boolean {
+    let hit = false
+    const thinAt = thinIndexOf(id)
+    if (thinAt >= 0) { thin.splice(thinAt, 1); hit = true }
+    for (let mi = 0; mi < maps.length; mi++) {
+      if (keepMapIndex !== undefined && mi === keepMapIndex) continue
+      const tickets = maps[mi].tickets || []
+      for (let ti = tickets.length - 1; ti >= 0; ti--) if (identity(tickets[ti]) === id) { writableMap(mi).tickets.splice(ti, 1); hit = true }
+    }
+    return hit
+  }
   const putIssue = function (id: string, patch: any): void {
     const at = issueIndexOf(id)
     if (at >= 0) {
-      if (!differs(issues[at], patch)) return
-      issues[at] = Object.assign({}, issues[at], patch)
+      const movedFromContainer = detachFromContainersAndThin(id)
+      const next = Object.assign({}, issues[at], patch)
+      if (!movedFromContainer && !differs(issues[at], patch)) return
+      issues[at] = next
       redrawn.push(id)
       return
     }
@@ -245,6 +262,8 @@ export function applySnapshotChangeSet(
     for (let mi = 0; mi < maps.length; mi++) {
       if (identity(maps[mi]) !== id) continue
       found = true
+      const at = issueIndexOf(id)
+      if (at >= 0) issues.splice(at, 1)
       if (differs(maps[mi], patch)) {
         // 更新容器头时保留它已经拼好的 tickets / stats 等派生格（补丁只表达这一行知道的字段）。
         maps[mi] = withContainerDefaults(Object.assign({}, maps[mi], patch))
@@ -267,8 +286,8 @@ export function applySnapshotChangeSet(
         for (let ti = 0; ti < pMap.tickets.length; ti++) {
           if (identity(pMap.tickets[ti]) !== id) continue
           inParent = true
-          if (differs(pMap.tickets[ti], patch)) {
-            pMap.tickets[ti] = withChildTicketDefaults(Object.assign({}, pMap.tickets[ti], patch), patch)
+          if (differs(pMap.tickets[ti], patch) || !pMap.tickets[ti].parentKey) {
+            pMap.tickets[ti] = withChildTicketDefaults(Object.assign({}, pMap.tickets[ti], patch), patch, placement.containerKey)
             markRedrawn(id)
           }
           break
@@ -276,7 +295,7 @@ export function applySnapshotChangeSet(
         if (!inParent) {
           const prior = findHeldTicket(id)
           detachFromPlaces(id)
-          pMap.tickets.push(withChildTicketDefaults(Object.assign({ blockedBy: [] }, prior || {}, patch), patch))
+          pMap.tickets.push(withChildTicketDefaults(Object.assign({ blockedBy: [] }, prior || {}, patch), patch, placement.containerKey))
           markRedrawn(id)
         }
       }
@@ -292,14 +311,17 @@ export function applySnapshotChangeSet(
     const map = writableMap(mi)
     for (let ti = 0; ti < map.tickets.length; ti++) {
       if (identity(map.tickets[ti]) !== id) continue
-      if (!differs(map.tickets[ti], patch)) return
-      map.tickets[ti] = withChildTicketDefaults(Object.assign({}, map.tickets[ti], patch), patch)
+      const at = issueIndexOf(id)
+      if (at >= 0) issues.splice(at, 1)
+      detachFromContainersAndThin(id, mi)
+      if (!differs(map.tickets[ti], patch) && !!map.tickets[ti].parentKey) return
+      map.tickets[ti] = withChildTicketDefaults(Object.assign({}, map.tickets[ti], patch), patch, placement.containerKey)
       redrawn.push(id)
       return
     }
     const prior = findHeldTicket(id)
     detachFromPlaces(id)
-    map.tickets.push(withChildTicketDefaults(Object.assign({ blockedBy: [] }, prior || {}, patch), patch))
+    map.tickets.push(withChildTicketDefaults(Object.assign({ blockedBy: [] }, prior || {}, patch), patch, placement.containerKey))
     redrawn.push(id)
   }
   const putThin = function (id: string, patch: any, placement: ChangePlacement): void {
@@ -349,6 +371,15 @@ export function applySnapshotChangeSet(
     for (let mi = maps.length - 1; mi >= 0; mi--) if (identity(maps[mi]) === id) { maps.splice(mi, 1); hit = true }
     if (hit) removed.push(id)
   })
+
+  if (redrawn.length > 0 || removed.length > 0) {
+    maps.forEach(function (m: any): void {
+      if (!m || !Array.isArray(m.tickets) || !m.stats || !Array.isArray(m.stats.levels)) return
+      if (m.tickets.length === 0 && m.stats.total > 0 && String(m.state || '').toUpperCase() === 'CLOSED') return
+      const closed = m.tickets.filter(function (t: any): boolean { return String((t && t.state) || '').toUpperCase() === 'CLOSED' }).length
+      m.stats = Object.assign({}, m.stats, { total: m.tickets.length, closed: closed, open: m.tickets.length - closed })
+    })
+  }
 
   // #1887：变化集回包带着库的六个数字。换行与换数字必须在同一次合并里落地：
   //   只换行会让界面上的数字落后于列表，只换数字又会在下一次渲染时被旧的 deck 盖回去。

@@ -100,13 +100,19 @@ export function readIssueDetailProjection(
     | { body?: string }
     | undefined
   const edges = readIssueDetailEdges(db, issueId)
+  const rawParentsGroup = stateOf('parents')
+  const rawBlockedByGroup = stateOf('blockedBy')
   const groups: DetailGroupStates = {
     row: stateOf('row'),
     body: stateOf('body'),
     labels: stateOf('labels'),
     assignees: stateOf('assignees'),
-    parents: stateOf('parents'),
-    blockedBy: stateOf('blockedBy'),
+    parents: edges.parents.length > 0 && rawParentsGroup?.completeness === 'unknown' && rawParentsGroup?.reason === 'not-expressed'
+      ? Object.assign({}, rawParentsGroup, { completeness: 'complete' as const, reason: null })
+      : rawParentsGroup,
+    blockedBy: edges.blockedBy.length > 0 && rawBlockedByGroup?.completeness === 'unknown' && rawBlockedByGroup?.reason === 'not-expressed'
+      ? Object.assign({}, rawBlockedByGroup, { completeness: 'complete' as const, reason: null })
+      : rawBlockedByGroup,
     subIssues: stateOf('subIssues'),
     mergeInfo: stateOf('mergeInfo'),
     comments: stateOf('comments'),

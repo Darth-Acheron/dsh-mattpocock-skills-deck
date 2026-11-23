@@ -89,7 +89,7 @@ export function readListProjection(
   // 墓碑行不进列表：库里留着行（审计与恢复要它），但它已被确认不存在（#1886）。
   const where = state === 'all'
     ? 'WHERE t.issue_id IS NULL'
-    : 'WHERE i.state = ? AND t.issue_id IS NULL'
+    : 'WHERE LOWER(i.state) = ? AND t.issue_id IS NULL'
   const sql = `
     SELECT ${LIST_ROW_COLUMNS}
       FROM issue i
@@ -128,14 +128,26 @@ export function projectListRows(db: DatabaseSync, rows: ListRow[]): ListIssue[] 
   return rows.map((row) => {
     const issueId = Number(row.issue_id)
     const effectiveRow = specByBodyIds.has(issueId) ? Object.assign({}, row, { type: 'spec' }) : row
+    const parents = edgesByIssue.get(issueId)?.parents ?? []
+    const blockedBy = edgesByIssue.get(issueId)?.blockedBy ?? []
+    const rawParentsGroup = groupStates.get(`${issueId}:parents`) ?? null
+    const rawBlockedByGroup = groupStates.get(`${issueId}:blockedBy`) ?? null
+    // 若 issue_edge 中已有先前 complete 写入保留下来的父边或阻塞边，而 issue_group 被后续未表达该组的扫描误标为 unknown(not-expressed)，
+    // 投影时恢复为 complete，避免已有父子边被 snapshotRowFieldsOf 当作未知而隐去。
+    const parentsGroup = parents.length > 0 && rawParentsGroup?.completeness === 'unknown' && rawParentsGroup?.reason === 'not-expressed'
+      ? Object.assign({}, rawParentsGroup, { completeness: 'complete' as const, reason: null })
+      : rawParentsGroup
+    const blockedByGroup = blockedBy.length > 0 && rawBlockedByGroup?.completeness === 'unknown' && rawBlockedByGroup?.reason === 'not-expressed'
+      ? Object.assign({}, rawBlockedByGroup, { completeness: 'complete' as const, reason: null })
+      : rawBlockedByGroup
     return {
       effortId: row.effort_id,
       key: row.key,
       row: toRowValue(effectiveRow),
       labels: labelsByIssue.get(issueId) ?? [],
       assignees: assigneesByIssue.get(issueId) ?? [],
-      parents: edgesByIssue.get(issueId)?.parents ?? [],
-      blockedBy: edgesByIssue.get(issueId)?.blockedBy ?? [],
+      parents,
+      blockedBy,
       subIssues: toSubIssueCounts(row, groupStates.get(`${issueId}:subIssues`) ?? null),
       mergedAtMs: nullableNumber(row.merged_at_ms),
       groups: {
@@ -143,8 +155,8 @@ export function projectListRows(db: DatabaseSync, rows: ListRow[]): ListIssue[] 
         body: groupStates.get(`${issueId}:body`) ?? null,
         labels: groupStates.get(`${issueId}:labels`) ?? null,
         assignees: groupStates.get(`${issueId}:assignees`) ?? null,
-        parents: groupStates.get(`${issueId}:parents`) ?? null,
-        blockedBy: groupStates.get(`${issueId}:blockedBy`) ?? null,
+        parents: parentsGroup,
+        blockedBy: blockedByGroup,
         subIssues: groupStates.get(`${issueId}:subIssues`) ?? null,
         mergeInfo: groupStates.get(`${issueId}:mergeInfo`) ?? null,
       },

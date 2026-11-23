@@ -201,6 +201,13 @@ export const listIssueRow = function (h: any, st: any, x: any, isOpen: any, narr
       const isSpec = kind === 'spec'
       // 容器对象：探索地图与规格都从同一份快照容器表里按身份找（规格也在里面，不是另一张表）
       const containerObj = isContainer ? findMapByIdentity(st.snapshot && st.snapshot.maps, x.number, effortOf(x)) : null
+      const rawContainerStats = containerObj && containerObj.stats
+      const containerTickets = (!rawContainerStats || typeof rawContainerStats.total !== 'number') && containerObj && Array.isArray(containerObj.tickets) && containerObj.tickets.length > 0 ? containerObj.tickets : null
+      const containerStats = (rawContainerStats && typeof rawContainerStats.total === 'number')
+        ? rawContainerStats
+        : (containerTickets
+          ? { total: containerTickets.length, closed: containerTickets.filter(function (t: any): boolean { return String((t && t.state) || '').toUpperCase() === 'CLOSED' }).length }
+          : rawContainerStats)
       // v15-26：被阻塞判定（open 阻塞者）→ 隐藏动作按钮 + 红色「被阻塞」标签（地图子票点击跳所属 map 详情；#544 独立票无所属地图，只展示不跳转）
       const blk = blockOf[idOf(x)]
       const blocked = !!(blk && blk.by && blk.by.length)
@@ -208,14 +215,14 @@ export const listIssueRow = function (h: any, st: any, x: any, isOpen: any, narr
       // #691（阶段 3）：已关闭的地图行不带子票（打开那张地图时才按需取，见 views/MapDetailHead.js），
       //   所以既不画进度环、也不把它当「空地图」上橙色 —— 没有子票不等于一张子票都没有。
       const mapClosed=!!(isMap&&containerObj&&String(containerObj.state||'').toUpperCase()==='CLOSED')
-      const mapDone=!!(isMap&&containerObj&&containerObj.stats&&containerObj.stats.total>0&&containerObj.stats.closed===containerObj.stats.total)
-      const mapEmpty=!!(isMap&&containerObj&&containerObj.stats&&containerObj.stats.total===0&&!mapClosed)
+      const mapDone=!!(isMap&&containerStats&&containerStats.total>0&&containerStats.closed===containerStats.total)
+      const mapEmpty=!!(isMap&&containerStats&&containerStats.total===0&&!mapClosed)
       // #1286 / #131：容器状态。规格与探索地图统一走内核 containerStateOf(containerObj, st.snapshot)：
       //   探索地图探索子票全关但未挂接规格（或已关但未挂接规格）为 handoff（提示「生成规格」），已挂接规格才为 done。
       const cState = isContainer
         ? ((typeof containerStateOf === 'function') ? containerStateOf(containerObj, st && st.snapshot)
             : (isSpec
-              ? (containerObj && containerObj.stats && containerObj.stats.total ? (containerObj.stats.closed === containerObj.stats.total ? 'done' : 'open') : 'empty')
+              ? (containerStats && containerStats.total ? (containerStats.closed === containerStats.total ? 'done' : 'open') : 'empty')
               : (mapDone ? 'done' : (mapEmpty ? 'empty' : 'open'))))
         : (mapDone ? 'done' : (mapEmpty ? 'empty' : 'open'))
       const closedMapRecover = !!(mapClosed && cState === 'handoff')
@@ -268,7 +275,7 @@ export const listIssueRow = function (h: any, st: any, x: any, isOpen: any, narr
           try { return containerPromptText(st, containerObj, kind, cState, url) } catch (e) { /* 落回下面那份同口径文本 */ }
         }
         if (cState === 'done') {
-          const s = (containerObj && containerObj.stats) ? containerObj.stats : { total: 0, closed: 0 }
+          const s = containerStats || { total: 0, closed: 0 }
           return (typeof completePrompt === 'function') ? completePrompt(st, x.number, x.title, s.total, s.closed, effortOf(x)) : ''
         }
         if (cState === 'empty') return '/to-tickets ' + url
@@ -318,7 +325,7 @@ export const listIssueRow = function (h: any, st: any, x: any, isOpen: any, narr
         if (mapDone) {
           // 探索地图：子票全关 → 完成（这段逻辑照旧，行为不变）
           // 本次界面反馈需求：这颗按钮自己带按压态与点击日志，否则点它记的是整行那条。
-          return h(Tip, { content: tr('map.doneTitle') }, h('button', { className: 'dsws-btn primary' + (narrow ? ' narrow-icon' : '') + ' dsws-hov', 'data-press': 'button', 'data-log': 'list.row.done.' + (x.key != null ? x.key : x.number), onClick: function (e: any) { e.stopPropagation(); const t = completePrompt(st, x.number, x.title, containerObj.stats.total, containerObj.stats.closed, effortOf(x)); inject(st, t) }, style: { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 6px', fontSize: 11, flex: 'none', background: doneColor(), borderColor: 'transparent', color: '#0c1a10', fontWeight: 600 } }, [Ic({ n: 'check', size: 10 }), narrow ? null: h('span', null, tr('act.done'))]))
+          return h(Tip, { content: tr('map.doneTitle') }, h('button', { className: 'dsws-btn primary' + (narrow ? ' narrow-icon' : '') + ' dsws-hov', 'data-press': 'button', 'data-log': 'list.row.done.' + (x.key != null ? x.key : x.number), onClick: function (e: any) { e.stopPropagation(); const t = completePrompt(st, x.number, x.title, containerStats.total, containerStats.closed, effortOf(x)); inject(st, t) }, style: { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 6px', fontSize: 11, flex: 'none', background: doneColor(), borderColor: 'transparent', color: '#0c1a10', fontWeight: 600 } }, [Ic({ n: 'check', size: 10 }), narrow ? null: h('span', null, tr('act.done'))]))
         }
         return mkRowAction(st, x, narrow, colorOf)
       })()
@@ -396,7 +403,7 @@ export const listIssueRow = function (h: any, st: any, x: any, isOpen: any, narr
             truthWriteWindowOpen(st.writeAt && (st.writeAt[String(x.number)] || st.writeAt[idOf(x)]), Date.now()) ? h('span', { className: 'dsws-chip dsws-writing', style: { fontSize: 9, lineHeight: 1.5, padding: '0 4px', flex: 'none', opacity: 0.75, background: 'rgba(88,166,255,.10)', color: '#58a6ff', border: '1px dashed rgba(88,166,255,.45)' } }, tr('truth.writing')) : null,
           ]),
           h('span', { style: { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 } }, [h(Tip, { content: h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } }, [h('div', { style: { fontSize: 10, color: '#8b8b95', lineHeight: '14px' } }, tr('tip.header.fullTitle')), h('div', { style: { fontSize: 11, color: '#e6edf3', lineHeight: '16px', wordBreak: 'break-word', whiteSpace: 'normal' } }, x.title)]) }, h('span', { className: 'dsws-tt-wrap', 'data-dsws-row-part': 'title', style: { flex: 1, minWidth: 0, fontWeight: isContainer ? 600 : undefined, color: isOpen ? undefined : 'var(--dsw-alias-label-secondary,#a1a1aa)' } }, x.title)), (x.author && x.author.login && x.author.login !== ((st.snapshot && (st.snapshot.viewer && st.snapshot.viewer.login || st.snapshot.viewerLogin)) || '')) ? (x.author.avatarUrl ? h(Tip, { content: (x.author.name ? x.author.name + ' (@' + x.author.login + ')' : '@' + x.author.login) }, h('img', { src: x.author.avatarUrl, style: { width: 16, height: 16, borderRadius: '50%', border: '2px solid ' + authorColor(x.author.login), flex: 'none' }, alt: x.author.login })) : h(Tip, { content: (x.author.name ? x.author.name + ' (@' + x.author.login + ')' : '@' + x.author.login) }, h('span', { style: { width: 16, height: 16, borderRadius: '50%', background: hexA(authorColor(x.author.login), 0.18), border: '2px solid ' + authorColor(x.author.login), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: 'none' } }, [Ic({ n: 'person', size: 10 })]))) : null]),
-          (isContainer && containerObj && containerObj.stats && !mapClosed) ? ringOf(containerObj.stats, kind) : null,
+          (isContainer && containerStats && !mapClosed) ? ringOf(containerStats, kind) : null,
           !isOpen ? h('span', { className: 'dsws-chip', style: { fontSize: 10, marginRight: 0, flex: 'none', background: 'rgba(139,139,149,.12)', color: '#8b8b95', border: '1px solid rgba(139,139,149,.35)' } }, [Ic({ n: 'check', size: 9 }), h('span', null, tr('map.subClosed'))]) : null,
         ]),
         // 行2：标签贪心折叠（单行不换行）+ 按钮组（常显）（T1 Map #120：marginTop 8→2，全局收紧至 8px = gap6+mt2，所有行一致）

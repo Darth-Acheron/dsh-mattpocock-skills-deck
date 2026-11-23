@@ -238,11 +238,27 @@ async function main(): Promise<void> {
       labels: [],
       assignees: [],
     } as any, 'create', 'github')
+    const childReceipt = receiptIssueWriteOf({
+      key: '28',
+      number: 28,
+      effortId: '',
+      type: 'issue',
+      title: '导入 [DDC006.FYQ127.xlsx]：费用明细',
+      state: 'open',
+      body: '<!-- DSH-ISSUE-KIND: spec-ticket -->\n',
+      url: 'https://github.com/Darth-Acheron/dci-agent-bill/issues/28',
+      createdAt: '2026-11-15T10:01:00Z',
+      updatedAt: '2026-11-15T10:01:00Z',
+      parentKey: '27',
+      labels: [{ name: 'ready-for-agent', color: '0e8a16' }],
+      assignees: [],
+      blockedBy: [{ key: '26', effortId: '' }],
+    } as any, 'create', 'github')
 
-    const r1 = handle.ingest({ startMergeVersion: handle.getMergeVersion(), kind: 'receipt', writes: [specReceipt] })
-    check(r1.committed === true, 'B1 规格 #27 写回执成功入库', r1)
+    const r1 = handle.ingest({ startMergeVersion: handle.getMergeVersion(), kind: 'receipt', writes: [specReceipt, childReceipt] })
+    check(r1.committed === true, 'B1 规格 #27 与子票 #28 写回执成功入库', r1)
 
-    // 2) 模拟周期性无正文列表扫描（listPage 不带 body，type 退回泛化 issue，子票 #28 的 blockedBy 为 unknown）
+    // 2) 模拟周期性无正文列表扫描（listPage 不带 body、不带 parentKey，parents 与 dependencies 均为 not-expressed）
     const listScanWrites = issueWritesOf([
       {
         key: '27',
@@ -273,11 +289,11 @@ async function main(): Promise<void> {
         url: 'https://github.com/Darth-Acheron/dci-agent-bill/issues/28',
         createdAt: '2026-11-15T10:01:00Z',
         updatedAt: '2026-11-15T10:06:00Z',
-        parentKey: '27',
         labels: [{ name: 'ready-for-agent', color: '0e8a16' }],
         assignees: [],
         fieldStates: {
           dependencies: { known: false, reason: 'not-expressed' },
+          parents: { known: false, reason: 'not-expressed' },
         },
       } as any,
     ], 'github')
@@ -287,10 +303,41 @@ async function main(): Promise<void> {
 
     const listProj = handle.readList({ state: 'all' })
     const row27 = listProj.issues.find((x) => x.key === '27')
+    const row28 = listProj.issues.find((x) => x.key === '28')
+    const fields28 = row28 ? snapshotRowFieldsOf(row28) : null
     check(
       !!row27 && row27.row.type === 'spec',
       'B3 无正文列表扫描不会把已有的 spec 容器 #27 降级覆盖回 issue',
       row27?.row,
+    )
+    check(
+      !!fields28 && fields28.parentKey.known === true && fields28.parentKey.value === '27' && fields28.blockedBy.known === true && Array.isArray(fields28.blockedBy.value) && fields28.blockedBy.value.length === 1 && fields28.blockedBy.value[0]?.key === '26',
+      'B3b 无正文列表扫描（parents/dependencies not-expressed）不会把子票 #28 已落库的 parentKey 与 blockedBy 冲成 unknown',
+      { groups: row28?.groups, fields28 },
+    )
+
+    // 3) 兼容旧库修复：若旧库中已有父边/阻塞边但 issue_group 被写成 unknown/not-expressed，readList 与 readDetail 投影自动恢复为 complete
+    handle.ingest({
+      startMergeVersion: handle.getMergeVersion(),
+      writes: [
+        {
+          effortId: '',
+          key: '28',
+          groups: {
+            parents: { completeness: 'unknown', reason: 'not-expressed', source: 'refresh-list', operation: 'list' },
+            blockedBy: { completeness: 'unknown', reason: 'not-expressed', source: 'refresh-list', operation: 'list' },
+          },
+        },
+      ],
+    })
+    const listAfterLegacy = handle.readList({ state: 'all' })
+    const legacyRow28 = listAfterLegacy.issues.find((x) => x.key === '28')
+    const legacyFields28 = legacyRow28 ? snapshotRowFieldsOf(legacyRow28) : null
+    const legacyDetail28 = handle.readIssueDetail({ effortId: '', key: '28' })
+    check(
+      !!legacyFields28 && legacyFields28.parentKey.known === true && legacyFields28.parentKey.value === '27' && legacyFields28.blockedBy.known === true && legacyFields28.blockedBy.value.length === 1 && legacyDetail28.issue?.groups.parents?.completeness === 'complete' && legacyDetail28.issue?.groups.blockedBy?.completeness === 'complete',
+      'B3c 历史旧库中 issue_edge 存有父边/阻塞边但 issue_group 曾被写成 unknown(not-expressed) 时，列表与详情投影自动恢复完整度',
+      { legacyFields28, detailGroups: legacyDetail28.issue?.groups },
     )
 
     const cs = handle.readChangeSet({ sinceVersion: 0, maxRows: 100, maxAgeMs: 3600_000 })

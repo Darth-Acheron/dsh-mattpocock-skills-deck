@@ -124,7 +124,7 @@ export function issueRowValueOf(issue: Issue): IssueRowValue {
   const row: IssueRowValue = {
     type: effectiveType,
     title: typeof issue.title === 'string' ? issue.title : '',
-    state: nonEmptyString(issue.state),
+    state: nonEmptyString(issue.state)?.toLowerCase() ?? null,
     url: nonEmptyString(issue.url),
     createdAtMs: msOf(issue.createdAt),
     updatedAtMs: msOf(issue.updatedAt),
@@ -169,24 +169,38 @@ function mergeInfoGroupOf(issue: Issue): IssueGroupsWrite['mergeInfo'] {
   return complete(msOf(issue.mergedAt), SOURCE_DETAIL, OPERATION_DETAIL)
 }
 
-/** 父票组：核心字段永远写；有 fieldStates 就按三态，没有就把 parentKey 当完整值。 */
+/**
+ * 父票组：有 fieldStates 就按三态，没有就把 parentKey 当完整值。
+ * 当三态原因为 not-expressed（例如 listPage 索引扫描或仅改标签/指派的 REST 回执根本没查父子边）时，
+ * 不表达这一组，避免把库里先前由完整列表或详情写入的 complete 父票状态覆盖成 unknown。
+ */
 function parentsGroupOf(issue: Issue, source: string, operation: string): IssueGroupsWrite['parents'] {
   const states = issue.fieldStates
   if (states && states.parents) {
-    return states.parents.known
-      ? complete(states.parents.value ? [String(states.parents.value)] : [], source, operation)
-      : unknownGroup(states.parents.reason, source, operation)
+    if (states.parents.known) {
+      return complete(states.parents.value ? [String(states.parents.value)] : [], source, operation)
+    }
+    if (states.parents.reason === 'not-expressed' && issue.parentKey == null) return undefined
+    if (issue.parentKey != null) return complete([String(issue.parentKey)], source, operation)
+    return unknownGroup(states.parents.reason, source, operation)
   }
   return complete(issue.parentKey != null ? [String(issue.parentKey)] : [], source, operation)
 }
 
-/** 阻塞边组：有 fieldStates 就按三态，没有就看字段在不在。 */
+/**
+ * 阻塞边组：有 fieldStates 就按三态，没有就看字段在不在。
+ * 当三态原因为 not-expressed（如 listPage 或未查依赖边的写回执）时，不表达这一组，
+ * 避免把库里已知的 complete 阻塞边状态冲成 unknown。
+ */
 function blockedByGroupOf(issue: Issue, source: string, operation: string): IssueGroupsWrite['blockedBy'] {
   const states = issue.fieldStates
   if (states && states.dependencies) {
-    return states.dependencies.known
-      ? complete(states.dependencies.value.map((ref) => String(ref.key)), source, operation)
-      : unknownGroup(states.dependencies.reason, source, operation)
+    if (states.dependencies.known) {
+      return complete(states.dependencies.value.map((ref) => String(ref.key)), source, operation)
+    }
+    if (states.dependencies.reason === 'not-expressed' && !Array.isArray(issue.blockedBy)) return undefined
+    if (Array.isArray(issue.blockedBy)) return complete(refKeysOf(issue), source, operation)
+    return unknownGroup(states.dependencies.reason, source, operation)
   }
   if (Array.isArray(issue.blockedBy)) return complete(refKeysOf(issue), source, operation)
   return undefined
@@ -197,8 +211,10 @@ export function issueWriteOf(issue: Issue, backend = ''): IssueWrite {
   const groups: IssueGroupsWrite = { row: complete(issueRowValueOf(issue)) }
   if (Array.isArray(issue.labels)) groups.labels = complete(labelsOf(issue))
   if (Array.isArray(issue.assignees)) groups.assignees = complete(actorsOf(issue))
-  groups.parents = parentsGroupOf(issue, SOURCE_LIST, OPERATION_LIST)
-  groups.blockedBy = blockedByGroupOf(issue, SOURCE_LIST, OPERATION_LIST)
+  const parents = parentsGroupOf(issue, SOURCE_LIST, OPERATION_LIST)
+  if (parents !== undefined) groups.parents = parents
+  const blockedBy = blockedByGroupOf(issue, SOURCE_LIST, OPERATION_LIST)
+  if (blockedBy !== undefined) groups.blockedBy = blockedBy
   // 子票计数与合并信息：列表读结果里也常常带着（fieldStates 表态），照样按组写。
   const subIssues = subIssuesGroupOf(issue)
   if (subIssues !== undefined) groups.subIssues = subIssues

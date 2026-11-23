@@ -103,9 +103,9 @@ export function createIssueIndexWindowState(deps: IssueIndexWindowDeps | null | 
     // 基线在不在都不影响结论，少问一次库也就少开一次句柄。
     if (lastIndexWatermarkByRepo[rk] === undefined) await seedFromLibrary(cwd, hit.repo, String(o.backendId || ''), startedMs)
     const w = (indexWindow as any).scanWindow(lastIndexWatermarkByRepo[rk], startedMs)
+    const before = lastIndexBaselineByRepo[rk] ? Object.assign({}, lastIndexBaselineByRepo[rk]) : null
     const remote = await d.fetchIssueIndex!(cwd, w.sinceIso, o.budget)
     if (!remote || remote.ok !== true) return remote || { ok: false, error: { kind: 'env', error: '索引扫描没有回包' } }
-    const before = lastIndexBaselineByRepo[rk] || null
     const merged = w.full ? Object.assign({}, remote.index) : (indexWindow as any).mergeDelta(before, remote.index)
     const changed = (indexWindow as any).indexDiffers(before, merged)
     const nextWatermarkMs = (indexWindow as any).nextWatermark(startedMs)
@@ -118,6 +118,7 @@ export function createIssueIndexWindowState(deps: IssueIndexWindowDeps | null | 
       repoIdentity: String(remote.repoIdentity || ''),
       backendId: String(remote.backendId || ''),
       index: merged,
+      baseline: before || undefined,
       count: Object.keys(merged).length,
       changed: changed,
       // windowed = 这一趟只扫了窗口；full = 这一趟是「没有窗口起点」的整仓枚举（两者互为反面）。

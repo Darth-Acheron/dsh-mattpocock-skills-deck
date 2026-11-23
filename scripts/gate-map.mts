@@ -140,7 +140,7 @@ export const COMPLETION_RECORDED_GATES: Record<string, number> = {
   // 2026-11-16 #130：刷新后增量变化集合并（putChild 补齐子票默认 blockedBy: []、保留从 issues 迁入的已知字段、先落容器再落子票）、
   //   快照库无正文列表扫描保留已有 spec 容器类型（及 issue_body 规格标记自愈投影）、以及 DeckSidebarTab 会话级错误边界
   //   （阻断单工作区异常穿透至宿主 SlotErrorBoundary 导致全工作区退位）。单跑实测 14 条。
-  'verify-130-refresh-change-merge-crash': 14,
+  'verify-130-refresh-change-merge-crash': 16,
   // 2026-11-05 #1891（规格 #1885 S4「客户端按版本取变化」）：假信号源 + 假宿主电话驱动同步引擎——
   // 同一版本连续两拍一条数据都不取、版本变了只取一次变化集且只把变化的那一行换成新对象（其余行连
   // 对象引用都不换）、墓碑行让那一行从手上那份消失、版本回退整份重取且先重置本地版本、落后超限退回
