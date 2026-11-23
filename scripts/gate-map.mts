@@ -476,7 +476,8 @@ export const COMPLETION_RECORDED_GATES: Record<string, number> = {
   // 冒烟红而主链绿时整体仍红且分得清是哪段红，--list 在抽查档位下提前说明冒烟会被跳过），
   // 58 条是单跑实测得出的。
   'verify-1158-completion-evidence': 58,
-  'verify-1407-next-steps-reminders': 87,
+  // 2026-11-23 #131：探索地图交棒模板 mapToSpec 加入 21 条带工具节模板集合，单跑实测 90 条。
+  'verify-1407-next-steps-reminders': 90,
   // 2026-10-24 #1451：下一步建议加了简介这一格（工具侧新增 intro、界面侧新增简介上限常量、
   // 选项按条数均分宽度），相关五扇门禁各自加了断言；下面五个数字都是单跑实测得出的。
   // 2026-10-24 #1464 后续：工具参数说明与 /ask-matt 规则节补「技能优先、prompt 开头写 /xxxx」。

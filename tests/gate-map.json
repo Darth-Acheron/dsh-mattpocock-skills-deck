@@ -1,16 +1,16 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-18T05:26:47.408Z",
+  "generatedAt": "2026-11-23T12:12:40.601Z",
   "generatedBy": "node scripts/gate-map.mts",
-  "chainLength": 603,
-  "gateCount": 603,
-  "attributedGates": 547,
+  "chainLength": 604,
+  "gateCount": 604,
+  "attributedGates": 548,
   "unattributedGates": 56,
   "buildOutputOnlyGates": 21,
   "completionRecordedGates": 146,
   "smokeLength": 8,
   "smokeCompletionRecordedGates": 5,
-  "graphFileCount": 994,
+  "graphFileCount": 995,
   "gates": [
     {
       "step": "node tests/verify-1207-splice-ts.ts",
@@ -2441,6 +2441,32 @@
       "reason": "归属来自：读文件调用（readFileSync / readFile / path.join(ROOT, ...)） 1 条；源码里的路径字面量 3 条"
     },
     {
+      "step": "node tests/verify-131-map-handoff-guard.ts",
+      "file": "tests/verify-131-map-handoff-guard.ts",
+      "guards": [
+        "src/client/kernel/container-view.ts",
+        "src/client/kernel/router.ts",
+        "src/client/kernel/row-actions.ts",
+        "src/client/views/DetailActionBar.ts",
+        "src/client/views/ListTab.ts",
+        "src/client/views/ListTabRow.ts",
+        "src/client/views/MapDetailTop.ts",
+        "src/deck/shell/map-close-guard.ts",
+        "src/deck/tools/issue-patch.ts"
+      ],
+      "dirs": [
+        "src/client/kernel",
+        "src/client/views",
+        "src/deck/shell",
+        "src/deck/tools"
+      ],
+      "unattributed": false,
+      "buildOutputOnly": false,
+      "completionRecord": false,
+      "expectedAssertions": 0,
+      "reason": "归属来自 文件头 // 门禁归属: 注释（共 9 条）"
+    },
+    {
       "step": "node tests/verify-1323-build-lock.ts",
       "file": "tests/verify-1323-build-lock.ts",
       "guards": [
@@ -2619,7 +2645,7 @@
       "unattributed": true,
       "buildOutputOnly": false,
       "completionRecord": true,
-      "expectedAssertions": 87,
+      "expectedAssertions": 90,
       "reason": "读到的路径都落在 config/ 下（夹具、文档、工具脚本之类），不指向插件源码，所以算不出它守着哪条源码路径"
     },
     {
@@ -14754,6 +14780,7 @@
       "node tests/verify-1298-spec-close.ts",
       "node tests/verify-130-refresh-change-merge-crash.ts",
       "node tests/verify-1302-panel-list-skeleton.ts",
+      "node tests/verify-131-map-handoff-guard.ts",
       "node tests/verify-1355-cross-session-table.ts",
       "node tests/verify-1373-stale-table-graft.ts",
       "node tests/verify-1411-suggest-appearance.ts",
@@ -14939,6 +14966,7 @@
       "node tests/verify-1286-list.ts",
       "node tests/verify-1295-dual-panel.ts",
       "node tests/verify-1302-panel-list-skeleton.ts",
+      "node tests/verify-131-map-handoff-guard.ts",
       "node tests/verify-1511-ticket-label.ts",
       "node tests/verify-1519-detail-comments.ts",
       "node tests/verify-1564-ticket-badge.ts",
@@ -15184,6 +15212,7 @@
       "node tests/verify-1245-plan-resume.ts",
       "node tests/verify-1261-work-route-receipt.ts",
       "node tests/verify-1298-spec-close.ts",
+      "node tests/verify-131-map-handoff-guard.ts",
       "node tests/verify-1442-tracker-tools.ts",
       "node tests/verify-1443-static-gate.ts",
       "node tests/verify-1489-progress.ts",
@@ -15225,6 +15254,7 @@
       "node tests/verify-1195-timeout-split.ts",
       "node tests/verify-1245-plan-resume.ts",
       "node tests/verify-1298-spec-close.ts",
+      "node tests/verify-131-map-handoff-guard.ts",
       "node tests/verify-1385-howto.ts",
       "node tests/verify-1403-kind-two-layer.ts",
       "node tests/verify-1409-suggest-stream.ts",
@@ -16774,9 +16804,9 @@
   },
   "coverage": {
     "sourceRoot": "src",
-    "fileCount": 1019,
+    "fileCount": 1020,
     "dirCount": 111,
-    "coveredFileCount": 1019,
+    "coveredFileCount": 1020,
     "ungatedFileCount": 0,
     "ungatedDirCount": 0,
     "dedicatedDirCount": 90,
@@ -17120,6 +17150,7 @@
       "src/deck/shell/capped-wait.ts",
       "src/deck/shell/edge-landing.ts",
       "src/deck/shell/in-flight-lease.ts",
+      "src/deck/shell/map-close-guard.ts",
       "src/deck/shell/minimal-spec.ts",
       "src/deck/shell/plan-cursor.ts",
       "src/deck/shell/receipt-reason.ts",

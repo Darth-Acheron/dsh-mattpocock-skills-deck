@@ -226,8 +226,21 @@ const checkFile = function (file, reg, promptsJs, routerJs, viewSrc) {
   assert.ok(!out.includes('## 目标 map') && !out.includes('编号：#305'), file + ' zh 未完成态不再内嵌 map 标识头（标识由首行 /wayfinder+链接承载）')
   assert.ok(!out.includes('完成确认'), file + ' zh 未完成态不含完成确认')
 
-  // b) 完成 map 行（t 自带 stats）：完成提示词自包含（首行 /wayfinder、次行链接）+ #1281 交棒段
-  const out2 = env.startText(ST, mapIssue(200, '完成 map', { total: 4, closed: 4 }))
+  // b1) 完成但未挂规格的 map 行：直达 /to-spec（mapToSpec）
+  const outHandoff = env.startText(ST, mapIssue(200, '完成未挂规格 map', { total: 4, closed: 4 }))
+  assert.ok(outHandoff.indexOf('/to-spec\n' + URL200) === 0, file + ' zh 未挂规格完成态首行 /to-spec、次行链接')
+  assert.ok(outHandoff.includes('deck_issue_create') && outHandoff.includes('kind=spec'), file + ' zh 未挂规格完成态提示创建 spec')
+
+  // b2) 完成且已挂规格的 map 行（snapshot 含下挂 spec）：完成提示词自包含（首行 /wayfinder、次行链接）+ #1281 交棒段
+  const ST_WITH_SPEC = Object.assign({}, ST, {
+    snapshot: Object.assign({}, ST.snapshot, {
+      maps: ST.snapshot.maps.concat([
+        { number: 21, type: 'spec', parentKey: '200', state: 'OPEN' },
+        { number: 22, type: 'spec', parentKey: '0', state: 'OPEN' },
+      ]),
+    }),
+  })
+  const out2 = env.startText(ST_WITH_SPEC, mapIssue(200, '完成 map', { total: 4, closed: 4 }))
   assert.ok(out2.includes('## 完成核对'), file + ' zh 完成态标题（#1281 完成核对）')
   assert.ok(out2.indexOf('/wayfinder\n' + URL200) === 0, file + ' zh 完成态首行 /wayfinder、次行链接（#1281 自包含格式）')
   assert.ok(out2.includes('4/4'), file + ' zh 完成确认 closed/total 已填')
@@ -236,8 +249,8 @@ const checkFile = function (file, reg, promptsJs, routerJs, viewSrc) {
   assert.ok(out2.includes('## 工具') && out2.includes('优先使用 deck_ 开头的工具') && out2.includes('deck_issue_report'), file + ' zh 完成态带两行工具节（#779）')
   assert.ok(!out2.includes('请按 wayfinder 技能推进这张 map'), file + ' zh 完成态不是推进式')
 
-  // c) 完成态经 snapshot 兜底（t 无 stats 且 snapshot.maps 有该 map）
-  const st2 = { snapshot: { maps: [{ number: 200, stats: { total: 4, closed: 4 } }] } }
+  // c) 完成态经 snapshot 兜底（t 无 stats 且 snapshot.maps 有该 map 及下挂 spec）
+  const st2 = { snapshot: { maps: [{ number: 200, stats: { total: 4, closed: 4 } }, { number: 21, type: 'spec', parentKey: '200', state: 'OPEN' }] } }
   const out3 = env.startText(st2, mapIssue(200, '完成 map'))
   assert.ok(out3.includes('## 完成核对'), file + ' zh 完成态 snapshot 兜底（#1281 标题）')
 
@@ -261,7 +274,9 @@ const checkFile = function (file, reg, promptsJs, routerJs, viewSrc) {
   assert.ok(out6.includes('Please advance this map with the wayfinder skill'), file + ' en 推进式')
   assert.ok(out6.includes('## Tools') && out6.includes('Prefer the deck_ tools'), file + ' en 工具节（issue 操作优先走 deck 工具）')
   assert.ok(!out6.includes('## Target map') && !out6.includes('No: #305'), file + ' en 不再内嵌 map 标识头')
-  const out7 = enEnv.startText(ST, mapIssue(200, 'Done map', { total: 2, closed: 2 }))
+  const out7Handoff = enEnv.startText(ST, mapIssue(200, 'Done map', { total: 2, closed: 2 }))
+  assert.ok(out7Handoff.indexOf('/to-spec\n' + URL200) === 0, file + ' en 未挂规格完成态首行 /to-spec、次行链接')
+  const out7 = enEnv.startText(ST_WITH_SPEC, mapIssue(200, 'Done map', { total: 2, closed: 2 }))
   assert.ok(out7.includes('## Completion check'), file + ' en 完成态标题（#1281 Completion check）')
   assert.ok(out7.indexOf('/wayfinder\n' + URL200) === 0, file + ' en 完成态首行 /wayfinder、次行链接（#1281 自包含格式）')
   assert.ok(out7.includes('2/2'), file + ' en closed/total 已填')
@@ -272,7 +287,9 @@ const checkFile = function (file, reg, promptsJs, routerJs, viewSrc) {
   // #1597：number=0 的容器行（Markdown 后端 key 00）新会话链接不能丢 ——
   //   String(num || '') 会把 0 压成空串，issueUrlFor 回空，次行变成空行。
   const URL0 = 'https://github.com/FeatherHunter/SKILLS/issues/0'
-  const out0done = env.startText(ST, mapIssue(0, '零号 map', { total: 2, closed: 2 }))
+  const out0handoff = env.startText(ST, mapIssue(0, '零号未挂规格 map', { total: 2, closed: 2 }))
+  assert.ok(out0handoff.indexOf('/to-spec\n' + URL0) === 0, file + ' #1597 number=0 未挂规格完成态次行是链接（不是空行）')
+  const out0done = env.startText(ST_WITH_SPEC, mapIssue(0, '零号 map', { total: 2, closed: 2 }))
   assert.ok(out0done.indexOf('/wayfinder\n' + URL0) === 0, file + ' #1597 number=0 完成态次行是链接（不是空行）')
   assert.ok(out0done.includes('2/2'), file + ' #1597 number=0 完成态 closed/total 已填')
   // #1597：number=0 的空态 map 同样走真实 inspectPrompt 真身，链接与编号都不能丢

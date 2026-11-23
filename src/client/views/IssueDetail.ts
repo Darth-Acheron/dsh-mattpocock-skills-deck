@@ -253,7 +253,7 @@ export const IssueDetail = function (props: any): any {
           if (!c) return null
           const k: any = containerKindOf(c)
           if (!k) return null
-          return { kind: k, state: (typeof containerStateOf === 'function') ? containerStateOf(c) : 'open', c: c }
+          return { kind: k, state: (typeof containerStateOf === 'function') ? containerStateOf(c, st && st.snapshot) : 'open', c: c }
         } catch (e) { return null }
       })()
       // #763 顶栏主动作按钮：与列表行同口径（图标/文字/注入文本），但自建按钮以便折叠机逐字裁字。

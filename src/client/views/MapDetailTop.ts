@@ -56,8 +56,9 @@ export const MapDetailTop = ({ st, m, navCrumb, effStats, goBack, kind, tri: tri
   //   container-view.ts 的判定算好传进来；没传（本文件被单独求值时）就地按同口径算一遍。
   const cKind = kind || 'map'
   const cState = (typeof containerStateOf === 'function')
-    ? containerStateOf({ stats: effStats })
+    ? containerStateOf(Object.assign({ type: cKind }, m || {}, { stats: effStats }), st && st.snapshot)
     : (effStats && effStats.total === 0 ? 'empty' : (effStats && effStats.total > 0 && effStats.closed === effStats.total ? 'done' : 'open'))
+  const mapClosed = String((m && m.state) || '').toUpperCase() === 'CLOSED'
   // #1343：两枚固定色只从中央色表取，真源不在时退回空串，不再抄一份同值兜底。
   //   空串只可能出现在门禁单独求值、中央色表没被拼进闭包的时候；真机里它一定在，别拿空串当同值兜底用。
   const triEmptyColor = function () {
@@ -115,18 +116,29 @@ export const MapDetailTop = ({ st, m, navCrumb, effStats, goBack, kind, tri: tri
       }
       return t2
     }
+    if (cState === 'handoff') return promptTextFor(st, 'mapToSpec', { url: openUrl })
     if (cState === 'done') return completePrompt(st, m.number, m.title, (effStats ? effStats.total : 0), (effStats ? effStats.closed : 0), mEffort)
     // 规格未完成：注入 /implement-spec 链接；通用「执行这张票」模板的正文首行是 /wayfinder，
     //   用在规格上不对（设计文档 §3.4）。探索地图的推进式提示词照旧。
     if (cKind === 'spec') return '/implement-spec ' + openUrl
     return startText(st, m)
   }
-  const primaryBtn = h(Tip, { content: tr(tri.titleKey) }, h('button', { className: 'dsws-btn primary', 'data-press': 'button', 'data-log': 'map.top.exec', onClick: function () {
+  const primaryTipKey = (cKind === 'map' && cState === 'handoff' && mapClosed) ? 'map.closedToSpecTitle' : tri.titleKey
+  const primaryBtn = h(Tip, { content: tr(primaryTipKey) }, h('button', { className: 'dsws-btn primary', 'data-press': 'button', 'data-log': 'map.top.exec', onClick: function () {
     inject(st, promptText())
   }, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 6px', fontSize: 11, background: tri.color, borderColor: 'transparent', color: triTextColor, fontWeight: 600, flex: 'none', minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' } }, [
     Ic({ n: tri.icon, size: 10 }),
     h('span', { 'data-detail-primary-text': 1, 'data-full': tr(tri.labelKey), style: { overflow: 'hidden', whiteSpace: 'nowrap', minWidth: 0 } }, tr(tri.labelKey)),
   ]))
+  const closeMapBtn = (cKind === 'map' && cState === 'handoff' && !mapClosed)
+    ? h(Tip, { content: tr('map.closeMapTitle') }, h('button', { className: 'dsws-btn ghost', 'data-press': 'button', 'data-log': 'map.top.close', onClick: function (e: any) {
+      if (e && e.stopPropagation) e.stopPropagation()
+      inject(st, completePrompt(st, m.number, m.title, (effStats ? effStats.total : 0), (effStats ? effStats.closed : 0), mEffort))
+    }, style: { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 6px', fontSize: 11, flex: 'none', whiteSpace: 'nowrap' } }, [
+      Ic({ n: 'check', size: 10 }),
+      h('span', null, tr('act.closeMap')),
+    ]))
+    : null
   return h('div', { ref: topBarRef, className: 'dsws-stickybar', style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'nowrap', minWidth: 0, overflow: 'hidden' } }, [
     // 返回按钮的悬停提示走 Tip（T2/T3 纪律），不再用原生 title
     h(Tip, { content: tr('list.back') }, h('button', { className: 'dsws-btn', 'data-press': 'button', 'data-log': 'map.top.back', onClick: goBack, style: { display: 'inline-flex', alignItems: 'center', gap: 4, flex: 'none', minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' } }, [
@@ -141,6 +153,7 @@ export const MapDetailTop = ({ st, m, navCrumb, effStats, goBack, kind, tri: tri
     h('span', { style: { flex: 1, minWidth: 8 } }),
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 3, flex: 'none', minWidth: 0, overflow: 'hidden', flexWrap: 'nowrap' } }, [
       primaryBtn,
+      closeMapBtn,
       h(Tip, { content: tr('map.newSessionTitle') }, h('button', { className: 'dsws-btn primary', 'data-press': 'button', 'data-log': 'map.top.newsession', onClick: function (e: any) { e.stopPropagation(); openInNewSession(st, m) }, style: newStyle }, [
         Ic({ n: 'external-link', size: 10 }),
         h('span', { 'data-detail-new-text': 1, 'data-full': tr('list.newSessionLabel'), style: { overflow: 'hidden', whiteSpace: 'nowrap', minWidth: 0 } }, tr('list.newSessionLabel')),

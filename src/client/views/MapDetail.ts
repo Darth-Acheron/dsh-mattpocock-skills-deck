@@ -94,7 +94,7 @@ export     const MapDetail = ({ st, g, drill }: any) => {
       // 三态判据用容器自带的 stats：没有子票 empty，还有未关子票 open，全关 done。
       //   宿主那边只有 GitHub 通路会补 stats，别的通路 stats 可能整个不存在 —— 那时按空态走。
       const cState = (typeof containerStateOf === 'function')
-        ? containerStateOf({ stats: effStats })
+        ? containerStateOf(Object.assign({ type: cKind }, m || {}, { stats: effStats, tickets: tickets }), st && st.snapshot)
         : (effStats && effStats.total === 0 ? 'empty' : (effStats && effStats.total > 0 && effStats.closed === effStats.total ? 'done' : 'open'))
       // 三态配置（底色/文字/图标）：真源同在 container-view.ts。真源不在时退回同口径的老表；
       //   其中空态橙与完成态绿也从中央色表取，不再抄一份同值（#1343）。

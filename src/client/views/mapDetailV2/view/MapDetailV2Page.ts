@@ -101,8 +101,9 @@ export function MapDetailV2Page(props: any): any {
   // 注意档案区的四枚计数按「画出来的行」数（mapDetailPageModel.ts:13-15 写明是有意）；
   // 档案里的「子票那句」会把截断与差额补出来，不让数字悄悄对不上。
   const effStats = ((detail && detail.stats) || m.stats) || null
+  const effTickets = (bucket && Array.isArray(bucket.items)) ? bucket.items : (m.tickets || [])
   const cKind = containerKindOf(m) || 'map'
-  const cState = containerStateOf({ stats: effStats })
+  const cState = containerStateOf(Object.assign({ type: cKind }, m || {}, { stats: effStats, tickets: effTickets }), st && st.snapshot)
   const tri = containerTriState(cKind, cState)
 
   // 整页只算一次：档案 + 一条连续流 + 每张卡的 props。计算与画法分开，门禁可以直接对着它断言。

@@ -39,7 +39,7 @@ const TOOL_NAME = 'suggest_next_steps'
 // config/prompts/shared-sections.yaml（{{shared:sharedTools}} 在读取时展开），所以这里经共享读取核
 // 拿到展开后的正文再数，不能直接扫 YAML 原文（原文里只剩标记）。
 const REMINDER_ZH = '- [ ] 每轮回复收尾时先判断一次：用户接下来几乎一定会做什么？想得到就调用 suggest_next_steps 给出 2~4 条最可能被他选中的做法；这一轮在等用户拍板时，其中一条把每题的推荐答案列好；想不到就不调用。'
-const REMINDER_TOTAL = 20
+const REMINDER_TOTAL = 21
 
 let total = 0
 let failed = 0
@@ -164,7 +164,7 @@ async function main() {
   check(appendCodeProblems(pkgBootstrapText).length === 0, '安装态 bootstrap 也不引用追加逻辑')
   check(!fs.existsSync(path.join(ROOT, '.build/shared/ask-matt-next-steps.js')), '开发态产物 .build/shared/ask-matt-next-steps.js 不存在')
 
-  console.log('\n-- 5) 20 个注入模板的提醒行还在（新口径：经共享读取核展开公共小节后逐条数） --')
+  console.log('\n-- 5) 21 个注入模板的提醒行还在（新口径：经共享读取核展开公共小节后逐条数） --')
   const promptConfig = require('../scripts/lib/prompt-config.mts')
   const promptConfigData = promptConfig.readPromptConfig(ROOT)
   const flatTemplates = {}
@@ -173,10 +173,10 @@ async function main() {
     for (const id of Object.keys(entries)) flatTemplates[id] = entries[id]
   }
   const templateIds = Object.keys(flatTemplates)
-  check(templateIds.length === 27, '共享读取核读出 27 条模板（实测 ' + templateIds.length + '）')
+  check(templateIds.length === 28, '共享读取核读出 28 条模板（实测 ' + templateIds.length + '）')
   let reminderCount = 0
   for (const id of templateIds) reminderCount += String(flatTemplates[id].zh || '').split(REMINDER_ZH).length - 1
-  check(reminderCount === REMINDER_TOTAL, '展开后的 27 条模板里中文提醒行共 ' + REMINDER_TOTAL + ' 条（实测 ' + reminderCount + '）')
+  check(reminderCount === REMINDER_TOTAL, '展开后的 28 条模板里中文提醒行共 ' + REMINDER_TOTAL + ' 条（实测 ' + reminderCount + '）')
 
   console.log('\n-- 6) 负向自检：正文被追加、源码又出现旧引用时，判据必须红 --')
   check(verbatimProblems(bodyOf(rawAsk) + '\n\n' + OLD_HEADING, rawAsk).length > 0, '负向自检：正文尾部追加规则节时原样判据必须红')

@@ -199,9 +199,9 @@ healthCheck:
 
     {{shared:sharedTools}}
 mapExecute:
-  version: 24
+  version: 25
   placeholders: []
-  use: map 执行 / 新会话（未完成态）· 只写推进指令与收尾，推进规则交给 wayfinder 技能（#1281）；v22（2026-10-29）：首段加元提示句「从第一性原理出发。」（公共小节 firstPrinciples），不改技能流程；v23（2026-10-31）：补地图推进的开工、推进、关 issue、收尾四节操作约束，仍是插件增量——不复述技能规则、不定义认领生命周期；v24（2026-10-31）：工具节公共提醒行改为「每轮回复收尾先判断、想得到就调用」
+  use: map 执行 / 新会话（未完成态）· 只写推进指令与收尾，推进规则交给 wayfinder 技能（#1281）；v22（2026-10-29）：首段加元提示句「从第一性原理出发。」（公共小节 firstPrinciples），不改技能流程；v23（2026-10-31）：补地图推进的开工、推进、关 issue、收尾四节操作约束，仍是插件增量——不复述技能规则、不定义认领生命周期；v24（2026-10-31）：工具节公共提醒行改为「每轮回复收尾先判断、想得到就调用」；v25（2026-11-23，#131）：sub-issue 全关后明确禁止直接关 map，提醒点「生成规格」或「直接结项」
   zh: |-
     {{shared:firstPrinciples}}
 
@@ -223,7 +223,7 @@ mapExecute:
 
     ## 收尾
     - [ ] 没做成决策时，把停点写进那张 issue 的评论：等本人拍板、等外部资源，还是写不进去；并在回复里说清下次从哪张 issue 读起。
-    - [ ] sub-issue 全部关闭后，提醒本人点详情页的「完成」做最终核对；地图算不算走完由那次核对宣布，你只报告停在哪一步。
+    - [ ] sub-issue 全部关闭后，不要关闭这张 map：保持这张 map 处于开放状态，提醒本人在面板点「生成规格」（运行 /to-spec）或进详情页点「直接结项」做最终核对；地图算不算走完由那次交棒或核对宣布，你只报告停在哪一步。
     - [ ] 回复里用三句话报告：推进了哪张 issue、结论放在哪、下一步由谁做什么。
 
     {{shared:sharedTools}}
@@ -248,7 +248,7 @@ mapExecute:
 
     ## Wrap-up
     - [ ] If you did not reach a decision, write the stopping point in that issue's comments: waiting on me to decide, waiting on external resources, or cannot write. Also say in your reply which issue to start from next time.
-    - [ ] After all sub-issues are closed, remind me to click "Complete" on the detail page for the final check; that check declares whether the map is done, and you only report where you stopped.
+    - [ ] After all sub-issues are closed, do not close this map: keep this map open and remind me to click "To Spec" in the panel (running /to-spec) or "Close Map" on the detail page for the final check; that handoff or check declares whether the map is done, and you only report where you stopped.
     - [ ] Report in your reply in three sentences: which issue advanced, where the conclusion is, and who does what next.
 
     {{shared:sharedTools}}
@@ -310,6 +310,47 @@ mapInspect:
     ## Wrap-up
     - [ ] Before finishing, write the true state of this ticket into its body
     - [ ] Verify sub-issue count matches the panel count and is no longer 0/0
+
+    {{shared:sharedTools}}
+mapToSpec:
+  version: 1
+  placeholders:
+    - url
+  use: 探索地图 · 交棒生成规格态「生成规格」按钮（探索子议题全关且尚未挂接规格，或已关闭地图补生成规格；首行 /to-spec）（#131）
+  zh: |-
+    /to-spec
+    {url}
+
+    {{shared:firstPrinciples}}
+
+    按 /to-spec 技能把这张探索地图沉淀的决策综合成一份可直接实施的规格 issue。
+
+    ## 生成规格动作（建票走 deck 工具，不要手写票文件）
+    - [ ] 动手前先调用 deck_context 确认当前后端，再用 deck_map_snapshot 与 deck_issue_get 读回这张探索地图正文（Destination、Decisions so far、Not yet specified）以及已关闭 sub-issue 的关键结论，不要凭记忆拼凑。
+    - [ ] 若发现还有阻塞实施的未决事项（Not yet specified 非空且没有对应决定），先向用户指出缺口并停下，不要硬编规格。
+    - [ ] 与用户确认模块边界与测试接缝后，用 deck_issue_create 发布规格容器（传 kind=spec）：远端单工作单元后端把 parentKey 填成这张探索地图的编号，让规格直接挂在探索地图下面；本地 Markdown 后端省略 parentKey，由工具按仓库约定创建规格文件，建好后用 deck_issue_patch 在这张探索地图的进度区记下已生成的规格目录名。
+
+    ## 生成之后
+    - [ ] 把新建的规格 issue 编号与链接写进这张探索地图的正文交棒记录，并告诉用户。
+    - [ ] 不要顺手关闭探索地图、也不要顺手拆实施 issue：提醒用户在规格行点「拆票」（/to-tickets）继续拆实施 issue，等交棒完成后再对探索地图点「完成」收尾。
+
+    {{shared:sharedTools}}
+  en: |-
+    /to-spec
+    {url}
+
+    {{shared:firstPrinciples}}
+
+    Follow the /to-spec skill to synthesize the resolved decisions of this exploration map into an actionable spec issue.
+
+    ## Creating the spec (use the deck tools, do not hand-write ticket files)
+    - [ ] First call deck_context to confirm the active backend, then use deck_map_snapshot and deck_issue_get to read back this map's body (Destination, Decisions so far, Not yet specified) and the key resolutions on its closed sub-issues rather than reconstructing from memory.
+    - [ ] If undecided items that block implementation remain (Not yet specified is non-empty without a matching decision), point out the gap to the user and stop instead of guessing the spec.
+    - [ ] After confirming module boundaries and testing seams with the user, publish the spec container with deck_issue_create (pass kind=spec): on remote single-unit backends put this map's number in parentKey so the spec hangs directly under the map; on the local Markdown backend omit parentKey so the tool creates the spec file per the repo convention, then record that spec directory name in this map's progress section via deck_issue_patch.
+
+    ## After creating the spec
+    - [ ] Record the new spec issue number and link in this map's body handoff log and tell the user.
+    - [ ] Do not close the exploration map or split implementation issues automatically: remind the user to click "Split" (/to-tickets) on the new spec row, and click "Complete" on the map once handoff is finished.
 
     {{shared:sharedTools}}
 specComplete:

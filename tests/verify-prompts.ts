@@ -88,7 +88,7 @@ const fail = function (msg) { failed = true; problems.push(msg); return false }
 const check = function (cond, msg) { if (!cond) { failed = true; problems.push(msg) } return !!cond }
 
 // ==================== 0. 契约常量（硬编码，改动要走评审） ====================
-const EXPECT_REGISTRY_ENTRIES = 27 // 注册表条目数（#1281：新增 newSpec / tpl.implement / specSplit / specExecute / specComplete 五条，23 → 28；2026-10-21：删 registry#ghAuthLogin —— 用户可见的登录指引只有 GitHub 后端那一句，YAML 这份在全部路径上被它遮住，28 → 27）（#725：progress 与 bodyFormat 两条整节删除，23 → 21；#771：新增 tpl.takeover 与 tpl.supplement，21 → 23；拆行/换引号不会让它少，因为 S1 用求值解析）
+const EXPECT_REGISTRY_ENTRIES = 28 // 注册表条目数（#1281：新增 newSpec / tpl.implement / specSplit / specExecute / specComplete 五条，23 → 28；2026-10-21：删 registry#ghAuthLogin，28 → 27；#131：新增 mapToSpec 探索地图交棒生成规格模板，27 → 28）
 // S3 各后端 prompts 块顶层键数。v2 §1.1 写的是 7/9/6，实测不成立（gitlab 只有 4 键、markdown 只有 2 键），
 // 这里按实测值硬编码并在失败信息里报出真实值，避免「按错值写断言导致永久红」。
 // #684：三个后端各加一条 healthCheck（体检科目），7/6/4。
@@ -133,7 +133,7 @@ const PROTECTED = [
   'registry#tpl.prototype', 'registry#tpl.takeover', 'registry#tpl.supplement', 'registry#tpl.execute', 'registry#tpl.handoff1', 'registry#tpl.handoff2',
   'registry#specSplit', 'registry#specExecute', 'registry#specComplete', 'registry#newSpec',
   'registry#installSkillsFix', 'registry#installSkills', 'registry#setupRun', 'registry#switchAlign', 'registry#switchLayout', 'registry#newWayfinder',
-  'registry#newBugWayfinder', 'registry#mapInspect', 'registry#healthCheck',
+  'registry#newBugWayfinder', 'registry#mapInspect', 'registry#mapToSpec', 'registry#healthCheck',
   'backend:github#ghAuthLogin', 'backend:github#subIssue', 'backend:github#errorKinds',
   'backend:github#healthCheck', 'backend:github#commandVocabulary', 'backend:github#cliInstall',
   'backend:github#ensureLabels', 'backend:github#repoAccessFix',
@@ -1558,8 +1558,9 @@ const contractChecksInner = function (reg, src) {
     // 2026-11-01：tpl.diagnose v22→v23 —— 新增「说明诊断结论」节：诊断结束后在会话回复里向不了解本票的读者
     //   说明问题本身（结论 / 背景与诉求 / 依据与成因 / 影响与现状 / 代价与取舍），中途出现反转结论的事实时先给简短结论；
     //   落点固定在调查节与收尾之间（收尾是最后动作，说明写晚了会被跳过），版本底线同步抬到 23。
-    mapExecute: 23, complete: 17, fixate: 11, 'tpl.diagnose': 23, 'tpl.fix': 18, 'tpl.discuss': 23,
-    'tpl.research': 17, 'tpl.prototype': 18, 'tpl.takeover': 13, 'tpl.supplement': 10, 'tpl.execute': 23, mapInspect: 14, newWayfinder: 30,
+    // 2026-11-23（#131）：新增 mapToSpec v1（探索地图交棒生成规格），mapExecute v24→v25（sub-issue 全关后禁止直接关 map，提醒点「生成规格」或「直接结项」）。
+    mapExecute: 25, complete: 17, fixate: 11, 'tpl.diagnose': 23, 'tpl.fix': 18, 'tpl.discuss': 23,
+    'tpl.research': 17, 'tpl.prototype': 18, 'tpl.takeover': 13, 'tpl.supplement': 10, 'tpl.execute': 23, mapInspect: 14, mapToSpec: 1, newWayfinder: 30,
     newBugWayfinder: 17, newSpec: 6, healthCheck: 6, specComplete: 8, specExecute: 8, specSplit: 6,
     // #619：setupRun v11 删掉了 paletteNote（旧调色盘注入通道），版本号跟着抬到 11
     // #655：setupRun v12 新增 {contextLayout}（用户选的域文档布局），版本号跟着抬到 12
@@ -1810,7 +1811,7 @@ const contractChecksInner = function (reg, src) {
   //   mapTicketAdvanceOpening 覆盖讨论 / 执行 / 研究 / 原型 4 条）。只判「两语言都在」，位置由正文结构自证；
   //   哪条被悄悄删掉这里先红，不靠人眼。handoff2 是「搬家」：队尾旧句必须已经清掉。
   const FIRST_PRINCIPLES_IDS = [
-    'mapExecute', 'complete', 'healthCheck', 'mapInspect', 'specExecute', 'specComplete', 'specSplit',
+    'mapExecute', 'complete', 'healthCheck', 'mapInspect', 'mapToSpec', 'specExecute', 'specComplete', 'specSplit',
     'tpl.diagnose', 'tpl.fix', 'tpl.implement', 'tpl.takeover', 'tpl.handoff2',
     'newWayfinder', 'newSpec', 'newBugWayfinder',
     'tpl.discuss', 'tpl.execute', 'tpl.research', 'tpl.prototype',
@@ -1940,7 +1941,7 @@ const contractChecksInner = function (reg, src) {
   //   改这两张表要走评审，并同步 src/client/kernel/prompts.js 顶上那段注释。
   const TOOL_SECTION_IDS = [
     'tpl.diagnose', 'tpl.fix', 'tpl.implement', 'tpl.discuss', 'tpl.research', 'tpl.prototype', 'tpl.execute', 'tpl.takeover', 'tpl.supplement', // 手里就是一张票（9 条）
-    'mapExecute', 'complete', 'mapInspect', 'healthCheck', // 手里是一张地图或一批票（4 条）
+    'mapExecute', 'complete', 'mapInspect', 'mapToSpec', 'healthCheck', // 手里是一张地图或一批票（5 条，#131 加 mapToSpec）
     'newWayfinder', 'newSpec', 'newBugWayfinder', // 产物就是票（3 条）
     'specSplit', 'specExecute', 'specComplete', // 规格容器三态（3 条）
     'fixate', // 会把成果写回票正文（1 条）
@@ -1954,7 +1955,7 @@ const contractChecksInner = function (reg, src) {
     'tpl.handoff1', // 只写一份交接文档
     'tpl.handoff2', // 只读交接文档（维护者 2026-09-30 定稿：交接两条都不带工具节）
   ]
-  if (TOOL_SECTION_IDS.length !== 20) fail('#792 TOOL_SECTION_IDS 条数 ' + TOOL_SECTION_IDS.length + '（定稿 20；#1281 新增五条）')
+  if (TOOL_SECTION_IDS.length !== 21) fail('#792 TOOL_SECTION_IDS 条数 ' + TOOL_SECTION_IDS.length + '（定稿 21；#1281 新增五条、#131 新增 mapToSpec）')
   if (TOOL_SECTION_ABSENT_IDS.length !== 7) fail('#792 TOOL_SECTION_ABSENT_IDS 条数 ' + TOOL_SECTION_ABSENT_IDS.length + '（定稿 7；2026-10-21 删 ghAuthLogin，8 → 7）')
   Object.keys(reg).forEach(function (id) {
     const e = reg[id] || {}
@@ -2494,7 +2495,7 @@ const selfDigest = function () {
 const LOCK = {
   'tests/prompt-gate-exempt.json': '65e3acb4c066f83a74996dda33196bb19cce7d0421ce1a9a9dc6d87187c53bcd',
   'tests/prompt-gate-payloads.json': '0d5a71daafeb4a3bb1052a614f77ad6778a72fbe50801e146e518e1e7c273468',
-  'tests/verify-prompts.ts': 'bf75d022732f0907185cc1fb69eaabd53011dc756bb843d7ff6c7bee621bfaa0',
+  'tests/verify-prompts.ts': '025df8086357d21a46cb2e495b0c0a14ff8b555000e4f7135f6a2f9f0b4b5830',
 }
 // ---- LOCK-END ----
 

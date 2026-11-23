@@ -46,12 +46,28 @@
       }
     },
     {
-      "name": "done",
-      "what": "收尾：子票全关",
+      "name": "handoff",
+      "what": "待交棒：探索子票全关但尚未挂接规格票",
       "stats": { "total": 2, "closed": 2 },
       "tickets": [
         { "number": 1, "title": "子票一", "state": "CLOSED" },
         { "number": 2, "title": "子票二", "state": "CLOSED" }
+      ],
+      "expect": {
+        "countText": "本图 {n} 张子票（已关闭 {c} 张）",
+        "primaryText": "生成规格",
+        "primaryColor": "#c084fc",
+        "inject": "FOR:mapToSpec"
+      }
+    },
+    {
+      "name": "done",
+      "what": "收尾：探索子票全关且已挂接规格票",
+      "stats": { "total": 2, "closed": 2 },
+      "tickets": [
+        { "number": 1, "title": "子票一", "state": "CLOSED" },
+        { "number": 2, "title": "子票二", "state": "CLOSED" },
+        { "number": 21, "title": "已收敛规格", "type": "spec", "state": "OPEN" }
       ],
       "expect": {
         "countText": "本图 {n} 张子票（已关闭 {c} 张）",

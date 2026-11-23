@@ -210,12 +210,15 @@ export const listIssueRow = function (h: any, st: any, x: any, isOpen: any, narr
       const mapClosed=!!(isMap&&containerObj&&String(containerObj.state||'').toUpperCase()==='CLOSED')
       const mapDone=!!(isMap&&containerObj&&containerObj.stats&&containerObj.stats.total>0&&containerObj.stats.closed===containerObj.stats.total)
       const mapEmpty=!!(isMap&&containerObj&&containerObj.stats&&containerObj.stats.total===0&&!mapClosed)
-      // #1286：容器三态。探索地图沿用旧三态（没有子票=空、子票全关=完成、其余=进行中）；
-      //   规格按内核 containerStateOf 的口径取（没有子票=空、有未关=进行中、全关=完成）。
-      const cState = isSpec
-        ? ((typeof containerStateOf === 'function') ? containerStateOf(containerObj)
-            : (containerObj && containerObj.stats && containerObj.stats.total ? (containerObj.stats.closed === containerObj.stats.total ? 'done' : 'open') : 'empty'))
+      // #1286 / #131：容器状态。规格与探索地图统一走内核 containerStateOf(containerObj, st.snapshot)：
+      //   探索地图探索子票全关但未挂接规格（或已关但未挂接规格）为 handoff（提示「生成规格」），已挂接规格才为 done。
+      const cState = isContainer
+        ? ((typeof containerStateOf === 'function') ? containerStateOf(containerObj, st && st.snapshot)
+            : (isSpec
+              ? (containerObj && containerObj.stats && containerObj.stats.total ? (containerObj.stats.closed === containerObj.stats.total ? 'done' : 'open') : 'empty')
+              : (mapDone ? 'done' : (mapEmpty ? 'empty' : 'open'))))
         : (mapDone ? 'done' : (mapEmpty ? 'empty' : 'open'))
+      const closedMapRecover = !!(mapClosed && cState === 'handoff')
       // #1343：容器三态里的两枚固定色（空态橙、完成态绿）只从中央色表取；门禁单独求值本文件时
       //   那份常量不在，取色退回空串。不在这里再写一份同值兜底——写第二份，中央色表就不再是唯一真源。
       const emptyColor = function () {
@@ -224,12 +227,12 @@ export const listIssueRow = function (h: any, st: any, x: any, isOpen: any, narr
       const doneColor = function () {
         return (typeof CONTAINER_DONE_COLOR === 'string' && CONTAINER_DONE_COLOR) ? CONTAINER_DONE_COLOR : ''
       }
-      // #1286：编号徽章色。探索地图照旧（完成绿 / 空态橙 / 否则取行级动作色）；
+      // #1286：编号徽章色。探索地图：完成或待生成规格且未关闭时绿 / 空态橙 / 否则取行级动作色；
       //   规格：空态橙、有未关蓝（中央色表）、全关绿。
       const numColor = isSpec
         ? ((typeof containerNumberColor === 'function') ? containerNumberColor('spec', cState, actionColorOf(x, colorOf))
             : (cState === 'done' ? doneColor() : cState === 'empty' ? emptyColor() : (typeof CONTAINER_ACCENT === 'object' && CONTAINER_ACCENT ? CONTAINER_ACCENT.spec : '')))
-        : (mapDone ? doneColor() : mapEmpty ? emptyColor() : actionColorOf(x, colorOf))
+        : ((!mapClosed && (mapDone || cState === 'handoff')) ? doneColor() : mapEmpty ? emptyColor() : actionColorOf(x, colorOf))
       // #1286：容器的身份色、行底色、角标样式与角标文案都从内核 container-view.ts 取；
       //   门禁单独求值本文件时那份常量不在：颜色（身份色与两枚状态色）退回空串，
       //   角标类与文案键退回本文件里的退化兜底（那几样不是颜色副本。真机走不到这条路）。
@@ -289,6 +292,28 @@ export const listIssueRow = function (h: any, st: any, x: any, isOpen: any, narr
           // 探索地图：没有子票 → 检查（这段逻辑照旧，行为不变）
           // 本次界面反馈需求：这颗按钮自己带按压态与点击日志，否则点它记的是整行那条。
           return h(Tip, { content: tr('map.inspectTitle') }, h('button', { className: 'dsws-btn primary' + (narrow ? ' narrow-icon' : '') + ' dsws-hov', 'data-press': 'button', 'data-log': 'list.row.inspect.' + (x.key != null ? x.key : x.number), onClick: function (e: any) { e.stopPropagation(); let t = ''; try { t = inspectPrompt(st, x.number, x.title, effortOf(x)) } catch { const u = typeof issueUrlFor === 'function' ? (function () { try { return issueUrlFor(st, x.number, effortOf(x)) } catch (_) { return '' } })() : '', uu = u || (x.number != null ? '#' + String(x.number) : ''); t = uu ? '/wayfinder ' + uu : '/wayfinder'; try { t = promptTextFor(st, 'mapInspect', { n: (x.number === undefined || x.number === null ? '' : String(x.number)), ['title']: String(x.title || ''), url: u }); if (u) t = '/wayfinder ' + u + '\n\n' + t } catch (_) {} } inject(st, t) }, style: { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 6px', fontSize: 11, flex: 'none', background: emptyColor(), borderColor: 'transparent', color: '#140a1e', fontWeight: 600 } }, [Ic({ n: 'search', size: 10 }), narrow ? null : h('span', null, tr('act.inspect'))]))
+        }
+        if (isMap && cState === 'handoff' && containerTri) {
+          const c = containerTri.color
+          const tipKey = mapClosed ? 'map.closedToSpecTitle' : containerTri.titleKey
+          return h(Tip, { content: tr(tipKey) }, h('button', {
+            className: 'dsws-btn primary' + (narrow ? ' narrow-icon' : '') + ' dsws-hov',
+            'data-press': 'button',
+            'data-log': 'list.row.tospec.' + (x.key != null ? x.key : x.number),
+            onClick: function (e: any) {
+              e.stopPropagation()
+              const u = (typeof issueUrlFor === 'function') ? (issueUrlFor(st, x.number, effortOf(x)) || '') : ''
+              let t = ''
+              if (typeof containerPromptText === 'function') {
+                try { t = containerPromptText(st, containerObj, 'map', 'handoff', u) } catch (_) { t = '' }
+              }
+              if (!t) {
+                try { t = promptTextFor(st, 'mapToSpec', { url: u }) } catch (_) { t = u ? '/to-spec\n' + u : '/to-spec' }
+              }
+              inject(st, t)
+            },
+            style: { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 6px', fontSize: 11, flex: 'none', background: c, borderColor: 'transparent', color: isLightHex(c) ? '#140a1e' : '#ffffff', fontWeight: 600 },
+          }, [Ic({ n: containerTri.icon, size: 10 }), narrow ? null : h('span', null, tr(containerTri.labelKey))]))
         }
         if (mapDone) {
           // 探索地图：子票全关 → 完成（这段逻辑照旧，行为不变）
@@ -388,12 +413,12 @@ export const listIssueRow = function (h: any, st: any, x: any, isOpen: any, narr
               : h(Tip, { content: tr('list.blockedTitle', { by: blockedTip }) }, h('span', chipProps({ key: 'blk', className: 'dsws-chip dsws-blocked dsws-hov', 'data-press': 'chip', 'data-log': 'list.row.blocked.' + (x.key != null ? x.key : x.number), onClick: function (e: any) { e.stopPropagation(); openBlocked(blk) }, style: { fontSize: 10, background: 'rgba(248,113,113,.16)', color: '#f87171', border: '1px solid rgba(248,113,113,.55)', cursor: 'pointer' } }), [Ic({ n: 'lock', size: 10 }), h('span', null, tr('list.blocked'))]))) : null,
           ]),
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 3, flex: 'none', marginLeft: 'auto' }, 'data-dsws-row-part': 'buttons' }, [
-            isOpen && !blocked ? h('div', { style: { display: 'flex', gap: 3, alignItems: 'center', flex: 'none' } }, [
-              // #1286：主按钮按容器三态取（上面算好的 primaryBtn）；新会话按钮与它永远同色实心。
+            (isOpen || closedMapRecover) && !blocked ? h('div', { style: { display: 'flex', gap: 3, alignItems: 'center', flex: 'none' } }, [
+              // #1286：主按钮按容器状态取（上面算好的 primaryBtn）；新会话按钮与它永远同色实心。
               primaryBtn,
               h(Tip, { content: tr('tip.newSession', { n: x.number }) }, h('button', { className: 'dsws-btn primary' + (narrow ? ' narrow-icon' : ''), 'data-press': 'button', 'data-log': 'list.row.newsession.' + (x.key != null ? x.key : x.number), onClick: function (e: any) { e.stopPropagation(); openInNewSession(st, x) }, style: { textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 6px', fontSize: 11, flex: 'none', marginLeft: 4, background: primaryColor, borderColor: 'transparent', color: primaryText } }, [Ic({ n: 'external-link', size: 10 }), narrow ? null : h('span', null, tr('list.newSessionLabel'))])),
             ]) : null,
-            isOpen ? h('div', { className: 'dsws-aux', style: { display: 'flex', gap: 2, alignItems: 'center', flex: 'none' } }, [
+            (isOpen || closedMapRecover) ? h('div', { className: 'dsws-aux', style: { display: 'flex', gap: 2, alignItems: 'center', flex: 'none' } }, [
               // v1.3.3：复制/外链图标增大 11 → 13；Q6 解耦：复制=绝对路径/链接，跳转按后端声明的打开方式分派
               //   （远程后端开网页，本地 Markdown 的票开文件、地图/规格容器开所在目录；#1557）
               h(Tip, { content: tr('tip.copyLink') }, h('button', { className: 'dsws-btn ghost' + (copyRes === 'ok' ? ' dsws-fb-okflash dsws-fb-success-ring dsws-fb-pop' : '') + (copyRes === 'fail' ? ' dsws-fb-errflash dsws-fb-shake' : ''), 'data-press': 'icon', 'data-log': 'list.row.copy.' + (x.key != null ? x.key : x.number), onClick: function (e: any) { e.stopPropagation(); copyUrl(x) }, style: { textDecoration: 'none', display: 'inline-flex', alignItems: 'center', padding: '2px 4px', flex: 'none' } }, copyRes === 'ok' ? Ic({ n: 'check', size: 13 }) : (copyRes === 'fail' ? Ic({ n: 'x', size: 13 }) : Ic({ n: 'clipboard', size: 13 })))),

@@ -179,6 +179,7 @@ export const PROMPT_TEMPLATE_IDS: ReadonlyArray<PromptTemplateSpec> = [
   { id: 'complete', family: 'map-advancement', placeholders: ['url', 'closed', 'total'] },
   { id: 'fixate', family: 'map-advancement', placeholders: [] },
   { id: 'mapInspect', family: 'map-advancement', placeholders: ['n', 'title', 'url', 'subIssue'] },
+  { id: 'mapToSpec', family: 'map-advancement', placeholders: ['url'] },
   { id: 'healthCheck', family: 'map-advancement', placeholders: ['subject'] },
   { id: 'specExecute', family: 'map-advancement', placeholders: ['url'] },
   { id: 'specComplete', family: 'map-advancement', placeholders: ['url', 'closed', 'total'] },

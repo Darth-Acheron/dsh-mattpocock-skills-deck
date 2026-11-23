@@ -81,20 +81,31 @@ export const DetailActionBar = ({ st, m, kind, cState, effStats, tri }: any) => 
       }
       return t2
     }
+    if (state === 'handoff') return promptTextFor(st, 'mapToSpec', { url: url })
     if (state === 'done') return completePrompt(st, m.number, m.title, (effStats ? effStats.total : 0), (effStats ? effStats.closed : 0), (typeof effortOf === 'function') ? effortOf(m) : undefined)
     // 规格未完成：注入 /implement-spec 链接；通用执行模板首行是 /wayfinder，用在规格上不对（§3.4）。
     if (cKind === 'spec') return '/implement-spec ' + url
     return startText(st, m)
   }
   // 字色：完成态沿用今天的深绿字（#0c1a10），其余按底色深浅在深墨与白字之间择优。
+  const mapClosed = String((m && m.state) || '').toUpperCase() === 'CLOSED'
+  const primaryTipKey = (cKind === 'map' && state === 'handoff' && mapClosed) ? 'map.closedToSpecTitle' : t.titleKey
   const textColor = state === 'done' ? '#0c1a10' : ((typeof isLightHex === 'function' && isLightHex(t.color)) ? '#140a1e' : '#ffffff')
   return h('div', { className: 'acts' }, [
-    h(Tip, { content: tr(t.titleKey) }, h('button', { className: 'dsws-btn primary', 'data-press': 'button', 'data-log': 'map.dest.exec', onClick: function () {
+    h(Tip, { content: tr(primaryTipKey) }, h('button', { className: 'dsws-btn primary', 'data-press': 'button', 'data-log': 'map.dest.exec', onClick: function () {
       inject(st, promptText())
     }, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 12px', fontSize: 11, background: t.color, borderColor: 'transparent', color: textColor, fontWeight: 700 } }, [
       Ic({ n: t.icon, size: 11 }),
       h('span', null, tr(t.labelKey)),
     ])),
+    (cKind === 'map' && state === 'handoff' && !mapClosed)
+      ? h(Tip, { content: tr('map.closeMapTitle') }, h('button', { className: 'dsws-btn ghost', 'data-press': 'button', 'data-log': 'map.dest.close', onClick: function () {
+        inject(st, completePrompt(st, m.number, m.title, (effStats ? effStats.total : 0), (effStats ? effStats.closed : 0), (typeof effortOf === 'function') ? effortOf(m) : undefined))
+      }, style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', fontSize: 11 } }, [
+        Ic({ n: 'check', size: 11 }),
+        h('span', null, tr('act.closeMap')),
+      ]))
+      : null,
     (function () {
       // 存档链接：远程后端给网页链接，本地 Markdown 房给「让宿主打开容器文件所在目录」的按钮。
       // #1557：打开方式由后端声明（openContainer），这里不再自己按地址前缀分流。

@@ -72,8 +72,8 @@ const MATRIX: [string, string, string[]][] = [
   ['src/client/views/ListTabRow.ts', '列表行与行内四颗按钮及树折叠箭头', ['list.row.', 'list.row.newsession.', 'list.row.copy.', 'list.row.link.', 'list.tree.toggle.']],
   ['src/client/kernel/row-actions.ts', '行级主动作（执行/原型）', ['issue.action.']],
   ['src/client/views/MapDetail.ts', '地图卡片与折叠条', ['map.card.', 'map.card.newsession.', 'map.card.copy.', 'map.card.link.', 'map.notes.toggle', 'map.decisions.toggle', 'map.fog.toggle', 'map.outofscope.toggle']],
-  ['src/client/views/MapDetailTop.ts', '地图详情顶栏', ['map.top.back', 'map.top.exec', 'map.top.newsession', 'map.top.copy', 'map.top.link']],
-  ['src/client/views/DetailActionBar.ts', '地图底部执行/档案', ['map.dest.exec', 'map.dest.archive']],
+  ['src/client/views/MapDetailTop.ts', '地图详情顶栏', ['map.top.back', 'map.top.exec', 'map.top.close', 'map.top.newsession', 'map.top.copy', 'map.top.link']],
+  ['src/client/views/DetailActionBar.ts', '地图底部执行/档案', ['map.dest.exec', 'map.dest.close', 'map.dest.archive']],
   ['src/client/views/IssueDetail.ts', '工单详情顶栏、父链接、子票与被阻塞行', ['issue.top.back', 'issue.top.exec', 'issue.top.newsession', 'issue.top.copy', 'issue.top.link', 'issue.parent.', 'issue.sub.', 'issue.blocked.']],
   ['src/client/views/IssueDetailComments.ts', '评论发送', ['issue.comment.send']],
   // base 包接入：底部「作者其他插件」四行静态链接改由 base 包渲染（SettingsPage 里已无插件行）；

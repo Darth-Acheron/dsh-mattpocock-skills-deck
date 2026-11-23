@@ -36,6 +36,8 @@ const trDict: Record<string, string> = {
   'act.execute': '执行',
   'act.done': '完成',
   'act.inspect': '检查',
+  'act.toSpec': '生成规格',
+  'act.closeMap': '直接结项',
   'list.newSessionLabel': '新会话',
   'map.subCount': '本图 {n} 张子票（已关闭 {c} 张）',
   'map.specSubCount': '本规格 {n} 张实施票（已关闭 {c} 张）',
@@ -284,9 +286,13 @@ const DONE2 = [ticketOf(1), ticketOf(2)]
   check(btnEmpty.includes('检查') && bgOf(btnEmpty) === '#f59e0b', 'B4 地图空态主按钮是「检查」橙底 #f59e0b')
   const btnOpen = buttonHtml(htmlOpen, 'data-detail-primary-text')
   check(btnOpen.includes('执行') && bgOf(btnOpen) === '#c084fc', 'B5 地图有未关时主按钮是「执行」紫底 #c084fc')
-  const htmlDone = renderContainer(mapContainer(DONE2, statsOf(2, 2)))
+  const htmlHandoff = renderContainer(mapContainer(DONE2, statsOf(2, 2)))
+  const btnHandoff = buttonHtml(htmlHandoff, 'data-detail-primary-text')
+  check(btnHandoff.includes('生成规格') && bgOf(btnHandoff) === '#c084fc', 'B6a 地图子票全关且未挂规格时主按钮是「生成规格」紫底 #c084fc')
+  const DONE_WITH_SPEC = DONE2.concat([Object.assign(ticketOf(21, { state: 'OPEN', title: '已收敛规格' }), { type: 'spec' })])
+  const htmlDone = renderContainer(mapContainer(DONE_WITH_SPEC, statsOf(2, 2)))
   const btnDone = buttonHtml(htmlDone, 'data-detail-primary-text')
-  check(btnDone.includes('完成') && bgOf(btnDone) === '#3fb950', 'B6 地图全关时主按钮是「完成」绿底 #3fb950')
+  check(btnDone.includes('完成') && bgOf(btnDone) === '#3fb950', 'B6b 地图子票全关且已挂规格时主按钮是「完成」绿底 #3fb950')
   const newBtn = buttonHtml(htmlOpen, 'data-detail-new-text')
   check(!!newBtn && bgOf(newBtn) === bgOf(btnOpen) && bgOf(newBtn) !== '', 'B7 地图页新会话按钮与主按钮同色实心（都是 ' + bgOf(newBtn) + '）')
   check(htmlOpen.includes('地图目的地') && htmlOpen.includes('map.notesCap') && htmlOpen.includes('map.decisions') && htmlOpen.includes('map.fog') && htmlOpen.includes('map.outOfScope'),
@@ -296,7 +302,9 @@ const DONE2 = [ticketOf(1), ticketOf(2)]
   renderContainer(mapContainer(OPEN2, statsOf(2, 1)))
   check(clickPrimary() === 'START:1228', 'B10 地图有未关时点主按钮注入推进提示词')
   renderContainer(mapContainer(DONE2, statsOf(2, 2)))
-  check(clickPrimary() === 'COMPLETE:1228:2/2', 'B11 地图全关时点主按钮注入收尾提示词')
+  check(clickPrimary() === 'FOR:mapToSpec', 'B11a 地图子票全关且未挂规格时点主按钮注入 mapToSpec 提示词')
+  renderContainer(mapContainer(DONE_WITH_SPEC, statsOf(2, 2)))
+  check(clickPrimary() === 'COMPLETE:1228:2/2', 'B11b 地图子票全关且已挂规格时点主按钮注入收尾提示词')
 }
 
 // ---- C 组：被阻塞统一红 #f87171 ----

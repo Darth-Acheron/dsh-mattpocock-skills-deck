@@ -29,7 +29,7 @@ export interface SpecCloseTracker {
  * 判不过（整笔拒绝，rule 是机器可读的原因码，reads 是这次已经读了几次、用于记账）。
  */
 export type SpecCloseGuardResult =
-  | { kind: 'not-spec' }
+  | { kind: 'not-spec'; target?: Record<string, unknown> }
   | { kind: 'ok' }
   | { kind: 'timeout'; message: string }
   | { kind: 'refuse'; rule: string; text: string; data: Record<string, unknown>; reads: number }
@@ -67,7 +67,7 @@ export async function specCloseGuard(input: {
   // 所以 type 是主判据；markerKindInHeader 再兜一次，是因为远端回包可能只带原始正文、或老缓存里 type 还没归一。
   // 两边同一条判据（第一个标题之前、整行精确），不会互相打架，也不会有哪家把规格读成普通票。
   const isSpec = String(data.type || '') === 'spec' || markerKindInHeader(String(data.body || '')) === 'spec'
-  if (!isSpec) return { kind: 'not-spec' }
+  if (!isSpec) return { kind: 'not-spec', target: data }
 
   const rawKids = await t.list(input.repo, { parentKey: key }, input.opCtx)
   const kidsTimeout = timeoutOf(rawKids)

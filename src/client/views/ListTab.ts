@@ -20,6 +20,7 @@ declare const CONTAINER_CHIP_MARKER_CLASS: any;
 // #1295：容器种类判定（内核 container-view.ts 给出）：列表页的分桶与行渲染必须看同一个结论，
 //   否则同一张票会「行画成地图、却排在普通票堆里」。
 declare function containerKindOf(...args: any[]): any;
+declare function containerStateOf(...args: any[]): any;
 declare function allSnapshotIssuesOf(...args: any[]): any;
 declare function closedPagesNode(...args: any[]): any;
 declare function listFilterRowNode(...args: any[]): any;
@@ -481,13 +482,24 @@ export     const ListTab = ({ st, narrow }: any) => {
         // v14-4⑤：列表底部「已关闭 (N)」折叠行（仅「全部」状态且仍有未被上方开放容器收拢的已关闭行时显示；默认收起，只占一行，展开可见）
         // #689：文案改成「已关闭 N（已加载 x）」—— N 是后端计数说的总数，x 是列表里真加载到的行数；
         //   两个不一样时（本仓现在就是）用户一眼能看出「还有多少没装进来」，而不是以为列表就是全部。
-        (st.stateFilter === 'all' && _bottomClosedRows.length) ? h('details', { style: { marginTop: 8 }, onToggle: function (e: any) { const open = !!(e && e.target && e.target.open); st.closedFoldOpen = open; emit(st); if (open) loadIssuePage(st, { view: 'list' }) } }, [
-          // 本次界面反馈需求：折叠条能点（展开已关闭列表），给它自己的按压态与点击日志。
-          h('summary', { className: 'dsws-hov', 'data-press': 'button', 'data-log': 'list.fold.closed', style: { fontSize: 11, color: 'var(--dsw-alias-label-caption,#8b8b95)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, padding: '4px 2px', userSelect: 'none' } }, [
-            Ic({ n: 'check', size: 11 }),
-            h('span', null, tr('list.closedN', { n: foldCounts ? foldCounts.closed : closedRows.length, x: closedRows.length })),
-          ]),
-          h('div', null, typeof listClosedTreeNodes === 'function' ? listClosedTreeNodes({ h: h, st: st, rows: _bottomClosedRows, narrow: narrow, blockOf: blockOf, colorOf: colorOf, multiEffort: multiEffort, containerKindOf: containerKindOfSafe }) : _bottomClosedRows.map(function (x: any) { return listIssueRow(h, st, x, false, narrow, blockOf, colorOf, multiEffort) })),
-        ]) : null,
+        (st.stateFilter === 'all' && _bottomClosedRows.length) ? (function () {
+          const _noOpenVisible = (_openTreeEls !== null ? _openTreeEls.length === 0 : filteredOpen.length === 0)
+          const _hasRecoverableClosedMap = _noOpenVisible && typeof containerStateOf === 'function' && _bottomClosedRows.some(function (r: any) {
+            return containerKindOfSafe(r) === 'map' && containerStateOf(r, st.snapshot) === 'handoff'
+          })
+          const _foldProps: any = {
+            style: { marginTop: 8 },
+            onToggle: function (e: any) { const open = !!(e && e.target && e.target.open); st.closedFoldOpen = open; emit(st); if (open) loadIssuePage(st, { view: 'list' }) },
+          }
+          if (st.closedFoldOpen !== undefined ? !!st.closedFoldOpen : _hasRecoverableClosedMap) _foldProps.open = true
+          return h('details', _foldProps, [
+            // 本次界面反馈需求：折叠条能点（展开已关闭列表），给它自己的按压态与点击日志。
+            h('summary', { className: 'dsws-hov', 'data-press': 'button', 'data-log': 'list.fold.closed', style: { fontSize: 11, color: 'var(--dsw-alias-label-caption,#8b8b95)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, padding: '4px 2px', userSelect: 'none' } }, [
+              Ic({ n: 'check', size: 11 }),
+              h('span', null, tr('list.closedN', { n: foldCounts ? foldCounts.closed : closedRows.length, x: closedRows.length })),
+            ]),
+            h('div', null, typeof listClosedTreeNodes === 'function' ? listClosedTreeNodes({ h: h, st: st, rows: _bottomClosedRows, narrow: narrow, blockOf: blockOf, colorOf: colorOf, multiEffort: multiEffort, containerKindOf: containerKindOfSafe }) : _bottomClosedRows.map(function (x: any) { return listIssueRow(h, st, x, false, narrow, blockOf, colorOf, multiEffort) })),
+          ])
+        })() : null,
       ])
     }

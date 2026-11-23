@@ -33,6 +33,7 @@ declare const startAttentionSignals: any;
 declare const keyOf: any;
 declare const getSnapshotVersion: any;
 declare const issueUrlFor: any;
+declare const mapHasLinkedSpec: any;
 declare const repoUrlFor: any;
 declare const effortOf: any;
 declare const idOf: any;
@@ -242,16 +243,38 @@ export const startText = (st: any, t: any): string => {
   const isMap: boolean = (t.labels || []).some(function (l: any): boolean { return (typeof l === 'string') ? l === 'wayfinder:map' : l.name === 'wayfinder:map'; });
   // v1.5 B2 修订：新会话/执行 prompt 跟随行状态 —— map 完成态 → 完成确认 prompt；未完成 → 推进式；统一带 map 标识
   if (isMap) {
-    const stats: any = t.stats || (function (): any {
-      const mo: any = ((st.snapshot && st.snapshot.maps) || []).find(function (m: any): boolean { return idOf(m) === idOf(t); }) || ((st.snapshot && st.snapshot.maps) || []).find(function (m: any): boolean { return m.number === t.number; });
-      return mo ? mo.stats : null;
-    })();
-    const empty: boolean = !!(stats && stats.total === 0);
+    const mo: any = ((st.snapshot && st.snapshot.maps) || []).find(function (m: any): boolean { return idOf(m) === idOf(t); }) || ((st.snapshot && st.snapshot.maps) || []).find(function (m: any): boolean { return m.number === t.number; });
+    const stats: any = t.stats || (mo ? mo.stats : null);
+    const mapClosed: boolean = String((t && t.state) || (mo && mo.state) || '').toUpperCase() === 'CLOSED';
+    const hasSpec: boolean = (typeof mapHasLinkedSpec === 'function')
+      ? mapHasLinkedSpec(mo || t, st && st.snapshot)
+      : (function (): boolean {
+          const mKey: string = String((t && (t.key != null ? t.key : t.number)) ?? '');
+          const mNum: string = String((t && t.number) ?? '');
+          const isSpecItem = function (s: any): boolean { return !!(s && s.type === 'spec'); };
+          const matchParent = function (s: any): boolean {
+            if (!isSpecItem(s) || s.parentKey == null) return false;
+            const pk: string = String(s.parentKey).replace(/^#/, '');
+            return pk !== '' && (pk === mKey || pk === mNum);
+          };
+          const own: any[] = Array.isArray(t && t.tickets) ? t.tickets : (Array.isArray(mo && mo.tickets) ? mo.tickets : []);
+          if (own.some(isSpecItem)) return true;
+          const snap: any = st && st.snapshot;
+          if (!snap) return false;
+          return (Array.isArray(snap.maps) && snap.maps.some(matchParent))
+            || (Array.isArray(snap.issues) && snap.issues.some(matchParent))
+            || (Array.isArray(snap.thinTickets) && snap.thinTickets.some(matchParent));
+        })();
+    if (mapClosed && !hasSpec) {
+      return promptTextFor(st, 'mapToSpec', { url: url });
+    }
+    const empty: boolean = !!(stats && stats.total === 0 && !mapClosed);
     if (empty) {
       try { return inspectPrompt(st, t.number, t.title, effortOf(t)); } catch (e) { return '/wayfinder ' + url + '\n\n' + promptTextFor(st, 'mapInspect', { n: (t.number === undefined || t.number === null ? '' : String(t.number)), title: (t.title || ''), url: url }); }
     }
     const done: boolean = !!(stats && stats.total > 0 && stats.closed === stats.total);
     if (done) {
+      if (!hasSpec) return promptTextFor(st, 'mapToSpec', { url: url });
       // #77 定版：mapHead 自包含化 —— 标识头已内联 complete v5，head 外挂删除
       return completePrompt(st, t.number, t.title, stats.total, stats.closed, effortOf(t));
     }

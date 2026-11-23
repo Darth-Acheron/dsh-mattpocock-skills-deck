@@ -55,19 +55,54 @@ export const containerKindOf = function (x: any): string | null {
   return null;
 };
 
-/** 容器三态：没有子票 empty，还有未关子票 open，子票全关 done。
-  * 判据用容器自带的 stats（与地图同形状：{ total, closed }），宿主负责算好。
-  * 注意：只有 GitHub 那条通路会在宿主侧补 stats（src/refresh/rooms/host/session-snapshot-cache.ts），
-  * 别的后端里 stats 可能整个不存在——那时一律按 empty 走，跟地图今天的处境一样。 */
-export const containerStateOf = function (container: any): string {
+/** 判断探索地图是否已经关联了规格票（下挂在 tickets 中，或快照 maps/issues/thinTickets 里有 parentKey 指向该地图的 spec）。 */
+export const mapHasLinkedSpec = function (mapObj: any, snap?: any): boolean {
+  if (!mapObj || typeof mapObj !== 'object') return false;
+  const effOf = function (r: any): string {
+    if (!r || typeof r !== 'object') return '';
+    return r.effort !== undefined && r.effort !== null ? String(r.effort) : (r.effortId !== undefined && r.effortId !== null ? String(r.effortId) : '');
+  };
+  const mKey: string = String((mapObj.key != null && String(mapObj.key) !== '' ? mapObj.key : mapObj.number) ?? '');
+  const mNum: string = String(mapObj.number ?? '');
+  const mEff: string = effOf(mapObj);
+  if (Array.isArray(mapObj.tickets) && mapObj.tickets.some(function (t: any): boolean { return containerKindOf(t) === 'spec'; })) {
+    return true;
+  }
+  if (!snap || typeof snap !== 'object') return false;
+  const matchSpec = function (s: any): boolean {
+    if (containerKindOf(s) !== 'spec' || s.parentKey == null) return false;
+    const pk: string = String(s.parentKey).replace(/^#/, '');
+    if (!pk || (pk !== mKey && pk !== mNum)) return false;
+    const sEff: string = effOf(s);
+    if (mEff && sEff && mEff !== sEff) return false;
+    return true;
+  };
+  return (Array.isArray(snap.maps) && snap.maps.some(matchSpec))
+    || (Array.isArray(snap.issues) && snap.issues.some(matchSpec))
+    || (Array.isArray(snap.thinTickets) && snap.thinTickets.some(matchSpec));
+};
+
+/** 容器状态：
+  * - 规格（或未标类型的纯统计入参）：没有子票 empty，还有未关子票 open，子票全关 done。
+  * - 探索地图：没有子票 empty，还有未关子票 open；探索子票全关但尚未挂接规格票（或地图已关闭但尚未挂接规格票）时为 handoff（提示「生成规格」注入 /to-spec）；已挂接规格票且探索子票全关（或已关闭且已挂接规格票）时为 done。 */
+export const containerStateOf = function (container: any, snap?: any): string {
+  const kind: string | null = containerKindOf(container);
   const stats: any = container && container.stats;
+  if (kind === 'map') {
+    const isClosed: boolean = String((container && container.state) || '').toUpperCase() === 'CLOSED';
+    if (isClosed) return mapHasLinkedSpec(container, snap) ? 'done' : 'handoff';
+    if (!stats || !stats.total) return 'empty';
+    if (stats.closed < stats.total) return 'open';
+    return mapHasLinkedSpec(container, snap) ? 'done' : 'handoff';
+  }
   if (!stats || !stats.total) return 'empty';
   return stats.closed === stats.total ? 'done' : 'open';
 };
 
-/** 三态按钮的取色与话术：探索是 检查/执行/完成，规格是 拆票/执行/完成。
-  * labelKey 与 titleKey 是词表键（由界面自己 tr() 出来），color 是按钮底色，icon 是图标名。
-  * 点下去注入什么不在这里，见下面的 containerPromptText。 */
+/** 容器主按钮的取色与话术：
+  * - 探索地图：检查（empty）/ 执行（open）/ 生成规格（handoff，注入 /to-spec）/ 完成（done，已挂规格后收尾）。
+  * - 规格：拆票（empty）/ 执行（open）/ 完成（done）。
+  * labelKey 与 titleKey 是词表键（由界面自己 tr() 出来），color 是按钮底色，icon 是图标名。 */
 export const containerTriState = function (kind: string, state: string): any {
   if (kind === 'spec') {
     if (state === 'empty') return { labelKey: 'act.split', color: CONTAINER_EMPTY_COLOR, icon: 'branch', titleKey: 'spec.splitTitle' };
@@ -75,17 +110,16 @@ export const containerTriState = function (kind: string, state: string): any {
     return { labelKey: 'act.execute', color: CONTAINER_ACCENT.spec, icon: 'play', titleKey: 'spec.executeTitle' };
   }
   if (state === 'empty') return { labelKey: 'act.inspect', color: CONTAINER_EMPTY_COLOR, icon: 'search', titleKey: 'map.inspectTitle' };
+  if (state === 'handoff') return { labelKey: 'act.toSpec', color: CONTAINER_ACCENT.map, icon: 'handoff', titleKey: 'map.toSpecTitle' };
   if (state === 'done') return { labelKey: 'act.done', color: CONTAINER_DONE_COLOR, icon: 'check', titleKey: 'map.doneTitle' };
   return { labelKey: 'act.execute', color: CONTAINER_ACCENT.map, icon: 'play', titleKey: 'map.executeTitle' };
 };
 
-/** 编号徽章取色：完成态绿、空态橙，未完成时按容器身份取色。
+/** 编号徽章取色：完成/待交棒态绿、空态橙，未完成时按容器身份取色。
   * fallback 是调用方按老口径算出的颜色（探索地图今天走 actionColorOf），
-  * 传进来是为了让探索地图的观感一字不变。
-  * 注意：身份色（规格蓝）当 11px 小字对比度只有约 2.6:1（设计文档 §3.3 记过这笔账）；
-  * 徽章照 2026-10-20 的拍板继续用身份色，浅蓝 #93c5fd 只给角标小字。 */
+  * 传进来是为了让探索地图的观感一字不变。 */
 export const containerNumberColor = function (kind: string, state: string, fallback: string): string {
-  if (state === 'done') return CONTAINER_DONE_COLOR;
+  if (state === 'done' || state === 'handoff') return CONTAINER_DONE_COLOR;
   if (state === 'empty') return CONTAINER_EMPTY_COLOR;
   return kind === 'spec' ? CONTAINER_ACCENT.spec : fallback;
 };
@@ -137,6 +171,9 @@ export const containerPromptText = function (st: any, c: any, kind: string, stat
   try {
     // #1281：完成态两种容器各走各的收口提示词——探索地图是「按 wayfinder 核对完成并交棒」，
     //   规格是「逐张核对，通过后才关闭」；两者语义不同，不能再共用 completePrompt。
+    if (state === 'handoff') {
+      return promptTextFor(st, 'mapToSpec', { url: url });
+    }
     if (state === 'done') {
       if (kind === 'spec') return promptTextFor(st, 'specComplete', { url: url, total: stats.total || 0, closed: stats.closed || 0 });
       // #1595：容器对象自带 effort，把它传给 completePrompt 让链接按 effort 取；单 effort 时 effortOf 回空串，行为与原来一致。

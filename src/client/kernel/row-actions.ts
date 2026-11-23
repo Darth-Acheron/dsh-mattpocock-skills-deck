@@ -40,7 +40,7 @@ const containerActionOf = function (st: any, x: any): any {
     if (!c) return null
     const kind: any = containerKindOf(c)
     if (!kind) return null
-    return { c: c, kind: kind, state: containerStateOf(c) }
+    return { c: c, kind: kind, state: containerStateOf(c, st && st.snapshot) }
   } catch (e) { return null }
 }
 // #771 一处分类（状态优先于类型）：未分流 → 接手 → 补充 → 修复 → 讨论 → 研究 → 原型 → 执行。

@@ -54,8 +54,9 @@ const TARGETS = {
     complete: 16,
     fixate: 11,
     healthCheck: 5,
-    mapExecute: 21,
+    mapExecute: 25,
     mapInspect: 12,
+    mapToSpec: 1,
     specComplete: 7,
     specExecute: 5,
     specSplit: 5,
@@ -156,13 +157,13 @@ function evaluate(templates) {
     push(family + ' 的模板一条 suggest_next_steps 提醒都不带', bad.length === 0, '这些模板不该带提醒却带了：' + bad.join('、'))
   })
 
-  // ⑥ 带工具节的模板集合恰好是名单里的 20 个：少一个说明有人漏加，多一个说明没想清楚就动了别的模板。
+  // ⑥ 带工具节的模板集合恰好是名单里的 21 个：少一个说明有人漏加，多一个说明没想清楚就动了别的模板。
   const toolIds = Object.keys(byId).filter(function (id) { return splitLines(byId[id].zh).indexOf(TOOLS_ZH) >= 0 }).sort()
   const targetIds = []
   Object.keys(TARGETS).forEach(function (family) { Object.keys(TARGETS[family]).forEach(function (id) { targetIds.push(id) }) })
   targetIds.sort()
   const sameSet = toolIds.length === targetIds.length && toolIds.every(function (id, i) { return id === targetIds[i] })
-  push('带「## 工具」章节的模板集合恰好是名单里这 20 个', sameSet, '实际带工具节的是 ' + toolIds.length + ' 个：' + toolIds.join('、'))
+  push('带「## 工具」章节的模板集合恰好是名单里这 21 个', sameSet, '实际带工具节的是 ' + toolIds.length + ' 个：' + toolIds.join('、'))
 
   return rows
 }
@@ -220,7 +221,7 @@ check(hasFailedRow(oldVersion, 'specSplit 的版本号已抬到'), '负向自检
 const extraToolsSection = evaluateMutated(config.templates, function (t) {
   t['workspace-initialization']['setupRun'].zh += '\n\n## 工具\n- [ ] 多出来的工具节'
 })
-check(hasFailedRow(extraToolsSection, '带「## 工具」章节的模板集合恰好是名单里这 20 个'), '负向自检：给不该带工具节的模板加一节工具，集合判据会红')
+check(hasFailedRow(extraToolsSection, '带「## 工具」章节的模板集合恰好是名单里这 21 个'), '负向自检：给不该带工具节的模板加一节工具，集合判据会红')
 
 console.log('')
 console.log('断言 ' + total + ' 条里过了 ' + (total - failedCount) + ' 条')

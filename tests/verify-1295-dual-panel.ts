@@ -62,6 +62,8 @@ const trDict: Record<string, string> = {
   'act.execute': '执行',
   'act.done': '完成',
   'act.inspect': '检查',
+  'act.toSpec': '生成规格',
+  'act.closeMap': '直接结项',
   'act.diagnose': '诊断',
   'act.fix': '修复',
   'act.implement': '实施',

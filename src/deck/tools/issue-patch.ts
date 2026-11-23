@@ -16,6 +16,7 @@ import { sessionContextOfAsync } from '../shell/session-workdir.js'
 import { callDeckSession, openDeckSession } from './tracker-session.js'
 import { statusOfItems, failureFields } from '../shell/edge-landing.js'
 import { specCloseGuard } from '../shell/spec-close-guard.js'
+import { mapCloseGuard } from '../shell/map-close-guard.js'
 import { withCallScope } from '../../refresh/rooms/host/tool-call-budget-enforcement.js'
 import { withKeyLock } from '../shell/write-mutex.js'
 import { ensureBody } from '../shell/minimal-spec.js'
@@ -197,22 +198,24 @@ export function createDeckIssuePatch(deps?: DeckIssuePatchDeps) {
       // 三道闸的判定与读取都住在 spec-close-guard（一个深模块），这里只把结果翻成回执。
       // 这道闸放在所有写动作之前：宁可一个字都不动地拒绝，也不要先发一条评论、再把关闭拦下来。
       let specClose = false
+      let mapClose = false
       if (wants.state && a.close === true) {
         // 拒绝回执：判不过就整笔停下，所有写动作都没开始，所以 items 是空的（一步都没走）。
         // reads 只用于记账：这次读了几次（读这张票 1 次，读了子票清单再加 1 次）。
         const refuseSpecClose = (rule: string, text: string, extra: Record<string, unknown>, reads: number) => ({
-          value: {
-            status: DECK_STATUS.UNSUPPORTED,
-            reason: REFUSAL_REASONS.OVER_CAP,
-            text: text,
-            data: Object.assign({ key: key, rule: rule }, extra),
-          },
+          value: { status: DECK_STATUS.UNSUPPORTED, reason: REFUSAL_REASONS.OVER_CAP, text: text, data: Object.assign({ key: key, rule: rule }, extra) },
           claimed: { requests: reads, points: 3 },
         })
         const gate = await specCloseGuard({ tracker: t, repo: repo, key: key, opCtx: opCtx, hasComment: wants.comment })
         if (gate.kind === 'timeout') return timeoutReply(gate.message)
         if (gate.kind === 'refuse') return refuseSpecClose(gate.rule, gate.text, gate.data, gate.reads)
         specClose = gate.kind === 'ok'
+        if (gate.kind === 'not-spec') {
+          const mapGate = await mapCloseGuard({ tracker: t, repo: repo, key: key, opCtx: opCtx, hasComment: wants.comment, hasCloseReason: rawCloseReason !== '', target: gate.target })
+          if (mapGate.kind === 'timeout') return timeoutReply(mapGate.message)
+          if (mapGate.kind === 'refuse') return refuseSpecClose(mapGate.rule, mapGate.text, mapGate.data, mapGate.reads)
+          mapClose = mapGate.kind === 'ok'
+        }
       }
 
       // #1790 缺陷 A：先看这张票的可见 Status 行与隐藏 triage 标签是否各说各话。
@@ -403,9 +406,11 @@ export function createDeckIssuePatch(deps?: DeckIssuePatchDeps) {
       if (wants.state) {
         // #1298 ⑤⑦：规格的关闭必须带着同一次调用里的收口核对评论。评论那一步在上面已经跑了：
         // 它没成（被额度挡下、后端拒了）时，这里不许再调关闭 —— 没有核对评论的关闭算不合规。
+        // #131：探索地图在已通过前置闸且以 closeReason 写明结项原因时（本地 Markdown 的 map.md 没有评论段），允许不带 comment 关闭。
         const commentOk = items.some((i) => i.step === 'comment' && i.status === 'ok')
-        if (a.close === true && specClose && !commentOk) {
-          fail('close', null, 'input', '收口核对评论没发出去：按规矩规格不能在没有这条评论的情况下关闭，这一步这次没做。先补发评论（同一次调用里带上 comment）再关。')
+        const mapReasonSatisfied = mapClose && !wants.comment && rawCloseReason !== ''
+        if (a.close === true && (specClose || mapClose) && !commentOk && !mapReasonSatisfied) {
+          fail('close', null, 'input', '收口核对评论没发出去：按规矩容器不能在没有这条评论的情况下关闭，这一步这次没做。先补发评论（同一次调用里带上 comment）再关。')
         } else if (sc.outOfBudget()) over(a.close === true ? 'close' : 'reopen')
         else {
           const closeOpts = rawCloseReason !== '' ? { reason: rawCloseReason } : {}

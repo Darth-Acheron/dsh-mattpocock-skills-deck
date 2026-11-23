@@ -74,7 +74,7 @@ const PRODUCT_FILES = [
  */
 const PROTECTED_TEMPLATE_IDS: ReadonlyArray<string> = [
   'complete', 'fixate', 'healthCheck', 'installSkills', 'installSkillsFix',
-  'mapExecute', 'mapInspect', 'newBugWayfinder', 'newSpec', 'newWayfinder', 'setupRun',
+  'mapExecute', 'mapInspect', 'mapToSpec', 'newBugWayfinder', 'newSpec', 'newWayfinder', 'setupRun',
   'specComplete', 'specExecute', 'specSplit', 'switchAlign', 'switchLayout',
   'tpl.diagnose', 'tpl.discuss', 'tpl.execute', 'tpl.fix', 'tpl.handoff1', 'tpl.handoff2',
   'tpl.implement', 'tpl.prototype', 'tpl.research', 'tpl.supplement', 'tpl.takeover',
@@ -84,7 +84,7 @@ const PROTECTED_TEMPLATE_IDS: ReadonlyArray<string> = [
 const PROTECTED_FRAGMENT_IDS: ReadonlyArray<string> = ['newBugFields', 'newWayfinderWiring', 'vocabularyDefaults']
 
 /** 模板条数与片段条数的下限：少一条就是少了一条模板，多一条就是多了一条。 */
-const EXPECTED_TEMPLATE_COUNT = 27
+const EXPECTED_TEMPLATE_COUNT = 28
 const EXPECTED_FRAGMENT_COUNT = 3
 
 /**
