@@ -5,7 +5,7 @@
  * 「开库 → 写一批 → 关库 → 重开 → 读回」这条真实路径。逐条对应票 #1862 的验收：
  *   A 真库写入后关闭重开，数据一致（包括版本、标签、指派人、三态）；
  *   B 一轮写入失败时整批不生效，库停在上一轮（用真约束错误触发，不 mock 事务）；
- *   C 第二个写者抢不到租约退回只读，上层从 mode / diagnostics / ingest 三处都能感知；
+ *   C 本地磁盘上第二个写者照样能写（#1932 起本地不再抢租约），两笔都提交、版本各前进一格；
  *   D 过期批次被版本门整批丢弃，库里字节不变；
  *   E 损坏库被识别、备份三件套、整库重建并留下诊断与日志；
  *   F 完整来源可覆盖与清空，截断只补空缺，未知不删旧值；
@@ -172,32 +172,50 @@ function main(): void {
       { mode: reopened.mode, version: handle.getMergeVersion(), keys: page.issues.map((item) => item.key) },
     )
 
-    // ---- 第二个写者：抢不到租约，退回只读，但读得到 ----
+    // ---- 第二个写者：本地磁盘上两边都能写（#1932 起本地不再抢租约） ----
+    // 改口径的理由：租约在本地路径上让「谁先打开窗口」决定谁有写权，空闲窗口长期占着写权、
+    // 另一个窗口永远只读——那正是规格 #1930 要废掉的东西。本地写现在靠 SQLite 写锁排队。
+    // 这一段单开一份库文件：上面那些批次按固定起始版本写，多提交一笔会让后面每一版的期望值都平移。
+    const twoWritersPath = path.join(tempRoot, 'db', 'two-writers.sqlite')
+    const firstWriter = openWorkspaceSnapshot({
+      workspaceRoot: workspaceDir,
+      backend: 'markdown',
+      repoIdentity: 'repo-a',
+      dbPath: twoWritersPath,
+      now,
+      leaseOwner: 'gate-first-writer',
+      storageKind: 'local',
+    })
     const second = openWorkspaceSnapshot({
       workspaceRoot: workspaceDir,
       backend: 'markdown',
       repoIdentity: 'repo-a',
-      dbPath,
+      dbPath: twoWritersPath,
       now,
       leaseOwner: 'gate-second-writer',
+      storageKind: 'local',
     })
+    const firstIngest = firstWriter.handle.ingest(batch(0, [
+      write('effort-1', 'FIRST', { row: rowGroup({ title: '第一个写者写的票', state: 'open', updatedAtMs: 1000 }) }),
+    ]))
     const secondIngest = second.handle.ingest(batch(1, [
-      write('effort-1', 'SECOND', { row: rowGroup({ title: '不该写进去', state: 'open', updatedAtMs: 9999 }) }),
+      write('effort-1', 'SECOND', { row: rowGroup({ title: '第二个写者写的票', state: 'open', updatedAtMs: 2000 }) }),
     ]))
     const secondPage = second.handle.readList()
+    check(
+      firstWriter.mode === 'writable' && second.mode === 'writable' && second.handle.mode === 'writable'
+        && second.diagnostics.every((item) => item.code !== 'lease-held-readonly'),
+      'C1 同一份本地库上两个写者都是 writable，开库诊断里没有 lease-held-readonly',
+      { first: firstWriter.mode, second: second.mode, diagnostics: second.diagnostics },
+    )
+    check(
+      firstIngest.committed === true && secondIngest.committed === true && secondIngest.mergeVersion === 2
+        && secondPage.issues.length === 2 && secondPage.issues.some((item) => item.key === 'SECOND'),
+      'C2 两个句柄各写一笔都提交、版本前进到 2，第二个句柄读得到两张票',
+      { first: firstIngest, second: secondIngest, keys: secondPage.issues.map((item) => item.key) },
+    )
     second.handle.close()
-    check(
-      second.mode === 'readonly' && second.handle.mode === 'readonly'
-        && second.diagnostics.some((item) => item.code === 'lease-held-readonly'),
-      'C1 第二个写者抢不到租约：mode 是 readonly，诊断里有 lease-held-readonly',
-      { mode: second.mode, diagnostics: second.diagnostics },
-    )
-    check(
-      secondIngest.committed === false && secondIngest.reason === 'readonly'
-        && secondPage.issues.length === 2,
-      'C2 只读句柄拒写、仍可读，上层能明确知道原因',
-      secondIngest,
-    )
+    firstWriter.handle.close()
 
     // ---- 一轮写入失败：整批回滚，库停在上一轮 ----
     const failedBatch = handle.ingest(batch(1, [
@@ -220,17 +238,18 @@ function main(): void {
       { version: handle.getMergeVersion(), keys: afterFailure.issues.map((item) => item.key) },
     )
 
-    // ---- 版本门：过期批次整批丢弃 ----
+    // ---- 版本门：#1931 起按组跳过，不再整批丢弃 ----
     const stale = handle.ingest(batch(0, [
       write('effort-1', 'A', { labels: { completeness: 'complete', value: [] } }),
     ]))
     const afterStale = byKey(handle.readList(), 'A')
     check(
-      stale.committed === false && stale.reason === 'stale'
+      stale.committed === true && stale.skippedGroups === 1 && stale.reason === undefined
         && handle.getMergeVersion() === 1 && afterStale.labels.length === 2,
-      'D1 startMergeVersion 小于表达组上次写入版本时整批丢弃，库里一个字节不改',
+      'D1 startMergeVersion 小于表达组上次写入版本时只跳过那一组：committed、版本不动、值不动，skippedGroups 记 1',
       { stale, version: handle.getMergeVersion(), labels: afterStale.labels },
     )
+
 
     // ---- 完整来源：覆盖与清空 ----
     const cleared = handle.ingest(batch(1, [
@@ -247,7 +266,9 @@ function main(): void {
     // ---- truncate 只补空缺 ----
     const filled = handle.ingest(batch(2, [
       write('effort-1', 'A', {
-        row: { completeness: 'truncated', value: { title: '不该覆盖', stateReason: 'completed', commentCount: 9 }, source: 'gate' },
+        // #1931：truncated 的行组也走「行组严格时间」。这里给一个更新的更新时间，才轮到「只补空缺」这条规则；
+        // 不给时间（未知）时，它不会覆盖库里已知的那一行 —— 那是另一条断言（F7）。
+        row: { completeness: 'truncated', value: { title: '不该覆盖', stateReason: 'completed', commentCount: 9, updatedAtMs: 4000 }, source: 'gate' },
       }),
     ]))
     const afterFill = byKey(handle.readList(), 'A')
@@ -257,6 +278,20 @@ function main(): void {
         && afterFill.row.stateReason === 'completed' && afterFill.row.commentCount === 9,
       'F2 truncated 只补原来为 NULL 的列（关闭原因、评论数），已有标题与链接不动',
       afterFill.row,
+    )
+
+    // ---- #1931：行组严格时间 —— 不知道更新时间时不许覆盖库里已知的那一行 ----
+    const versionBeforeUnknownTime = handle.getMergeVersion()
+    handle.ingest(batch(versionBeforeUnknownTime, [
+      write('effort-1', 'A', {
+        row: { completeness: 'truncated', value: { title: '没有时间的标题' }, source: 'gate' },
+      }),
+    ]))
+    const afterUnknownTime = byKey(handle.readList(), 'A')
+    check(
+      afterUnknownTime.row.title === 'A 票' && handle.getMergeVersion() === versionBeforeUnknownTime,
+      'D3 truncated 行组没带更新时间（未知）：不覆盖库里已知的行，也不推进版本',
+      { row: afterUnknownTime.row, version: handle.getMergeVersion() },
     )
 
     // ---- unknown 只盖章 ----
@@ -321,6 +356,28 @@ function main(): void {
       finalPage.issues[0].key === 'A' && finalPage.issues[1].key === 'C',
       'G3 列表顺序按 updated_at_ms 倒序：A 5000 在 C 4000 前',
       finalPage.issues.map((item: any) => item.key),
+    )
+
+    // ---- #1931 混合批：过期的组跳过、没过期的组照写 ----
+    // 先把 A 的标签组写到当前版本，再拿「写之前那一版」当起点写「标签 + 正文」：
+    // 标签组比起点新 → 跳过；正文组还停在更早的版本（F5 删行时被清掉，之后没再写过）→ 照写。
+    const beforeMixed = handle.getMergeVersion()
+    handle.ingest(batch(beforeMixed, [
+      write('effort-1', 'A', { labels: { completeness: 'complete', value: [{ name: 'touch' }] } }),
+    ]))
+    const mixedStale = handle.ingest(batch(beforeMixed, [
+      write('effort-1', 'A', {
+        labels: { completeness: 'complete', value: [{ name: '迟到的标签' }] },
+        body: { completeness: 'complete', value: '迟到的正文' },
+      }),
+    ]))
+    const afterMixedStale = byKey(handle.readList(), 'A')
+    check(
+      mixedStale.committed === true && mixedStale.skippedGroups === 1
+        && afterMixedStale.labels.length === 1 && afterMixedStale.labels[0].name === 'touch'
+        && handle.getMergeVersion() === beforeMixed + 2,
+      'D1b 混合批：过期的标签组被跳过、正文组照写，版本只前进一版（按组判，不是整批）',
+      { mixedStale, labels: afterMixedStale.labels, version: handle.getMergeVersion() },
     )
 
     handle.close()

@@ -13,6 +13,7 @@ import type {
   IssueRowValue,
   ListProjection,
   ListQuery,
+  ReadStepHook,
   SnapshotActor,
   SnapshotBackend,
   SnapshotComment,
@@ -21,6 +22,7 @@ import type {
   SnapshotLabel,
   SnapshotMode,
   SnapshotReview,
+  SnapshotStorageKind,
   SnapshotStorageStats,
   SubIssueCountsValue,
 } from '../model/types.js'
@@ -45,6 +47,7 @@ export type {
   ListIssueRef,
   ListProjection,
   ListQuery,
+  ReadStepHook,
   SnapshotActor,
   SnapshotBackend,
   SnapshotComment,
@@ -54,6 +57,7 @@ export type {
   SnapshotLabel,
   SnapshotMode,
   SnapshotReview,
+  SnapshotStorageKind,
   SnapshotStorageStats,
   SubIssueCountsValue,
 } from '../model/types.js'
@@ -163,7 +167,11 @@ export interface MarkMissingResult {
   mergeVersion: number
   /** 真的写进墓碑的条数（库里不认识的票号会被跳过）。 */
   marked: number
-  reason?: 'stale' | 'write-failed' | 'readonly'
+  /**
+   * 没提交的原因。legacy-writer（#1932）= 本地库的 meta 里还有一条未过期的旧租约，
+   * 说明可能还有旧版本窗口在写这个工作区；这时拒绝本地写，等租约过期自然恢复。
+   */
+  reason?: 'stale' | 'write-failed' | 'readonly' | 'legacy-writer'
   detail?: string
 }
 
@@ -212,14 +220,16 @@ export interface SyncBookkeepingWrite {
 export interface SyncBookkeepingResult {
   committed: boolean
   state: SyncBookkeeping
-  reason?: 'stale' | 'readonly' | 'write-failed'
+  /** legacy-writer（#1932）= 本地库上有未过期的旧租约，拒绝本地写。 */
+  reason?: 'stale' | 'readonly' | 'write-failed' | 'legacy-writer'
   detail?: string
 }
 
 /**
  * 一批读结果。startMergeVersion 是调用方开始读这批数据时看到的版本（readList / getMergeVersion
- * 返回的那个）。事务里发现任一被表达组的 written_version 比它大，说明期间有别的写者先提交了，
- * 整批丢弃，避免用旧读结果覆盖新数据。
+ * 返回的那个）。事务里发现某一被表达组的 written_version 比它大，说明期间有别的写者先提交了，
+ * **只跳过那一组**，同批其余组照写（#1931）；全部组都被跳过时不推进版本。整批丢弃只留给
+ * 同步世代门（sync.expectedGeneration 对不上），那是「这一趟结果整体比库里旧」的另一件事。
  */
 export interface WriteBatch {
   startMergeVersion: number
@@ -250,12 +260,32 @@ export interface IngestSuccess {
    * 上层拿它说「这一条存在第几位」，与库里实际写下的位置一致（被占用时可能往后挪过）。
    */
   commentPositions?: number[]
+  /**
+   * 这一批里有几组被版本门按组跳过了（#1931）。0 或没有这一格 = 一组都没被跳过。
+   *
+   * 为什么不再整批回 stale：一次整份刷新里，某几张票的行组可能刚好被别的写者更新过，
+   * 其余几十张票的组仍然该写。整批丢弃会让调用方重试并把旧数据再写一遍，而按组跳过只丢真正过期的那几组。
+   * 全部组都被跳过时这一批仍然 committed:true、版本不前进 —— 因为什么都没写，没有「变化」可言。
+   */
+  skippedGroups?: number
+  /**
+   * 这一批写回执里，有哪一张票的更新时间与库里持平（#1931）。只表示「按到达序写了」这一件事，
+   * 供排查解释一次看起来没变的更新：后端的更新时间精度有限，同一毫秒里两次写只能按到达顺序判。
+   */
+  sameSecondTie?: boolean
 }
 
 export interface IngestFailure {
   committed: false
-  /** stale = 版本门丢弃；readonly = 没租约 / 只读句柄；write-failed = 事务失败已回滚。 */
-  reason: 'stale' | 'readonly' | 'write-failed'
+  /**
+   * stale = 版本门（世代门）丢弃；readonly = 只读句柄（网络盘回退或文件系统只读）；
+   * write-failed = 事务失败已回滚；
+   * legacy-writer = 本地库上有未过期的旧租约，为免新旧版本混写而拒绝这一笔（#1932）。
+   * 为什么单列一档而不是复用 readonly：界面与刷新流程对两者的处理不同——readonly 是「这个窗口
+   * 本来就不能写」，legacy-writer 是「这个工作区需要先重启所有窗口」。混成一档会让升级现场
+   * 被读成一个正常的只读环境。
+   */
+  reason: 'stale' | 'readonly' | 'write-failed' | 'legacy-writer'
   detail?: string
 }
 
@@ -279,18 +309,49 @@ export interface OpenWorkspaceSnapshotOptions {
   dbPath?: string
   /** 可注入时钟，单位毫秒；租约与时间戳都用它。缺省 Date.now。 */
   now?: () => number
-  /** 写者标识；缺省由进程号 + 随机串生成。同一进程开两个句柄时必须区分。 */
+  /**
+   * 写者标识。**只有网络盘路径才用它**：本地多写者不需要租约，这一格在本地不参与任何判断
+   * （#1932）。缺省由进程号 + 随机串生成；同一进程开两个网络盘句柄时必须区分。
+   */
   leaseOwner?: string
+  /**
+   * 库文件所在存储的类别（#1932）。生产代码不传，由 runtime/storage-kind.ts 的
+   * detectStorageKind 按路径现算；门禁与诊断需要模拟「这一份库在网络盘上」时传 'network'，
+   * 那样才走单写者回退。
+   *
+   * 为什么不给默认值 'local'：默认值会让忘传的调用方静默跳过一次真实的路径判定，
+   * 而判定结果是安全相关的（网络盘上多进程写不安全）。缺省 = 现算。
+   */
+  storageKind?: SnapshotStorageKind
   logEvent?: SnapshotLogEvent
+  /**
+   * 读投影事务内的步骤钩子（#1931）。只为门禁存在：门禁在投影读到一半时用另一条连接提交一笔写，
+   * 再断言这一次投影仍只看见写之前那一份。生产代码从不传它；不传时它对行为零影响。
+   * 为什么放在开库选项上而不是投影函数上：门禁走的是与界面同一条入口（句柄），
+   * 这样证到的就是真路径，而不是一个只供测试调用的侧门。
+   */
+  onReadStep?: ReadStepHook
 }
 
 /**
- * 快照句柄。mode 是动态的：写者心跳丢了会降级成 readonly，readList 仍可用。
+ * 快照句柄。mode 是动态的：网络盘上写者心跳丢了会降级成 readonly，readList 仍可用。
+ * 本地磁盘的句柄开出来就是 writable，不会再因为「另一个窗口拿着写权」变成 readonly（#1932）。
  *
  * ingest 是同步的：SQLite 在本机是同步 IO，包成 Promise 只会让调用方误以为可以并发压进来。
  */
 export interface WorkspaceSnapshotHandle {
   readonly mode: SnapshotMode
+  /** 这份库落在哪种存储上（#1932）；设置页诊断据此说清写模型。开库之后不变。 */
+  readonly storageKind: SnapshotStorageKind
+  /**
+   * 本地路径上是否有未过期的旧租约挡住了写（#1932）。
+   *
+   * 只在本地路径可能为 true：它表示 meta 里留着一个别的进程写的租约，可能是旧版本窗口还在跑。
+   * 这时句柄仍是 writable（不伪装成只读环境），但 ingest / writeSyncBookkeeping / markMissing
+   * 都回 legacy-writer，rebuild 抛错；租约过期后下一次写自动恢复，不需要重启本窗口。
+   * 网络盘路径恒为 false：那里的「写不写得了」由 mode 表达。
+   */
+  readonly legacyWriterBlocked: boolean
   /** 当前库里的合并版本；只读句柄也能读。 */
   getMergeVersion(): number
   ingest(batch: WriteBatch): IngestResult
@@ -348,5 +409,7 @@ export interface WorkspaceSnapshotHandle {
 export interface OpenWorkspaceSnapshotResult {
   handle: WorkspaceSnapshotHandle
   mode: SnapshotMode
+  /** 这一次开库按哪种存储对待（#1932）：本地多写者或网络单写者回退。 */
+  storageKind: SnapshotStorageKind
   diagnostics: SnapshotDiagnostic[]
 }

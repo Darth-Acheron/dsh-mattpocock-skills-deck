@@ -22,15 +22,34 @@ export function statSync(path: string): { size: number } {
   return nodeFs.statSync(path)
 }
 
+/**
+ * 读文件系统的类型编号（statfs 的 f_type）。storage-kind.ts 靠它认 NFS / SMB / FUSE 这些网络挂载：
+ * 路径本身看不出挂载方式，只有文件系统类型能回答。
+ */
+export function statfsTypeOf(path: string): number {
+  const stats = nodeFs.statfsSync(path)
+  return Number(stats && stats.type)
+}
+
 export function mkdirSync(path: string, options?: { recursive?: boolean }): void {
   nodeFs.mkdirSync(path, options)
+}
+
+/** 读一个小文本文件（重建锁的 owner.json）；调用方负责把「读不到」当成正常的过期信号。 */
+export function readFileSync(path: string, encoding: 'utf8'): string {
+  return nodeFs.readFileSync(path, encoding)
+}
+
+/** 写一个小文本文件（重建锁的 owner.json）。固定 UTF-8：锁文件里只有 ASCII 标识与数字。 */
+export function writeFileSync(path: string, data: string): void {
+  nodeFs.writeFileSync(path, data, 'utf8')
 }
 
 export function renameSync(oldPath: string, newPath: string): void {
   nodeFs.renameSync(oldPath, newPath)
 }
 
-export function rmSync(path: string, options?: { force?: boolean }): void {
+export function rmSync(path: string, options?: { force?: boolean, recursive?: boolean }): void {
   nodeFs.rmSync(path, options)
 }
 

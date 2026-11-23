@@ -287,28 +287,31 @@ export const truthNoticeLines = function (st: any, nowMs: any) {
   // 三、有更新但被推后了；四、这个窗口没在刷新（同时活跃上限 2 个窗口，第 3 个在这里明说）。
   if (refresh && refresh.deferred === true) push({ key: 'truth.deferred', params: {}, tone: 'yellow', kind: 'deferred' })
   if (refresh && refresh.notRefreshing === true) push({ key: 'truth.notRefreshing', params: {}, tone: 'fresh', kind: 'notRefreshing' })
-  // 五、磁盘回放（#1692）：这份快照是从磁盘上的旧文件回放出来的，内容只到「上次已知」那一刻。
-  //   说清那一刻，免得把回放出来的旧数据当成刚取到的；时刻由宿主在回放时挂到快照的 diskReplay 上。
-  if (snap.diskReplay && typeof snap.diskReplay.lastKnownAtMs === 'number' && snap.diskReplay.lastKnownAtMs > 0) {
-    const rd = new Date(snap.diskReplay.lastKnownAtMs)
-    const rpad = function (n: any) { return (n < 10 ? '0' : '') + n }
-    push({ key: 'truth.replayLastKnown', params: { time: rpad(rd.getHours()) + ':' + rpad(rd.getMinutes()) }, tone: 'yellow', kind: 'replay' })
-  }
-  // 六、本地快照库自己报的开库诊断（#1869 真机演练补）：损坏重建、身份/结构重建、退回只读。
+  // 五、磁盘回放不再在列表上方说「上次已知」（#1928）：数据年龄由面板头部已有的时间标签表达
+  //   （truthFreshnessBox / truthFreshnessLine 读同一份 generatedMs），列表这一行只留「为什么旧」的
+  //   用户级结论。快照上的 diskReplay 字段仍保留：它是「这份数据来自库回放」的判据，别的读取方还在用。
+  //   反例：不要为了删这句话把 diskReplay 一起删掉——那是数据来源的记号，不是给用户看的内部状态。
+  // 六、本地快照库自己报的开库诊断（#1869 真机演练补）：损坏重建、身份/结构重建。
   //   这些是「本机数据出了什么事」的结论，必须由列表状态行说出来；失败时不说话会让界面静默变空白。
+  //   写者租约/只读这类内部状态不再上列表（#1928）：它们只在设置页诊断与日志里说，用户看到的是
+  //   「数据为什么旧」，不是「底层哪把锁在谁手里」。
   const snapshotDiags = Array.isArray(snap.snapshotDiagnostics) ? snap.snapshotDiagnostics : []
   const diagKeyOf = function (code: any) {
     if (code === 'corrupt-rebuilt') return 'truth.snapshotCorrupt'
     if (code === 'identity-mismatch-rebuilt') return 'truth.snapshotIdentity'
     if (code === 'schema-reset') return 'truth.snapshotSchema'
-    if (code === 'lease-held-readonly') return 'truth.snapshotReadonly'
-    if (code === 'lease-lost-readonly') return 'truth.snapshotLeaseLost'
+    // 租约/只读两个码故意不映射（#1928）：它们不是用户该在列表上读到的内部状态。
     return ''
   }
   for (let i = 0; i < snapshotDiags.length; i++) {
     const key = diagKeyOf(snapshotDiags[i] && snapshotDiags[i].code)
     if (key) { push({ key: key, params: {}, tone: 'yellow', kind: 'snapshot' }); break }
   }
+  // 七、本机快照库落后（#1935）：刚才那一笔写已经在后端成了，写回执却没能落进本机库（两档重试也没成）。
+  //   这句话只说「本机数据落后、正在重新同步」——用户要理解的是「我刚改的东西面板还没跟上」。
+  //   反例：不要把 write-failed / 写锁 / 租约这些内部词写进这一行；它们是设置页诊断与日志里的东西。
+  //   恢复判据只有一个：任何一次写进库的成功都会清掉这个标记（见 snapshot-library-behind.ts）。
+  if (snap.libraryBehind === true) push({ key: 'truth.libraryBehind', params: {}, tone: 'yellow', kind: 'behind' })
   // #1833：额度读数不再并进列表这一行 —— 它改由通知中心「当前状态」区的「额度」行表达
   //   （budgetTierViewOf 给档位，展开看原始数字）。列表这一行只说数据为什么旧。
   return lines
@@ -360,6 +363,42 @@ export const snapshotStoreStatsReadoutOf = function (reply: any) {
   const rows = (reply && typeof reply.rows === 'number' && isFinite(reply.rows) && reply.rows >= 0) ? Math.floor(reply.rows) : null
   const ok: boolean = bytes !== null && rows !== null
   return { ok: ok, bytes: bytes, rows: rows, bytesText: ok ? snapshotByteTextOf(bytes) : '—', rowsText: ok ? String(rows) : '—' }
+}
+// ── 写模型读数（#1932）：这个窗口为什么能写 / 为什么只读 ──
+//
+// 规格 #1930 §2.2 把写模型分成两条路：本地磁盘多写者（所有窗口都能写，写按 SQLite 写锁排队）、
+// 网络盘 / UNC 单写者回退（抢不到写权就只读）。两句话必须说得开，因为用户要做的动作不一样：
+// 本地多写者什么都不用做；网络回退是「这台机器上的另一个窗口正在写这份库」；
+// 本地只读则是「这个工作区所在的磁盘不能写」，换个盘或改权限才有用。
+//
+// 为什么单列成纯函数：与库版本读数、占用读数同一口径——不挂 React 就能验，页面只负责画。
+// 判据只有一条：回包里 storageKind 与 mode 都认得出来才给说法，认不出来一律 unknown（文案键为空，
+// 页面画「—」）。反例：把「读不到」当成「能写」会让用户以为这一笔已经落库。
+//
+// 文案在这里只给键（env.diagWriteModel.*），句子住 config/copy/panel.yaml：
+// 页面文案改口径不需要改这一层，而这一层改判据也不需要改词表。
+export const snapshotWriteModelReadoutOf = function (reply: any) {
+  const storageKind = (reply && (reply.storageKind === 'local' || reply.storageKind === 'network')) ? reply.storageKind : ''
+  const mode = (reply && (reply.mode === 'writable' || reply.mode === 'readonly')) ? reply.mode : ''
+  if (!storageKind || !mode) {
+    return { ok: false, storageKind: '', mode: '', kind: 'unknown', copyKey: '' }
+  }
+  const legacyBlocked = reply && reply.legacyWriterBlocked === true
+  if (storageKind === 'local') {
+    // 本地盘：能写就是多写者；只读只可能是文件系统真的不可写（#1932 起本地不再有「租约被占」）。
+    // 但有一档要先说：本地库上还有未过期的旧租约（旧版本窗口可能还在跑）时，mode 仍是 writable，
+    // 而每一次写都会被拒（legacy-writer）。把它显示成正常的本地多写者会让人以为写进去了。
+    if (mode === 'writable' && legacyBlocked) {
+      return { ok: true, storageKind: storageKind, mode: mode, kind: 'legacy-writer-blocked', copyKey: 'env.diagWriteModel.legacy' }
+    }
+    return mode === 'writable'
+      ? { ok: true, storageKind: storageKind, mode: mode, kind: 'local-multi-writer', copyKey: 'env.diagWriteModel.local' }
+      : { ok: true, storageKind: storageKind, mode: mode, kind: 'readonly-filesystem', copyKey: 'env.diagWriteModel.readonly' }
+  }
+  // 网络盘：能写是本窗口持有写权，只读是另一个进程拿着写权（单写者回退）。
+  return mode === 'writable'
+    ? { ok: true, storageKind: storageKind, mode: mode, kind: 'network-single-writer', copyKey: 'env.diagWriteModel.network' }
+    : { ok: true, storageKind: storageKind, mode: mode, kind: 'network-single-writer-fallback', copyKey: 'env.diagWriteModel.networkFallback' }
 }
 // 行上那个「更新中」标记的窗口：一次写入成功之后，这一行在合并窗口内还算「正在更新」。
 // 窗口长度就是 host-budget.ts 的 PATCH_MERGE_WINDOW_MS（10 秒），这里不另写一个数字。

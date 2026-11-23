@@ -18,6 +18,7 @@
 import type { RepositoryRef } from '../../../tracker/contract/entities.js'
 import type { SnapshotCounts, SnapshotDiagnostic } from '../../../workspace-snapshot/contract/types.js'
 import { hasRebuildDiagnostic, SNAPSHOT_DEGRADE } from './snapshot-degradation.js'
+import { readLibraryBehind } from './snapshot-library-behind.js'
 
 /** 库门面里这一层真正用到的两件：读回放、按批写行。 */
 export interface FirstScreenLibrary {
@@ -185,13 +186,20 @@ export async function firstScreenFromLibrary(options: FirstScreenOptions): Promi
     if (!Array.isArray(rows) || !rows.length) return
     for (let i = 0; i < rows.length; i += 1) pendingRows.push(rows[i])
   }
+  // #1931：这一趟读开始那一刻的库版本。回放带的就是读回放时的版本；没有回放（库空/刚重建）
+  // 就在发后端请求之前读一次。commitRows 在组装之后才跑，必须用这个起点，不能用写那一刻的版本。
+  let startMergeVersion: number | null = (replay && typeof replay.mergeVersion === 'number' && Number.isInteger(replay.mergeVersion) && replay.mergeVersion >= 0)
+    ? replay.mergeVersion
+    : null
   const commitRows = async function (): Promise<unknown> {
     const meta = pendingMeta
     pendingMeta = null
     if (!pendingRows.length && !(replay && Number(replay.rows) > 0 && meta)) return null
     const rows = pendingRows.splice(0, pendingRows.length)
     try {
-      return await Promise.resolve(lib!.recordIssueRows(Object.assign({ rows: rows, atomic: true }, meta || null, key)))
+      const payload: any = Object.assign({ rows: rows, atomic: true }, meta || null)
+      if (startMergeVersion !== null) payload.startMergeVersion = startMergeVersion
+      return await Promise.resolve(lib!.recordIssueRows(Object.assign(payload, key)))
     } catch (e) {
       return null
     }
@@ -207,6 +215,8 @@ export async function firstScreenFromLibrary(options: FirstScreenOptions): Promi
       return null
     }
   }
+  // 没有回放时补读起点版本：这一步仍在后端请求之前（firstScreenFromLibrary 先返回，调用方才去取数）。
+  if (startMergeVersion === null) startMergeVersion = await readVersion()
   // #1887：库这一侧单读一次六个数字；门面没接这一口就回 null（老假库与不接库的世界）。
   const readCounts = async function (): Promise<SnapshotCounts | null> {
     if (typeof lib!.readSnapshotCounts !== 'function') return null
@@ -226,6 +236,14 @@ export async function firstScreenFromLibrary(options: FirstScreenOptions): Promi
     diagnostics: diagnostics,
     decorate: function (snap: any): void {
       if (diagnostics.length) snap.snapshotDiagnostics = diagnostics
+      // #1935：本机库落后时把标记挂到回包上。两种后端走的都是这一个 decorate，不再另开第二处；
+      // 只在真落后时挂 true —— 缺省即「没落后」，界面按真假判断，不需要一个 false 字段撑形状。
+      // reason 只给诊断与日志，界面那条用户级提示不读它（内部失败词不上界面）。
+      const behind = readLibraryBehind(key)
+      if (behind.behind) {
+        snap.libraryBehind = true
+        snap.libraryBehindReason = behind.reason
+      }
       if (!replay) return
       snap.fromCache = true
       snap.diskReplay = { schema: 'snapshot-sqlite-v1', source: 'sqlite', lastKnownAtMs: replay.lastKnownAtMs }

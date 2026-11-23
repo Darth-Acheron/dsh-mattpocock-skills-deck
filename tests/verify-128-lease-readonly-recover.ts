@@ -27,6 +27,7 @@ import { SNAPSHOT_LEASE_TTL_MS } from '../src/shared/time-config/src/values.ts'
 import {
   handleOf,
   closeSnapshotLibraries,
+  setSnapshotLibraryOpenerForTest,
   setSnapshotLogSink,
   snapshotLibraryHandleCount,
 } from '../src/refresh/rooms/host/snapshot-library-handles.ts'
@@ -63,12 +64,15 @@ function fixture() {
 
 async function main(): Promise<void> {
   setSnapshotLogSink(null)
+  // #1932 起本地盘直接多窗口可写（不再抢单写者租约），单写者租约与 readonly 降级仅在网络盘回退路径生效；
+  // A/B/C 用 storageKind: 'network' 验证单写者租约下 handleOf 的只读句柄 TTL 重开恢复，D 验证默认本地可写复用。
+  setSnapshotLibraryOpenerForTest((opts: any) => openWorkspaceSnapshot({ ...opts, storageKind: 'network' }))
 
   // ── A 上一进程关库释放租约：只读句柄必须升级回可写，新票写得进 ─────────────────────────────
   {
     const f = fixture()
     try {
-      const old = openWorkspaceSnapshot({ ...f.key, leaseOwner: 'refresh-OLD-A', now: f.clock })
+      const old = openWorkspaceSnapshot({ ...f.key, storageKind: 'network', leaseOwner: 'refresh-OLD-A', now: f.clock })
       check(old.mode === 'writable', 'A0 上一进程先开库拿到写租约（可写）', old.mode)
       const h1: any = await handleOf(f.key, f.clock)
       check(h1 && h1.mode === 'readonly', 'A1 租约被占时新进程经 handleOf 退回只读', h1 && h1.mode)
@@ -89,7 +93,7 @@ async function main(): Promise<void> {
   {
     const f = fixture()
     try {
-      const old = openWorkspaceSnapshot({ ...f.key, leaseOwner: 'refresh-OLD-B', now: f.clock })
+      const old = openWorkspaceSnapshot({ ...f.key, storageKind: 'network', leaseOwner: 'refresh-OLD-B', now: f.clock })
       const h1: any = await handleOf(f.key, f.clock)
       check(h1 && h1.mode === 'readonly', 'B1 租约被占时退回只读', h1 && h1.mode)
       f.advance(SNAPSHOT_LEASE_TTL_MS + 1) // 不关 old，只让它的租约过期
@@ -106,7 +110,7 @@ async function main(): Promise<void> {
   {
     const f = fixture()
     try {
-      const old = openWorkspaceSnapshot({ ...f.key, leaseOwner: 'refresh-OLD-C', now: f.clock })
+      const old = openWorkspaceSnapshot({ ...f.key, storageKind: 'network', leaseOwner: 'refresh-OLD-C', now: f.clock })
       const h1: any = await handleOf(f.key, f.clock)
       check(h1 && h1.mode === 'readonly', 'C1 租约被占时退回只读', h1 && h1.mode)
       // 首次命中只读句柄：距上次重试（初始 0）已超过 TTL → 重开一次；租约仍被占 → 仍只读。
@@ -122,6 +126,8 @@ async function main(): Promise<void> {
       rmSync(f.dir, { recursive: true, force: true })
     }
   }
+
+  setSnapshotLibraryOpenerForTest(null)
 
   // ── D 可写句柄照常缓存复用：不被这次改动误伤 ────────────────────────────────────────────────
   {

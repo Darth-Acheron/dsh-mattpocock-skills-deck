@@ -143,19 +143,26 @@ export function createSessionRefresh(deps: RefreshDeps) {
       // 所以条数在收集时单独记，不靠数组长度后算。
       let refreshRowCount = 0; let refreshMeta: any = null; let refreshVersion: number | null = null
       const collectRows = function (rows: unknown, meta?: unknown): void { if (meta && typeof meta === 'object') refreshMeta = meta; if (Array.isArray(rows)) { refreshRowCount += rows.length; for (let i = 0; i < rows.length; i += 1) refreshRows.push(rows[i]) } }
-      const persistRefreshRows = async function (persistCwd: string, persistBackend: string, persistRepo: RepoRef, hasPrevRows?: boolean): Promise<void> {
+      const persistRefreshRows = async function (persistCwd: string, persistBackend: string, persistRepo: RepoRef, startMergeVersion?: number, hasPrevRows?: boolean): Promise<void> {
         const meta = refreshMeta; refreshMeta = null
         if ((!refreshRows.length && !(hasPrevRows && meta)) || typeof getSnapshotLibrary !== 'function') return
         const rows = refreshRows.splice(0, refreshRows.length)
         let lib: any = null
         try { lib = await Promise.resolve(getSnapshotLibrary()) } catch (e) { lib = null }
         if (!lib || typeof lib.recordIssueRows !== 'function') return
-        const result: any = await lib.recordIssueRows(Object.assign({ workspaceRoot: persistCwd, backend: String(persistBackend), repoIdentity: String((persistRepo && persistRepo.refId) || ''), rows: rows, atomic: true }, meta || null))
+        const result: any = await lib.recordIssueRows(Object.assign({ workspaceRoot: persistCwd, backend: String(persistBackend), repoIdentity: String((persistRepo && persistRepo.refId) || ''), rows: rows, atomic: true }, meta || null, startMergeVersion === undefined ? null : { startMergeVersion: startMergeVersion }))
         if (result && result.ok === true) { if (typeof result.mergeVersion === 'number') refreshVersion = result.mergeVersion; return }
         const reason = String((result && result.reason) || 'unknown')
-        // 只读与开不出库是这一侧已知的降级，不是「写了一半」：照常把新数据交给界面，只是这趟不落库。
-        // 典型现场是 1869-04 的多会话——另一个窗口拿着写租约，这一边必须还能刷新看数据。
-        if (reason === 'readonly' || reason === 'unavailable') return
+        // 只读、开不出库、旧租约挡住本地写，这三种都是这一侧已知的降级，不是「写了一半」：
+        // 照常把新数据交给界面，只是这趟不落库。
+        //   - readonly：网络盘上另一个窗口拿着写权，或文件系统只读；
+        //   - unavailable：库开不出来；
+        //   - legacy-writer（#1932）：本地库里还有一条未过期的旧租约，说明可能还有旧版本窗口在写这个
+        //     工作区。这时拒绝本地写是为了避免新旧混写，用户要做的是「重启所有窗口」（设置页诊断会说），
+        //     而不是让这一次刷新整趟失败——刷新拿到的新数据仍然该显示出来。
+        // 反例：把 legacy-writer 当普通写失败抛错，会让升级现场每按一次刷新都弹一条红色失败提示，
+        // 而提示里没有任何一句说得出「重启窗口」这件事。
+        if (reason === 'readonly' || reason === 'unavailable' || reason === 'legacy-writer') return
         // 真写失败则整趟刷新失败：宁可让用户看到失败，也不能让界面显示一份重启后会消失的数据。
         throw new Error('这轮刷新没写进本地快照库（' + reason + '），为避免重启后回到旧数据，这次刷新按失败处理。')
       }
@@ -166,7 +173,7 @@ export function createSessionRefresh(deps: RefreshDeps) {
        */
       const previousScreenOf = async function (bId: string, ref: RepoRef): Promise<any> {
         // 没有回放是正常的一档（第一次进工作区、库刚被清掉），不是异常；
-        // 库开不出来、租约被占、库损坏这些异常由快照库自己的 workspaceSnapshot.* 日志交代，
+        // 库开不出来、网络盘回退成只读、库损坏这些异常由快照库自己的 workspaceSnapshot.* 日志交代，
         // 首屏助手也把「库不可用」折成「这一趟没有回放」，所以这里不另造一条事件。
         const screen: any = await firstScreenFromLibrary({
           getSnapshotLibrary: getSnapshotLibrary,
@@ -203,7 +210,7 @@ export function createSessionRefresh(deps: RefreshDeps) {
           const res = await composer.composeSnapshot(backendId, repoRef, ctx2, { ifNoneMatch: (args && (args.ifNoneMatch || args.version)) || '', force: true, previousSnapshot: (prevScreen && prevScreen.replay) ? prevScreen.replay.snapshot : null, onRows: collectRows })
           if (!res.ok) throw new Error((res.error && res.error.message) || 'composeSnapshot failed')
           // 先提交库，再把新快照交给界面：写库失败就整趟刷新失败，不能让界面显示一份重启后会消失的数据。
-          await persistRefreshRows(cwd, backendId, repoRef, !!(prevScreen && prevScreen.replay && prevScreen.replay.rows > 0))
+          await persistRefreshRows(cwd, backendId, repoRef, prevScreen && prevScreen.replay ? prevScreen.replay.mergeVersion : undefined, !!(prevScreen && prevScreen.replay && prevScreen.replay.rows > 0))
           // #1887：行写进库之后再读六个数字并挂到 deck 上（读不到就原样返回，不补 0）。
           const inner: Inner = await withLibraryCounts(upcaseSnapStates(res.snapshot), prevScreen)
           const flatTickets = (inner.maps || []).flatMap(function(m){ return (m.tickets || []); })
@@ -378,7 +385,7 @@ export function createSessionRefresh(deps: RefreshDeps) {
         const prevScreen2 = await previousScreenOf(backendId2, repoRef2)
         const res2 = await composer2.composeSnapshot(backendId2, repoRef2, ctx2b, { ifNoneMatch: (args && (args.ifNoneMatch || args.version)) || '', force: true, previousSnapshot: (prevScreen2 && prevScreen2.replay) ? prevScreen2.replay.snapshot : null, onRows: collectRows })
         if (!res2.ok) throw new Error((res2.error && res2.error.message) || 'composeSnapshot failed')
-        await persistRefreshRows(cwd, backendId2, repoRef2, !!(prevScreen2 && prevScreen2.replay && prevScreen2.replay.rows > 0))
+        await persistRefreshRows(cwd, backendId2, repoRef2, prevScreen2 && prevScreen2.replay ? prevScreen2.replay.mergeVersion : undefined, !!(prevScreen2 && prevScreen2.replay && prevScreen2.replay.rows > 0))
         // #1887：与主支路同一口径：写库之后读一次六个数字并挂到 deck 上。
         const inner2: Inner = await withLibraryCounts(upcaseSnapStates(res2.snapshot), prevScreen2)
         ;(inner2.maps || []).forEach(function(m){ 
