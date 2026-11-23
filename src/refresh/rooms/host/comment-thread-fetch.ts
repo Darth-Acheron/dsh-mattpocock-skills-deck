@@ -40,7 +40,7 @@ function isFreshDetail(issue: any): boolean {
   const at: number = issue && typeof issue.lastKnownAtMs === 'number' ? issue.lastKnownAtMs : 0
   if (at <= 0) return false
   const bodyGroup: any = issue && issue.groups ? issue.groups.body : null
-  if (bodyGroup && bodyGroup.completeness !== 'complete' && bodyGroup.completeness !== 'truncated') return false
+  if (!bodyGroup || (bodyGroup.completeness !== 'complete' && bodyGroup.completeness !== 'truncated')) return false
   return (Date.now() - at) <= ISSUE_DETAIL_LOCAL_TTL_MS
 }
 

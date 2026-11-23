@@ -87,9 +87,9 @@ function issue(input: Partial<Issue> & { key: string; title: string }): Issue {
 }
 
 /** 详情读结果：一张有正文、标签、指派、父票、阻塞、子票计数、合并信息的票。 */
-function detailIssue(): Issue {
+function detailIssue(overrides?: Partial<Issue>): Issue {
   const blocked = { key: '90', title: '阻塞者', state: 'closed' as const }
-  return issue({
+  return issue(Object.assign({
     key: '5',
     title: '子票五',
     body: '这是正文内容。',
@@ -103,7 +103,7 @@ function detailIssue(): Issue {
     ],
     commentCount: 2,
     fieldStates: fieldStates({ parentKey: '100', blockedBy: [blocked], subIssues: { total: 3, completed: 1, percentCompleted: 33 }, mergedAt: null }),
-  })
+  }, overrides || {}))
 }
 
 /** 造一套「宿主接线」：会话取数、仓库坐标、快照库门面都按真实形状注入。 */
