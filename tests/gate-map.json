@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-23T12:12:40.601Z",
+  "generatedAt": "2026-11-23T15:27:50.801Z",
   "generatedBy": "node scripts/gate-map.mts",
   "chainLength": 604,
   "gateCount": 604,
   "attributedGates": 548,
   "unattributedGates": 56,
   "buildOutputOnlyGates": 21,
-  "completionRecordedGates": 146,
+  "completionRecordedGates": 147,
   "smokeLength": 8,
   "smokeCompletionRecordedGates": 5,
   "graphFileCount": 995,
@@ -2462,8 +2462,8 @@
       ],
       "unattributed": false,
       "buildOutputOnly": false,
-      "completionRecord": false,
-      "expectedAssertions": 0,
+      "completionRecord": true,
+      "expectedAssertions": 24,
       "reason": "归属来自 文件头 // 门禁归属: 注释（共 9 条）"
     },
     {

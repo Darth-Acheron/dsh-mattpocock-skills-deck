@@ -876,6 +876,7 @@ export const COMPLETION_RECORDED_GATES: Record<string, number> = {
   'verify-yunxiao-config-and-remote': 35,
   'verify-yunxiao-onboarding-wizard': 48, // #24：发现、三模式置备、SSH 回退、bind 失败守卫与半成功重推双深链
   'verify-yunxiao-room': 56,
+  'verify-131-map-handoff-guard': 24, // #131：探索地图关闭护栏、容器交棒状态与生成规格动作入口
 }
 
 // 冒烟链（scripts.smoke）上已经开闸的门禁，写法与上面那张表一样：写在这里 = 已开闸，值 = 期望条数。

@@ -132,7 +132,8 @@ async function main() {
       mergedAtMs: null, body: null, comments: [], reviews: [], commentsCursor: null,
       groups: {
         row: { completeness: 'complete', reason: null, lastQueriedMs: Date.now() },
-        body: null, labels: null, assignees: null, parents: null, blockedBy: null,
+        body: { completeness: 'complete', reason: null, lastQueriedMs: Date.now() },
+        labels: null, assignees: null, parents: null, blockedBy: null,
         subIssues: null, mergeInfo: null, comments: null, review: null,
       },
     }, over)
