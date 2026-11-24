@@ -53,7 +53,7 @@ $env:DSH_HOME = $batch
 
 ## 依赖：钉 npm 上的精确版本
 
-根 `package.json` 的 `devDependencies` 钉的是 npm 上发布的**精确版本**（当前 `"dsh-featherhunter-plugin-base": "0.1.7"`），
+根 `package.json` 的 `devDependencies` 钉的是 npm 上发布的**精确版本**（当前 `"dsh-featherhunter-plugin-base": "0.1.9"`），
 不用 `file:` / `link:`：发布产物要能被 CI 和其它机器原样安装，路径依赖解析不到；五仓接入规则也要求精确版本。
 
 在仓库根跑 `pnpm install` 后即可用 `node node_modules/dsh-featherhunter-plugin-base/dist/real-machine-verification/cli/main.js`
